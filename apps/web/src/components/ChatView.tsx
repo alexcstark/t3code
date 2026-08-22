@@ -7688,8 +7688,10 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
-      {rightPanelControlsAtRoot ? panelLayoutControls : null}
+    <div
+      className="terminal-shell relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-terminal-shell="true"
+    >
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -7873,6 +7875,24 @@ export default function ChatView(props: ChatViewProps) {
                 className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
               >
                 <div className="group/composer-stack pointer-events-auto relative z-10">
+                  {!isDraftHeroState ? (
+                    <div
+                      aria-live="polite"
+                      className="flex items-center gap-2 px-1 pb-1.5 text-[11px] text-muted-foreground"
+                      data-terminal-shell-status="true"
+                    >
+                      <span data-terminal-shell-status-state={isWorking ? "working" : "ready"}>
+                        {isWorking ? (workingStepLabel ?? "Working") : "Ready"}
+                      </span>
+                      {isWorking ? <span aria-hidden="true">· esc to interrupt</span> : null}
+                      {terminalUiState.terminalIds.length > 0 ? (
+                        <span>
+                          · {terminalUiState.terminalIds.length} terminal
+                          {terminalUiState.terminalIds.length === 1 ? "" : "s"} active
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
                       <div
