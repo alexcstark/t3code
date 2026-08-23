@@ -59,6 +59,7 @@ import {
   memo,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1564,6 +1565,16 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // Thread detail snapshots arrive on the stream for every message/activity
+  // update. Keep the composer and command surfaces current, but let the
+  // expensive timeline projection consume those snapshots at background
+  // priority so input, scrolling, and shell controls remain responsive.
+  const deferredTimelineThread = useDeferredValue(activeThread);
+  const timelineThread =
+    deferredTimelineThread?.id === activeThread?.id &&
+    deferredTimelineThread?.environmentId === activeThread?.environmentId
+      ? deferredTimelineThread
+      : activeThread;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2263,8 +2274,12 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
-  const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
+  const timelineActivities = timelineThread?.activities ?? EMPTY_ACTIVITIES;
+  const workLogEntries = useMemo(
+    () => deriveWorkLogEntries(timelineActivities),
+    [timelineActivities],
+  );
+  const turnPlans = useMemo(() => deriveTurnPlans(timelineActivities), [timelineActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
@@ -2277,6 +2292,9 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  const deferredAgentPanelModel = useDeferredValue(agentPanelModel);
+  const timelineAgentPanelModel =
+    timelineThread === activeThread ? agentPanelModel : deferredAgentPanelModel;
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -2479,6 +2497,9 @@ function ChatViewContent(props: ChatViewProps) {
       };
     });
   }, [serverAttachmentUrlById, serverMessages]);
+  const deferredDisplayServerMessages = useDeferredValue(displayServerMessages);
+  const timelineDisplayServerMessages =
+    timelineThread === activeThread ? displayServerMessages : deferredDisplayServerMessages;
   useEffect(() => {
     if (typeof Image === "undefined" || displayServerMessages.length === 0) {
       return;
@@ -2564,7 +2585,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, displayServerMessages]);
   const timelineMessages = useMemo(() => {
-    const messages = displayServerMessages;
+    const messages = timelineDisplayServerMessages;
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -2614,16 +2635,16 @@ function ChatViewContent(props: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  }, [attachmentPreviewHandoffByMessageId, optimisticUserMessages, timelineDisplayServerMessages]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
         timelineMessages,
-        activeThread?.proposedPlans ?? [],
+        timelineThread?.proposedPlans ?? [],
         workLogEntries,
         turnPlans,
       ),
-    [activeThread?.proposedPlans, timelineMessages, turnPlans, workLogEntries],
+    [timelineMessages, timelineThread?.proposedPlans, turnPlans, workLogEntries],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -6561,7 +6582,7 @@ function ChatViewContent(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
-                agentPanelModel={agentPanelModel}
+                agentPanelModel={timelineAgentPanelModel}
                 onOpenAgents={addAgentsSurface}
                 key={activeThread.id}
                 isWorking={isWorking}
@@ -6569,7 +6590,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
-                latestTurn={activeLatestTurn}
+                latestTurn={timelineThread?.latestTurn ?? null}
                 runningTurnId={
                   activeThread.session?.status === "running"
                     ? activeThread.session.activeTurnId
