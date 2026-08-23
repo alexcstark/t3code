@@ -4106,6 +4106,20 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
 
   useEffect(() => {
+    if (!activeThread?.id || !latestTurnSettled) {
+      return;
+    }
+    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
+      return;
+    }
+
+    // The extra tail is only useful while the first response is streaming.
+    // Once that turn settles, remove it and return to the real end of the chat
+    // so a long thread cannot leave a large empty region below its last row.
+    scrollToEnd();
+  }, [activeThread?.id, latestTurnSettled, scrollToEnd]);
+
+  useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
     timelineScrollModeRef.current = "following-end";
