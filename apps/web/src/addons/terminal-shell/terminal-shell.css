@@ -78,7 +78,6 @@
   background: transparent;
   padding: 0;
 }
-
 [data-terminal-shell="true"] [data-message-role="user"] [data-user-message-footer="true"] {
   max-width: none;
   justify-content: flex-start;

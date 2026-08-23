@@ -8201,6 +8201,7 @@ export default function ChatView(props: ChatViewProps) {
 
   return (
     <div {...terminalShellRootProps}>
+      {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
