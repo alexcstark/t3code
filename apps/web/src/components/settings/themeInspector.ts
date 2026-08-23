@@ -14,16 +14,10 @@ const THEME_PAINT_KIND_ORDER: ReadonlyArray<ThemePaintKind> = [
   "foreground",
 ];
 
-export const THEME_INSPECTOR_MATCH_ATTRIBUTE = "data-theme-inspector-match";
-
 const THEME_TOKEN_PROBE_ATTRIBUTE = "data-theme-token-probe";
 const THEME_TOKEN_PROBE_COLOR = "#01fea7";
 const THEME_TOKEN_ALTERNATE_PROBE_COLOR = "#fe01a7";
-const THEME_SPOTLIGHT_ID = "theme-inspector-spotlight";
-const THEME_SPOTLIGHT_MASK_ID = "theme-inspector-spotlight-mask";
-const THEME_SPOTLIGHT_GLOW_ID = "theme-inspector-spotlight-glow";
 const THEME_HOVER_ID = "theme-inspector-hover";
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 const THEME_UTILITY_ROLES: Readonly<Partial<Record<string, ThemeColorRole>>> = {
   background: "canvas",
@@ -79,28 +73,11 @@ const THEME_UTILITY_PREFIXES: Readonly<Record<ThemePaintKind, ReadonlyArray<stri
   foreground: ["text-", "caret-", "fill-", "stroke-"],
 };
 
-function clearThemeInspectorAttribute(attribute: string): void {
-  document
-    .querySelectorAll(`[${attribute}]`)
-    .forEach((element) => element.removeAttribute(attribute));
-}
-
-export function clearThemeInspectorHighlights(): void {
-  clearThemeInspectorAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE);
-  document.getElementById(THEME_SPOTLIGHT_ID)?.remove();
-}
-
 export function clearThemeInspectorHover(): void {
   document.getElementById(THEME_HOVER_ID)?.remove();
 }
 
-function svgElement<Name extends keyof SVGElementTagNameMap>(
-  name: Name,
-): SVGElementTagNameMap[Name] {
-  return document.createElementNS(SVG_NAMESPACE, name);
-}
-
-function spotlightRect(element: Element): {
+function hoverRect(element: Element): {
   x: number;
   y: number;
   width: number;
@@ -136,7 +113,7 @@ function spotlightRect(element: Element): {
 }
 
 export function showThemeInspectorHover(inspection: ThemeElementInspection, label: string): void {
-  const rectangle = spotlightRect(inspection.element);
+  const rectangle = hoverRect(inspection.element);
   if (!rectangle) {
     clearThemeInspectorHover();
     return;
@@ -161,92 +138,6 @@ export function showThemeInspectorHover(inspection: ThemeElementInspection, labe
   hover.dataset.placement = rectangle.y < 32 ? "below" : "above";
   const tokenLabel = hover.querySelector<HTMLElement>("[data-theme-inspector-hover-label]");
   if (tokenLabel) tokenLabel.textContent = label;
-}
-
-function renderThemeInspectorSpotlight(elements: ReadonlyArray<Element>): void {
-  const rectangles = new Map<string, NonNullable<ReturnType<typeof spotlightRect>>>();
-  for (const element of elements) {
-    const rectangle = spotlightRect(element);
-    if (!rectangle) continue;
-    const key = [rectangle.x, rectangle.y, rectangle.width, rectangle.height]
-      .map((value) => Math.round(value))
-      .join(":");
-    rectangles.set(key, rectangle);
-  }
-
-  if (rectangles.size === 0) {
-    document.getElementById(THEME_SPOTLIGHT_ID)?.remove();
-    return;
-  }
-
-  let spotlight = document.getElementById(THEME_SPOTLIGHT_ID) as SVGSVGElement | null;
-  if (!spotlight) {
-    spotlight = svgElement("svg");
-    spotlight.id = THEME_SPOTLIGHT_ID;
-    spotlight.setAttribute("aria-hidden", "true");
-    spotlight.setAttribute("focusable", "false");
-    document.body.append(spotlight);
-  }
-  spotlight.setAttribute("viewBox", `0 0 ${window.innerWidth} ${window.innerHeight}`);
-
-  const definitions = svgElement("defs");
-  const mask = svgElement("mask");
-  mask.id = THEME_SPOTLIGHT_MASK_ID;
-  mask.setAttribute("maskUnits", "userSpaceOnUse");
-  const maskSurface = svgElement("rect");
-  maskSurface.setAttribute("width", String(window.innerWidth));
-  maskSurface.setAttribute("height", String(window.innerHeight));
-  maskSurface.setAttribute("fill", "white");
-  mask.append(maskSurface);
-
-  const glowFilter = svgElement("filter");
-  glowFilter.id = THEME_SPOTLIGHT_GLOW_ID;
-  glowFilter.setAttribute("x", "-50%");
-  glowFilter.setAttribute("y", "-50%");
-  glowFilter.setAttribute("width", "200%");
-  glowFilter.setAttribute("height", "200%");
-  const blur = svgElement("feGaussianBlur");
-  blur.setAttribute("stdDeviation", "5");
-  blur.setAttribute("result", "blur");
-  const merge = svgElement("feMerge");
-  const blurredGlow = svgElement("feMergeNode");
-  blurredGlow.setAttribute("in", "blur");
-  const crispGlow = svgElement("feMergeNode");
-  crispGlow.setAttribute("in", "SourceGraphic");
-  merge.append(blurredGlow, crispGlow);
-  glowFilter.append(blur, merge);
-  definitions.append(mask, glowFilter);
-
-  const glowGroup = svgElement("g");
-  for (const rectangle of rectangles.values()) {
-    const hole = svgElement("rect");
-    hole.setAttribute("x", String(rectangle.x));
-    hole.setAttribute("y", String(rectangle.y));
-    hole.setAttribute("width", String(rectangle.width));
-    hole.setAttribute("height", String(rectangle.height));
-    hole.setAttribute("rx", String(rectangle.radius));
-    hole.setAttribute("fill", "black");
-    mask.append(hole);
-
-    const glow = hole.cloneNode(false) as SVGRectElement;
-    glow.removeAttribute("fill");
-    glow.setAttribute("class", "theme-inspector-spotlight-glow");
-    glow.setAttribute("filter", `url(#${THEME_SPOTLIGHT_GLOW_ID})`);
-    glowGroup.append(glow);
-  }
-
-  const dimmer = svgElement("rect");
-  dimmer.setAttribute("class", "theme-inspector-spotlight-dimmer");
-  dimmer.setAttribute("width", String(window.innerWidth));
-  dimmer.setAttribute("height", String(window.innerHeight));
-  dimmer.setAttribute("mask", `url(#${THEME_SPOTLIGHT_MASK_ID})`);
-  spotlight.replaceChildren(definitions, dimmer, glowGroup);
-}
-
-export function refreshThemeInspectorSpotlight(): void {
-  renderThemeInspectorSpotlight([
-    ...document.querySelectorAll(`[${THEME_INSPECTOR_MATCH_ATTRIBUTE}]`),
-  ]);
 }
 
 function elementHasVisibleText(element: Element): boolean {
@@ -346,8 +237,7 @@ function applyThemeTokenProbes(roles: ReadonlyArray<ThemeColorRole>): () => void
 function themeInspectorCandidates(): ReadonlyArray<Element> {
   return [document.body, ...document.body.querySelectorAll("*")].filter(
     (element) =>
-      !element.closest("[data-theme-editor-panel]") &&
-      !element.closest(`#${THEME_SPOTLIGHT_ID}, #${THEME_HOVER_ID}`),
+      !element.closest("[data-theme-editor-panel]") && !element.closest(`#${THEME_HOVER_ID}`),
   );
 }
 
@@ -402,11 +292,8 @@ export function inspectThemeRoleFromUtilitiesAtElement(
  * A token is synchronously replaced with a sentinel, computed paint is read,
  * and the original value is restored before the browser can render a frame.
  */
-export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): number {
-  const startedAt = performance.now();
-  clearThemeInspectorAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE);
+function findThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): ReadonlySet<Element> {
   const candidates = themeInspectorCandidates();
-  const probeStartedAt = performance.now();
   const matches = withThemeTokenProbeSession(() => {
     const baseline = new Map<Element, ThemePaintSnapshot>();
     for (const element of candidates) {
@@ -426,27 +313,16 @@ export function highlightThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): n
     }
     return changed;
   });
-  const probeDuration = performance.now() - probeStartedAt;
+  return matches;
+}
 
-  const highlightedElements = new Set<Element>();
+export function countThemeRoleUsage(roles: ReadonlyArray<ThemeColorRole>): number {
+  const matches = findThemeRoleUsage(roles);
+  const elements = new Set<Element>();
   for (const element of matches) {
-    highlightedElements.add(
-      element instanceof SVGElement ? (element.closest("svg") ?? element) : element,
-    );
+    elements.add(element instanceof SVGElement ? (element.closest("svg") ?? element) : element);
   }
-  for (const element of highlightedElements) {
-    element.setAttribute(THEME_INSPECTOR_MATCH_ATTRIBUTE, "");
-  }
-  renderThemeInspectorSpotlight([...highlightedElements]);
-  if (import.meta.env.DEV) {
-    const spotlight = document.getElementById(THEME_SPOTLIGHT_ID);
-    if (spotlight) {
-      spotlight.dataset.themeInspectorCandidates = String(candidates.length);
-      spotlight.dataset.themeInspectorProbeMs = probeDuration.toFixed(2);
-      spotlight.dataset.themeInspectorTotalMs = (performance.now() - startedAt).toFixed(2);
-    }
-  }
-  return highlightedElements.size;
+  return elements.size;
 }
 
 /** Resolves the nearest painted token at a touched element. */
