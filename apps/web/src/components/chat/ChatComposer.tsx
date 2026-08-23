@@ -227,6 +227,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  PaperclipIcon,
   PencilRulerIcon,
   type LucideIcon,
   LockIcon,
@@ -1030,6 +1031,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -3301,6 +3303,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 <div className="-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    accept="image/gif,image/jpeg,image/png,image/webp"
+                    multiple
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={(event) => {
+                      const files = Array.from(event.currentTarget.files ?? []);
+                      // Clear the input so choosing the same image again still
+                      // emits a change event after it has been removed.
+                      event.currentTarget.value = "";
+                      if (files.length === 0) return;
+                      void addComposerImages(files);
+                      focusComposer();
+                    }}
+                  />
+                  <ComposerControl
+                    type="button"
+                    aria-label="Attach images"
+                    title="Attach images"
+                    data-chat-composer-attach="true"
+                    disabled={
+                      isConnecting ||
+                      isComposerApprovalState ||
+                      projectSelectionRequired ||
+                      pendingUserInputs.length > 0
+                    }
+                    onClick={() => imageFileInputRef.current?.click()}
+                  >
+                    <ComposerControlIcon icon={PaperclipIcon} />
+                    <span>Attach</span>
+                  </ComposerControl>
+
                   {noProviderAvailable ? (
                     <Button
                       type="button"
