@@ -5768,6 +5768,21 @@ export default function ChatView(props: ChatViewProps) {
     );
   }, [activeThreadId, terminalUiState.terminalOpen]);
 
+  const interruptActiveTurn = useCallback(async () => {
+    if (!activeThread) return;
+    const result = await interruptThreadTurn({
+      environmentId,
+      input: buildThreadTurnInterruptInput(activeThread),
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+      );
+    }
+  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+
   useEffect(() => {
     if (!activeThreadKey) return;
     const previous = terminalUiOpenByThreadRef.current[activeThreadKey] ?? false;
@@ -5815,6 +5830,19 @@ export default function ChatView(props: ChatViewProps) {
         terminalOpen: Boolean(terminalUiState.terminalOpen),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
+
+      if (
+        event.ctrlKey &&
+        event.key.toLowerCase() === "c" &&
+        isWorking &&
+        !shortcutContext.terminalFocus &&
+        !shortcutContext.modelPickerOpen
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void interruptActiveTurn();
+        return;
+      }
 
       if (
         !shortcutContext.terminalFocus &&
@@ -6001,6 +6029,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef,
     activeThreadPinned,
     activeThreadSettled,
+    isWorking,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
@@ -6015,6 +6044,7 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     handleUnsettleActiveThread,
     isServerThread,
+    interruptActiveTurn,
     onToggleDiff,
     pinThread,
     settleThread,
