@@ -248,6 +248,7 @@ import {
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { TerminalShellStatus, terminalShellRootProps } from "../addons/terminal-shell";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -6410,10 +6411,7 @@ function ChatViewContent(props: ChatViewProps) {
     composerBannerItems.length > 0 || Boolean(threadSyncPhase && !activeEnvironmentUnavailable);
 
   return (
-    <div
-      className="terminal-shell relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
-      data-terminal-shell="true"
-    >
+    <div {...terminalShellRootProps}>
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -6578,22 +6576,11 @@ function ChatViewContent(props: ChatViewProps) {
               >
                 <div className="pointer-events-auto relative z-10">
                   {!isDraftHeroState ? (
-                    <div
-                      aria-live="polite"
-                      className="flex items-center gap-2 px-1 pb-1.5 text-[11px] text-muted-foreground"
-                      data-terminal-shell-status="true"
-                    >
-                      <span data-terminal-shell-status-state={isWorking ? "working" : "ready"}>
-                        {isWorking ? (workingStepLabel ?? "Working") : "Ready"}
-                      </span>
-                      {isWorking ? <span aria-hidden="true">· esc to interrupt</span> : null}
-                      {terminalUiState.terminalIds.length > 0 ? (
-                        <span>
-                          · {terminalUiState.terminalIds.length} terminal
-                          {terminalUiState.terminalIds.length === 1 ? "" : "s"} active
-                        </span>
-                      ) : null}
-                    </div>
+                    <TerminalShellStatus
+                      activeTerminalCount={terminalUiState.terminalIds.length}
+                      isWorking={isWorking}
+                      workingStepLabel={workingStepLabel}
+                    />
                   ) : null}
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
