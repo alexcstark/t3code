@@ -42,11 +42,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { getThemeRoleLabel, ThemeColorField } from "./ThemeColorPicker";
 import {
   clearThemeInspectorHover,
-  clearThemeInspectorHighlights,
-  highlightThemeRoleUsage,
+  countThemeRoleUsage,
   inspectThemeRoleAtElement,
   inspectThemeRoleFromUtilitiesAtElement,
-  refreshThemeInspectorSpotlight,
   showThemeInspectorHover,
   type ThemeElementInspection,
 } from "./themeInspector";
@@ -541,18 +539,17 @@ export function ThemeEditorPanel({
   const selectedHighlightRolesKey = selectedHighlightRoles.join(",");
 
   useEffect(() => {
-    clearThemeInspectorHighlights();
     if (!open || selectedRole === null) {
       setUsageCount(null);
       return;
     }
-    // Picking a new element needs the unobscured app, so suspend the existing
-    // spotlight while the picker is armed.
+    // Picking a new element needs the unobscured app, so suspend usage probing
+    // while the picker is armed.
     if (isInspecting) return;
 
-    const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
-    const refreshHighlights = () => setUsageCount(highlightThemeRoleUsage(highlightedRoles));
-    refreshHighlights();
+    const usageRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
+    const refreshUsageCount = () => setUsageCount(countThemeRoleUsage(usageRoles));
+    refreshUsageCount();
     // A refresh snapshots computed styles for the whole tree twice, so it is
     // throttled rather than run per frame: a streaming reply or a virtualized
     // list mutates the DOM continuously and would otherwise stall the main
@@ -568,7 +565,7 @@ export function ThemeEditorPanel({
         refreshFrame = null;
         refreshTimer = null;
         lastRefreshAt = performance.now();
-        refreshHighlights();
+        refreshUsageCount();
       };
       if (wait === 0) refreshFrame = requestAnimationFrame(run);
       else refreshTimer = setTimeout(run, wait);
@@ -578,8 +575,7 @@ export function ThemeEditorPanel({
         mutations.every(
           (mutation) =>
             mutation.target instanceof Element &&
-            (mutation.target.closest("#theme-inspector-spotlight") ||
-              mutation.target.closest("[data-theme-editor-panel]")),
+            mutation.target.closest("[data-theme-editor-panel]"),
         )
       ) {
         return;
@@ -587,23 +583,10 @@ export function ThemeEditorPanel({
       scheduleRefresh();
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    let spotlightFrame: number | null = null;
-    const scheduleSpotlightRefresh = () => {
-      spotlightFrame ??= requestAnimationFrame(() => {
-        spotlightFrame = null;
-        refreshThemeInspectorSpotlight();
-      });
-    };
-    window.addEventListener("resize", scheduleSpotlightRefresh);
-    window.addEventListener("scroll", scheduleSpotlightRefresh, true);
     return () => {
       observer.disconnect();
       if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
       if (refreshTimer !== null) clearTimeout(refreshTimer);
-      if (spotlightFrame !== null) cancelAnimationFrame(spotlightFrame);
-      window.removeEventListener("resize", scheduleSpotlightRefresh);
-      window.removeEventListener("scroll", scheduleSpotlightRefresh, true);
-      clearThemeInspectorHighlights();
     };
   }, [isInspecting, open, selectedHighlightRolesKey, selectedRole]);
 
