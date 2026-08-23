@@ -5786,12 +5786,15 @@ export default function ChatView(props: ChatViewProps) {
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
 
+      // Providers treat a follow-up sent during a running turn as a queued
+      // steer. Interrupting the active turn lets that follow-up run next;
+      // without one, this is the normal stop action.
       if (
-        event.ctrlKey &&
-        event.key.toLowerCase() === "c" &&
+        (event.key === "Escape" || (event.ctrlKey && event.key.toLowerCase() === "c")) &&
         isWorking &&
         !shortcutContext.terminalFocus &&
-        !shortcutContext.modelPickerOpen
+        !shortcutContext.modelPickerOpen &&
+        (event.key !== "Escape" || !document.querySelector('[data-composer-drawer-layer="true"]'))
       ) {
         event.preventDefault();
         event.stopPropagation();
