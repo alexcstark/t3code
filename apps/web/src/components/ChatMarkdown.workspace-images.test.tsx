@@ -92,6 +92,9 @@ function firstInlineStyle(html: string): Record<string, string> {
     }),
   );
 }
+function renderStreaming(markdown: string): string {
+  return renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={markdown} isStreaming />);
+}
 
 describe("ChatMarkdown workspace images", () => {
   beforeEach(() => {
@@ -403,5 +406,14 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain('src="https://example.com/image.png"');
     expect(html).toContain("max-w-[min(100%,30rem)]");
     expect(html).not.toContain("Image unavailable");
+  });
+
+  it("uses lightweight text while a response is streaming", () => {
+    const html = renderStreaming("**not yet rich**\n```ts\nconst value = 1;\n```");
+
+    expect(html).toContain('data-streaming-markdown="true"');
+    expect(html).toContain("**not yet rich**");
+    expect(html).not.toContain("<strong>");
+    expect(html).not.toContain("chat-markdown-codeblock");
   });
 });
