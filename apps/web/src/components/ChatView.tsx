@@ -6064,6 +6064,19 @@ export default function ChatView(props: ChatViewProps) {
       };
 
       if (
+        event.ctrlKey &&
+        event.key.toLowerCase() === "c" &&
+        canInterruptRunningThread &&
+        !shortcutContext.terminalFocus &&
+        !shortcutContext.modelPickerOpen
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void onInterrupt();
+        return;
+      }
+
+      if (
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
