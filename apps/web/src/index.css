@@ -1727,16 +1727,27 @@ html[data-theme-id="t3-chat"]
   max-width: none;
   border: 0;
   border-radius: 0;
-  background: transparent;
-  padding: 0;
+  background: var(--terminal-shell-surface);
+  padding: 0.5rem 0.625rem;
   color: var(--terminal-shell-foreground);
 }
 
 [data-terminal-shell="true"] [data-message-role="user"] > .group > div:first-child::before {
-  margin-inline-end: 0.75rem;
+  margin-inline-end: 0.375rem;
   color: var(--terminal-shell-accent);
   content: ">";
   line-height: 1.55;
+}
+
+[data-terminal-shell="true"]
+  [data-message-role="user"]
+  > .group
+  > div:first-child
+  > div:first-child {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 [data-terminal-shell="true"] [data-message-role="user"] [data-user-message-footer="true"] {

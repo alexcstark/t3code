@@ -6574,7 +6574,7 @@ function ChatViewContent(props: ChatViewProps) {
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
-                className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
+                className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem+clamp(1rem,4vw,4rem))] pe-[calc(env(safe-area-inset-right)+0.75rem+clamp(1rem,4vw,4rem))] sm:ps-[calc(env(safe-area-inset-left)+1.25rem+clamp(1rem,4vw,4rem)+0.375rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem+clamp(1rem,4vw,4rem)+0.375rem)]"
               >
                 <div className="pointer-events-auto relative z-10">
                   {!isDraftHeroState ? (
