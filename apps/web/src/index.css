@@ -1315,7 +1315,7 @@ html[data-theme-id="t3-chat"]
 
 [data-terminal-shell="true"] [data-chat-composer-overlay] {
   background: linear-gradient(to top, var(--terminal-shell-background) 0%, transparent 100%);
-  padding-top: 0.5rem;
+  padding-top: 0;
 }
 
 [data-terminal-shell="true"] [data-terminal-shell-status="true"] {
