@@ -27,6 +27,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "agents",
+  "plan",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -72,13 +73,14 @@ export type RightPanelSurface =
       number: number;
       url?: string;
     }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-// v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 restores a plan surface alongside the inline plan timeline.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -171,6 +173,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "agents":
       return { id: "agents", kind };
+    case "plan":
+      return { id: "plan", kind };
   }
 };
 
@@ -315,9 +319,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    // Dropped surface kind: plans now render inline in the
-                    // transcript (v9).
-                    if ((surface as { kind?: string }).kind === "plan") return [];
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
