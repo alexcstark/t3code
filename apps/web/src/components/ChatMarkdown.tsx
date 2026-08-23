@@ -236,6 +236,11 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   );
 }
 
+interface StreamingChatMarkdownProps {
+  text: string;
+  className?: string | undefined;
+}
+
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
@@ -1955,7 +1960,44 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
-function useChatMarkdownState({
+const StreamingChatMarkdown = memo(function StreamingChatMarkdown({
+  text,
+  className,
+}: StreamingChatMarkdownProps) {
+  const [displayText, setDisplayText] = useState(text);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setDisplayText(text);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => setDisplayText(text));
+    return () => window.cancelAnimationFrame(frame);
+  }, [text]);
+
+  return (
+    <div
+      className={cn(
+        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80 [overflow-wrap:anywhere] [word-break:break-word]",
+        className,
+      )}
+      data-streaming-markdown="true"
+    >
+      <div className="whitespace-pre-wrap">{displayText}</div>
+    </div>
+  );
+});
+
+function ChatMarkdown(props: ChatMarkdownProps) {
+  if (props.isStreaming) {
+    return <StreamingChatMarkdown text={props.text} className={props.className} />;
+  }
+
+  return <SettledChatMarkdown {...props} isStreaming={false} />;
+}
+
+function SettledChatMarkdown({
   text,
   cwd,
   threadRef,
