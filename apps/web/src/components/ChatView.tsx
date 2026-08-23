@@ -82,6 +82,7 @@ import {
   memo,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -1799,6 +1800,16 @@ export default function ChatView(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // Thread detail snapshots arrive on the stream for every message/activity
+  // update. Keep the composer and command surfaces current, but let the
+  // expensive timeline projection consume those snapshots at background
+  // priority so input, scrolling, and shell controls remain responsive.
+  const deferredTimelineThread = useDeferredValue(activeThread);
+  const timelineThread =
+    deferredTimelineThread?.id === activeThread?.id &&
+    deferredTimelineThread?.environmentId === activeThread?.environmentId
+      ? deferredTimelineThread
+      : activeThread;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2625,7 +2636,12 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const timelineActivities = timelineThread?.activities ?? EMPTY_ACTIVITIES;
+  const workLogEntries = useMemo(
+    () => deriveWorkLogEntries(timelineActivities),
+    [timelineActivities],
+  );
+  const turnPlans = useMemo(() => deriveTurnPlans(timelineActivities), [timelineActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
@@ -2638,6 +2654,9 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  const deferredAgentPanelModel = useDeferredValue(agentPanelModel);
+  const timelineAgentPanelModel =
+    timelineThread === activeThread ? agentPanelModel : deferredAgentPanelModel;
   const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
     () => derivePendingRequests(threadActivities),
     [threadActivities],
@@ -3073,12 +3092,22 @@ export default function ChatView(props: ChatViewProps) {
   );
   const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(() => {
     if (!serverMessages) return [];
-    return serverMessages.map((message) =>
-      projectServerMessagePreviews(message, (attachment) =>
-        serverAttachmentUrlById.get(attachment.id),
-      ),
-    );
-  }, [projectServerMessagePreviews, serverAttachmentUrlById, serverMessages]);
+    return serverMessages.map((message) => {
+      if (!message.attachments || message.attachments.length === 0) {
+        return message;
+      }
+      return {
+        ...message,
+        attachments: message.attachments.map((attachment) => {
+          const previewUrl = serverAttachmentUrlById.get(attachment.id);
+          return previewUrl ? { ...attachment, previewUrl } : attachment;
+        }),
+      };
+    });
+  }, [serverAttachmentUrlById, serverMessages]);
+  const deferredDisplayServerMessages = useDeferredValue(displayServerMessages);
+  const timelineDisplayServerMessages =
+    timelineThread === activeThread ? displayServerMessages : deferredDisplayServerMessages;
   useEffect(() => {
     if (typeof Image === "undefined" || displayServerMessages.length === 0) {
       return;
@@ -3164,7 +3193,7 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, displayServerMessages]);
   const timelineMessages = useMemo(() => {
-    const messages = displayServerMessages;
+    const messages = timelineDisplayServerMessages;
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -3204,31 +3233,19 @@ export default function ChatView(props: ChatViewProps) {
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [
     attachmentPreviewHandoffByMessageId,
-    displayServerMessages,
     optimisticUserMessages,
-    projectHandoffMessagePreviews,
+    timelineDisplayServerMessages,
   ]);
-  const timelineProjectionRef = useRef<{
-    threadKey: string | null;
-    projection: TimelineEntriesProjection;
-  } | null>(null);
-  const timelineEntries = useMemo(() => {
-    const previous = timelineProjectionRef.current;
-    const projection = deriveTimelineEntriesWithState(
-      timelineMessages,
-      activeThread?.proposedPlans ?? [],
-      workLogEntries,
-      previous?.threadKey === activeThreadKey ? previous.projection : null,
-    );
-    timelineProjectionRef.current = { threadKey: activeThreadKey, projection };
-    return projection.entries;
-  }, [
-    timelineProjectionRef,
-    activeThreadKey,
-    activeThread?.proposedPlans,
-    timelineMessages,
-    workLogEntries,
-  ]);
+  const timelineEntries = useMemo(
+    () =>
+      deriveTimelineEntries(
+        timelineMessages,
+        timelineThread?.proposedPlans ?? [],
+        workLogEntries,
+        turnPlans,
+      ),
+    [timelineMessages, timelineThread?.proposedPlans, turnPlans, workLogEntries],
+  );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -8255,7 +8272,7 @@ export default function ChatView(props: ChatViewProps) {
                 citationRequest={citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 onCiteAssistantText={citeAssistantText}
-                agentPanelModel={agentPanelModel}
+                agentPanelModel={timelineAgentPanelModel}
                 onOpenAgents={addAgentsSurface}
                 key={activeThread.id}
                 isWorking={isWorking}
@@ -8264,8 +8281,12 @@ export default function ChatView(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
-                latestTurn={activeLatestTurn}
-                runningTurnId={activeRunningTurnId}
+                latestTurn={timelineThread?.latestTurn ?? null}
+                runningTurnId={
+                  activeThread.session?.status === "running"
+                    ? activeThread.session.activeTurnId
+                    : null
+                }
                 turnDiffSummaries={activeThread.checkpoints}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
