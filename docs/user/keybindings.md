@@ -39,7 +39,17 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
 
-Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
+`filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
+`projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
+Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
+`themeEditor.toggle` opens or closes the floating theme editor and defaults to
+`mod+alt+shift+t`. Select a color label to show how many elements use it. The swatch and hex field
+keep that color selected while you edit it.
+Advanced mode groups related app tokens into a smaller set of color families. Changing a family
+updates its paired text and interaction states while leaving every unrelated imported color intact.
+Use **Inspect** to pick an element in the app and reveal its color token. Inspect disarms after one
+successful pick; its hover glow and badge preview the element and color family that click will select.
+**Cancel** or `Escape` exits Inspect and clears its selection.
 
 ```json
 { "key": "mod+j", "command": "terminal.toggle", "when": "terminalOpen && !terminalFocus" }
