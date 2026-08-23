@@ -520,6 +520,17 @@ function ProjectDetail({
     );
   }, []);
 
+  const [projectTitle, setProjectTitle] = useState(group.displayName);
+  const [isSavingProjectTitle, setIsSavingProjectTitle] = useState(false);
+  const projectTitleSaveInFlightRef = useRef(false);
+
+  // Keep the field in sync with changes from another client, but do not let a
+  // shell update replace the text while this field's save is in flight.
+  useEffect(() => {
+    if (projectTitleSaveInFlightRef.current) return;
+    setProjectTitle(group.displayName);
+  }, [group.displayName]);
+
   // Group-shared fields live on each physical project record, so a
   // group-level edit fans out to every member.
   const updateAllMembers = useCallback(
@@ -564,6 +575,7 @@ function ProjectDetail({
       const title = nextTitle.trim();
       if (!title) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+        setProjectTitle(group.displayName);
         return;
       }
       if (
@@ -575,9 +587,26 @@ function ProjectDetail({
       ) {
         return;
       }
-      await updateAllMembers({ title }, "Failed to rename project");
+
+      // onBlur can be followed by another focus/blur cycle while the remote
+      // command is still settling. Serialize the group rename so a stale
+      // second blur cannot overwrite the first value.
+      if (projectTitleSaveInFlightRef.current) return;
+      projectTitleSaveInFlightRef.current = true;
+      setIsSavingProjectTitle(true);
+      try {
+        const result = await updateAllMembers({ title }, "Failed to rename project");
+        if (result._tag === "Success") {
+          setProjectTitle(title);
+        } else {
+          setProjectTitle(group.displayName);
+        }
+      } finally {
+        projectTitleSaveInFlightRef.current = false;
+        setIsSavingProjectTitle(false);
+      }
     },
-    [group.memberProjects, updateAllMembers],
+    [group.displayName, group.memberProjects, updateAllMembers],
   );
 
   // ----- default model -----
@@ -932,9 +961,11 @@ function ProjectDetail({
                 size="sm"
                 className="w-full sm:w-64"
                 aria-label="Project name"
-                defaultValue={group.displayName}
-                onChange={() => {
+                value={projectTitle}
+                disabled={isSavingProjectTitle}
+                onChange={(event) => {
                   projectNameEditedRef.current = true;
+                  setProjectTitle(event.currentTarget.value);
                 }}
                 onBlur={(event) => {
                   const wasEdited = projectNameEditedRef.current;
@@ -942,7 +973,10 @@ function ProjectDetail({
                   void renameGroup(event.currentTarget.value, wasEdited);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }
                 }}
               />
             }
