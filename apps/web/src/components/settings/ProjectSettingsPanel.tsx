@@ -353,6 +353,17 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     );
   }, []);
 
+  const [projectTitle, setProjectTitle] = useState(group.displayName);
+  const [isSavingProjectTitle, setIsSavingProjectTitle] = useState(false);
+  const projectTitleSaveInFlightRef = useRef(false);
+
+  // Keep the field in sync with changes from another client, but do not let a
+  // shell update replace the text while this field's save is in flight.
+  useEffect(() => {
+    if (projectTitleSaveInFlightRef.current) return;
+    setProjectTitle(group.displayName);
+  }, [group.displayName]);
+
   // Group-shared fields live on each physical project record, so a
   // group-level edit fans out to every member.
   const updateAllMembers = useCallback(
@@ -395,11 +406,35 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       const title = nextTitle.trim();
       if (!title) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+        setProjectTitle(group.displayName);
         return;
       }
-      if (title === group.displayName) return;
-      if (group.memberProjects.every((member) => member.title === title)) return;
-      await updateAllMembers({ title }, "Failed to rename project");
+      if (title === group.displayName) {
+        setProjectTitle(title);
+        return;
+      }
+      if (group.memberProjects.every((member) => member.title === title)) {
+        setProjectTitle(group.displayName);
+        return;
+      }
+
+      // onBlur can be followed by another focus/blur cycle while the remote
+      // command is still settling. Serialize the group rename so a stale
+      // second blur cannot overwrite the first value.
+      if (projectTitleSaveInFlightRef.current) return;
+      projectTitleSaveInFlightRef.current = true;
+      setIsSavingProjectTitle(true);
+      try {
+        const result = await updateAllMembers({ title }, "Failed to rename project");
+        if (result._tag === "Success") {
+          setProjectTitle(title);
+        } else {
+          setProjectTitle(group.displayName);
+        }
+      } finally {
+        projectTitleSaveInFlightRef.current = false;
+        setIsSavingProjectTitle(false);
+      }
     },
     [group.displayName, group.memberProjects, updateAllMembers],
   );
@@ -761,15 +796,19 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             description="The shared name for this project group in the sidebar and thread lists."
             control={
               <Input
-                key={`${group.projectKey}:${group.displayName}`}
                 className="w-full sm:w-64"
                 aria-label="Project name"
-                defaultValue={group.displayName}
+                value={projectTitle}
+                disabled={isSavingProjectTitle}
+                onChange={(event) => setProjectTitle(event.currentTarget.value)}
                 onBlur={(event) => {
                   void renameGroup(event.currentTarget.value);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }
                 }}
               />
             }
