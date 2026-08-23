@@ -1809,6 +1809,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -5331,6 +5332,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isComposerResting && "hidden",
                   )}
                 >
+                  <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    accept="image/gif,image/jpeg,image/png,image/webp"
+                    multiple
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={(event) => {
+                      const files = Array.from(event.currentTarget.files ?? []);
+                      // Clear the input so choosing the same image again still
+                      // emits a change event after it has been removed.
+                      event.currentTarget.value = "";
+                      if (files.length === 0) return;
+                      void addComposerAttachments(files);
+                      focusComposer();
+                    }}
+                  />
+                  <ComposerControl
+                    type="button"
+                    aria-label="Attach images"
+                    title="Attach images"
+                    data-chat-composer-attach="true"
+                    disabled={
+                      isConnecting ||
+                      isComposerApprovalState ||
+                      projectSelectionRequired ||
+                      pendingUserInputs.length > 0
+                    }
+                    onClick={() => imageFileInputRef.current?.click()}
+                  >
+                    <ComposerControlIcon icon={PaperclipIcon} />
+                    <span>Attach</span>
+                  </ComposerControl>
                   {composerControlsInStrip ? null : composerControls}
                 </div>
 
