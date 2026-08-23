@@ -176,7 +176,7 @@ describe("rightPanelStore", () => {
     ).toEqual({ byThreadKey: { "env-1:thread-A": panelState } });
   });
 
-  it("drops persisted plan surfaces and does not reopen an empty panel", () => {
+  it("preserves persisted plan surfaces alongside the inline timeline", () => {
     expect(
       migratePersistedRightPanelState({
         byThreadKey: {
@@ -198,14 +198,17 @@ describe("rightPanelStore", () => {
     ).toEqual({
       byThreadKey: {
         "env-1:thread-A": {
-          isOpen: false,
-          activeSurfaceId: null,
-          surfaces: [],
+          isOpen: true,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
         },
         "env-1:thread-B": {
           isOpen: true,
-          activeSurfaceId: "diff",
-          surfaces: [{ id: "diff", kind: "diff" }],
+          activeSurfaceId: "plan",
+          surfaces: [
+            { id: "plan", kind: "plan" },
+            { id: "diff", kind: "diff" },
+          ],
         },
       },
     });
@@ -224,6 +227,17 @@ describe("rightPanelStore", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
     ).toHaveLength(2);
+  });
+
+  it("opens the plan surface as a singleton", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().open(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
   });
 
   it("reopening an inactive singleton activates its existing surface", () => {
