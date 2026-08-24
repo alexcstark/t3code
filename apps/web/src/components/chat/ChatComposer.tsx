@@ -123,6 +123,12 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import {
+  createComposerPromptHistoryState,
+  moveComposerPromptHistory,
+  recordComposerPrompt,
+  resetComposerPromptHistoryNavigation,
+} from "./composerPromptHistory";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -1022,6 +1028,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandInFlightRef = useRef(false);
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
+  const promptHistoryScopeRef = useRef<string | null>(null);
+  const promptHistoryRef = useRef(createComposerPromptHistoryState());
   /**
    * Snapshots currently being encoded, keyed by target+prompt+image ids.
    * Keyed rather than boolean so a genuinely different prompt (or a different
@@ -1036,6 +1044,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    */
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+
+  const promptHistoryScope = `${environmentId}:${routeKind}:${activeThreadId ?? draftId ?? "none"}`;
+  const serverPromptHistory =
+    activeThread?.messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.text) ?? [];
+  if (promptHistoryScopeRef.current !== promptHistoryScope) {
+    promptHistoryScopeRef.current = promptHistoryScope;
+    promptHistoryRef.current = createComposerPromptHistoryState(serverPromptHistory);
+  } else if (promptHistoryRef.current.entries.length === 0 && serverPromptHistory.length > 0) {
+    promptHistoryRef.current = createComposerPromptHistoryState(serverPromptHistory);
+  }
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1642,6 +1662,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         return;
       }
+      const historyState = promptHistoryRef.current;
+      const selectedHistoryPrompt =
+        historyState.index === null ? null : historyState.entries[historyState.index];
+      if (selectedHistoryPrompt !== nextPrompt) {
+        promptHistoryRef.current = resetComposerPromptHistoryNavigation(historyState);
+      }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
@@ -1665,6 +1691,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
     ],
+  );
+
+  const navigatePromptHistory = useCallback(
+    (direction: "up" | "down"): boolean => {
+      if (isComposerApprovalState || activePendingProgress !== null) return false;
+      const moved = moveComposerPromptHistory(
+        promptHistoryRef.current,
+        direction,
+        promptRef.current,
+      );
+      if (!moved) return false;
+
+      promptHistoryRef.current = moved.state;
+      promptRef.current = moved.value;
+      setPrompt(moved.value);
+      const nextCursor = collapseExpandedComposerCursor(moved.value, moved.value.length);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(null);
+      return true;
+    },
+    [activePendingProgress, isComposerApprovalState, promptRef, setPrompt],
   );
 
   // ------------------------------------------------------------------
@@ -1924,8 +1971,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
+      const submittedPrompt = promptRef.current;
       const submission = submitComposerDraft({
-        prompt: promptRef.current,
+        prompt: submittedPrompt,
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
         event,
         onSend: (sendEvent) => {
@@ -1938,6 +1986,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       setComposerSubmissionError(submission.validationMessage);
       if (!submission.didDispatch) return;
+      if (!activePendingProgress) {
+        promptHistoryRef.current = recordComposerPrompt(promptHistoryRef.current, submittedPrompt);
+      }
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
@@ -2005,6 +2056,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onSelectComposerItem(selectedItem);
         return true;
       }
+    }
+    if (
+      !menuIsActive &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      (key === "ArrowUp" || key === "ArrowDown") &&
+      navigatePromptHistory(key === "ArrowUp" ? "up" : "down")
+    ) {
+      return true;
     }
     const submissionIntent =
       key === "Enter"
