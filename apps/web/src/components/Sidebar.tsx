@@ -141,6 +141,7 @@ import {
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveSidebarThreadStatus,
+  resolveSidebarReasoningLabel,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
   resolveWorkingStartedAt,
@@ -285,6 +286,7 @@ function SidebarThreadTooltip({
   showInstanceBadge,
   modelInstanceId,
   modelLabel,
+  reasoningLabel,
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
@@ -300,6 +302,7 @@ function SidebarThreadTooltip({
   showInstanceBadge: boolean;
   modelInstanceId: string;
   modelLabel: string;
+  reasoningLabel: string | null;
   branchMismatch: {
     threadBranch: string;
     currentBranch: string;
@@ -308,6 +311,7 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const modelMetadataLabel = reasoningLabel ? `${modelLabel} · ${reasoningLabel}` : modelLabel;
   return (
     <TooltipPopup
       side="right"
@@ -357,24 +361,26 @@ function SidebarThreadTooltip({
               </div>
             </div>
           ) : null}
-          {driverKind ? (
+          {driverKind || modelMetadataLabel ? (
             <div className="flex min-w-0 items-center gap-2">
-              <ProviderInstanceIcon
-                driverKind={driverKind}
-                displayName={
-                  providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
-                }
-                accentColor={providerEntry?.accentColor}
-                // Initials would swallow a size-3 glyph: accent dot, name in label.
-                showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
-                badgeContent="none"
-                badgeClassName="h-2 min-w-2 px-0"
-                iconClassName="size-3 shrink-0 grayscale opacity-60"
-              />
+              {driverKind ? (
+                <ProviderInstanceIcon
+                  driverKind={driverKind}
+                  displayName={
+                    providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
+                  }
+                  accentColor={providerEntry?.accentColor}
+                  // Initials would swallow a size-3 glyph: accent dot, name in label.
+                  showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
+                  badgeContent="none"
+                  badgeClassName="h-2 min-w-2 px-0"
+                  iconClassName="size-3 shrink-0 grayscale opacity-60"
+                />
+              ) : null}
               <div className="min-w-0 truncate text-foreground/75">
                 {showInstanceBadge && providerEntry
-                  ? `${modelLabel} · ${providerEntry.displayName}`
-                  : modelLabel}
+                  ? `${modelMetadataLabel} · ${providerEntry.displayName}`
+                  : modelMetadataLabel}
               </div>
             </div>
           ) : null}
@@ -983,6 +989,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const reasoningLabel = resolveSidebarReasoningLabel({
+    model: selectedModel ?? null,
+    modelSelection: thread.modelSelection,
+  });
+  const modelMetadataLabel = reasoningLabel ? `${modelLabel} · ${reasoningLabel}` : modelLabel;
 
   // The local environment is "this machine" and needs no marker; every other
   // one gets its machine glyph. With no local environment (the hosted app)
@@ -1003,6 +1014,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
+      reasoningLabel={reasoningLabel}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1273,7 +1285,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_48px]"
       >
         <Tooltip>
           <TooltipTrigger
@@ -1284,7 +1296,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 tabIndex={0}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                className={cn(rowSurfaceClassName, "flex h-12 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1310,7 +1322,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 className="size-4"
               />
             </span>
-            {title}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center">{title}</div>
+              <div className="mt-0.5 truncate text-[11px] text-secondary-label/80">
+                {modelMetadataLabel}
+              </div>
+            </div>
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1594,17 +1611,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
-                  working, but it truncated to a half-sentence and dropped the
-                  branch, so the row lost its most stable identifier. */}
+              {/* Keep the model and reasoning choice visible while retaining
+                  the branch as a compact secondary identifier. */}
+              <span className="min-w-0 flex-1 truncate whitespace-nowrap">
+                {modelMetadataLabel}
+              </span>
               {thread.branch ? (
                 <>
+                  <span aria-hidden>·</span>
                   <ThreadWorktreeIndicator thread={thread} />
-                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                  <span className="min-w-0 max-w-[35%] truncate whitespace-nowrap">
+                    {thread.branch}
+                  </span>
                 </>
-              ) : (
-                <span className="flex-1" />
-              )}
+              ) : null}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
@@ -1714,6 +1734,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const reasoningLabel = resolveSidebarReasoningLabel({
+    model: selectedModel ?? null,
+    modelSelection: thread.modelSelection,
+  });
+  const modelMetadataLabel = reasoningLabel ? `${modelLabel} · ${reasoningLabel}` : modelLabel;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -1740,7 +1765,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(
-                "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
+                "flex h-12 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
                 props.isHighlighted || props.isRouteActive
                   ? "bg-sidebar-row-active text-sidebar-foreground"
                   : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -1756,7 +1781,12 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             projectIcon={props.projectIcon}
             className="size-4 shrink-0"
           />
-          <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          <div className="min-w-0 flex-1">
+            <span className="block min-w-0 truncate">{thread.title}</span>
+            <span className="mt-0.5 block min-w-0 truncate text-[11px] text-sidebar-muted-foreground/70">
+              {modelMetadataLabel}
+            </span>
+          </div>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
@@ -1773,6 +1803,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
+          reasoningLabel={reasoningLabel}
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
