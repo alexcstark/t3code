@@ -52,6 +52,11 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
 
+`modelPicker.toggle` opens or closes the model picker and defaults to `mod+shift+m`.
+`reasoningPicker.toggle` opens or closes the active model's reasoning controls and defaults to
+`mod+shift+l`. Both shortcuts work while composing a new thread and while continuing an existing
+thread.
+
 `thread.settle` settles the active thread with `mod+w` when the terminal is not focused. When the
 terminal is focused, the same shortcut continues to close the active terminal.
 
@@ -77,9 +82,10 @@ but the new thread does not reuse the worktree created for the thread that just 
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
-the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
-than a fixed one. Any key the running app does not supply evaluates to `false`.
+the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`,
+`modelPickerOpen`, and `reasoningPickerOpen`. The set is open and grows over time, so treat that as
+the current list rather than a fixed one. Any key the running app does not supply evaluates to
+`false`.
 
 Operators: `!` (not), `&&` (and), `||` (or), and parentheses.
 

@@ -1,5 +1,5 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -16,11 +16,22 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isOpen = props.open ?? uncontrolledOpen;
+  const setIsOpen = (open: boolean) => {
+    props.onOpenChange?.(open);
+    if (props.open === undefined) {
+      setUncontrolledOpen(open);
+    }
+  };
+
   return (
-    <Menu>
+    <Menu open={isOpen} onOpenChange={setIsOpen}>
       <MenuTrigger
         render={
           <Button
