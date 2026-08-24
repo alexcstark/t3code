@@ -4,7 +4,7 @@ import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ModelSelection, ServerProviderModel } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -16,6 +16,10 @@ import {
   type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
+import {
+  getModelSelectionOptionDescriptors,
+  getProviderOptionCurrentLabel,
+} from "@t3tools/shared/model";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
@@ -79,6 +83,39 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   }
   if (value !== null) return value;
   return key !== null && retained.current?.key === key ? retained.current.value : null;
+}
+
+const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+
+function isReasoningOptionId(id: string): boolean {
+  return REASONING_OPTION_IDS.has(id) || id.toLowerCase() === "reasoninglevel";
+}
+
+function formatReasoningFallback(value: string): string {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function resolveSidebarReasoningLabel(input: {
+  modelSelection: ModelSelection;
+  model: ServerProviderModel | null;
+}): string | null {
+  const descriptors = input.model?.capabilities
+    ? getModelSelectionOptionDescriptors(input.modelSelection, input.model.capabilities)
+    : [];
+  const reasoningDescriptor = descriptors.find(
+    (descriptor) =>
+      descriptor.label.trim().toLowerCase() === "reasoning" || isReasoningOptionId(descriptor.id),
+  );
+  const descriptorLabel = getProviderOptionCurrentLabel(reasoningDescriptor);
+  if (descriptorLabel) return descriptorLabel;
+
+  const rawSelection = input.modelSelection.options?.find(({ id }) => isReasoningOptionId(id));
+  return typeof rawSelection?.value === "string"
+    ? formatReasoningFallback(rawSelection.value)
+    : null;
 }
 
 // Sidebar.motion handles ordinary section changes. Sortable transforms own

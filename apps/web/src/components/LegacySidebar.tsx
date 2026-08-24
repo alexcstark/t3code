@@ -180,6 +180,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSidebarReasoningLabel,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -442,6 +443,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       lastVisitedAt,
     },
   });
+  const reasoningLabel = resolveSidebarReasoningLabel({
+    model: null,
+    modelSelection: thread.modelSelection,
+  });
+  const modelMetadataLabel = reasoningLabel
+    ? `${thread.modelSelection.model} · ${reasoningLabel}`
+    : thread.modelSelection.model;
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest ?? thread.branchPullRequest,
@@ -736,6 +744,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
+          <span className="max-w-[35%] shrink-0 truncate text-[11px] text-secondary-label/80">
+            {modelMetadataLabel}
+          </span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {discoveredPorts.length > 0 && (
