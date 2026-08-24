@@ -278,6 +278,8 @@ export interface TraitsMenuContentProps {
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   isComposerOwned?: boolean;
@@ -545,6 +547,8 @@ export const TraitsPicker = memo(function TraitsPicker({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  open,
+  onOpenChange,
   triggerVariant,
   triggerClassName,
   isComposerOwned,
@@ -554,7 +558,14 @@ export const TraitsPicker = memo(function TraitsPicker({
   TraitsPersistence & {
     size?: ComposerControlSize;
   }) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
+  const isMenuOpen = open ?? uncontrolledIsMenuOpen;
+  const setIsMenuOpen = (nextOpen: boolean) => {
+    onOpenChange?.(nextOpen);
+    if (open === undefined) {
+      setUncontrolledIsMenuOpen(nextOpen);
+    }
+  };
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -604,8 +615,8 @@ export const TraitsPicker = memo(function TraitsPicker({
   return (
     <Menu
       open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open);
+      onOpenChange={(nextOpen) => {
+        setIsMenuOpen(nextOpen);
       }}
     >
       <MenuTrigger

@@ -57,6 +57,13 @@ the next tab. With the terminal focused, `mod+w` closes the terminal instead, an
 to close it closes the desktop window as before. Browsers reserve `mod+w` for closing their own tab
 and never pass it to the page, so in a browser rebind this command (and `terminal.close`) to a
 shortcut the browser leaves alone, such as `alt+w`.
+`modelPicker.toggle` opens or closes the model picker and defaults to `mod+shift+m`.
+`reasoningPicker.toggle` opens or closes the active model's reasoning controls and defaults to
+`mod+shift+l`. Both shortcuts work while composing a new thread and while continuing an existing
+thread.
+
+`thread.settle` settles the active thread with `mod+w` when the terminal is not focused. When the
+terminal is focused, the same shortcut continues to close the active terminal.
 
 `thread.copyReference` copies the active thread's pull request link, or its thread ID when no pull
 request is available. Its default shortcut is `mod+shift+c`, and it does not replace terminal copy
@@ -96,9 +103,10 @@ but the new thread does not reuse the worktree created for the thread that just 
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
-the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
-than a fixed one. Any key the running app does not supply evaluates to `false`.
+the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`,
+`modelPickerOpen`, and `reasoningPickerOpen`. The set is open and grows over time, so treat that as
+the current list rather than a fixed one. Any key the running app does not supply evaluates to
+`false`.
 
 Operators: `!` (not), `&&` (and), `||` (or), and parentheses.
 
