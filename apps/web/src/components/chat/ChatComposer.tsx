@@ -1186,6 +1186,9 @@ export interface ChatComposerHandle {
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
   compactContext: () => void;
+  openReasoningPicker: () => void;
+  toggleReasoningPicker: () => void;
+  isReasoningPickerOpen: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1907,6 +1910,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [isComposerReasoningPickerOpen, setIsComposerReasoningPickerOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const {
     isComposerFocused,
@@ -2241,6 +2245,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
+    open: isComposerReasoningPickerOpen,
+    onOpenChange: (open) => {
+      setIsComposerReasoningPickerOpen(open);
+      if (open) {
+        setIsComposerModelPickerOpen(false);
+      }
+    },
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
   const {
@@ -2248,6 +2259,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     controlsVisible: restingControlsVisible,
   } = useRestingComposerControlsLayout(restingControlsHost);
+  const hasProviderTraits = providerTraitsMenuContent !== null;
+  useEffect(() => {
+    if (!hasProviderTraits) {
+      setIsComposerReasoningPickerOpen(false);
+    }
+  }, [hasProviderTraits]);
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -4147,7 +4164,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               ),
             }
           : {})}
-        onOpenChange={setIsComposerModelPickerOpen}
+        onOpenChange={(open) => {
+          setIsComposerModelPickerOpen(open);
+          if (open) {
+            setIsComposerReasoningPickerOpen(false);
+          }
+        }}
         getModelDisabledReason={getModelDisabledReason}
         onInstanceModelChange={onProviderModelSelect}
         onOpenProviderSetup={onOpenProviderSetup}
@@ -4159,6 +4181,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           runtimeMode={runtimeMode}
           showInteractionModeToggle={planModeUiEnabled}
           traitsMenuContent={providerTraitsMenuContent}
+          open={isComposerReasoningPickerOpen}
+          onOpenChange={(open) => {
+            setIsComposerReasoningPickerOpen(open);
+            if (open) {
+              setIsComposerModelPickerOpen(false);
+            }
+          }}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
@@ -4205,6 +4234,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 traitsMenuContent={
                   hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
                 }
+                open={isComposerReasoningPickerOpen}
+                onOpenChange={(open) => {
+                  setIsComposerReasoningPickerOpen(open);
+                  if (open) {
+                    setIsComposerModelPickerOpen(false);
+                  }
+                }}
                 onToggleInteractionMode={toggleInteractionMode}
                 onRuntimeModeChange={handleRuntimeModeChange}
               />
@@ -4738,16 +4774,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           "cursor",
           { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
         ),
-      openModelPicker,
+      openModelPicker: () => {
+        setIsComposerReasoningPickerOpen(false);
+        setIsComposerModelPickerOpen(true);
+      },
       toggleModelPicker: () => {
-        if (isComposerModelPickerOpen) {
-          setIsComposerModelPickerOpen(false);
-        } else {
-          openModelPicker();
-        }
+        setIsComposerReasoningPickerOpen(false);
+        setIsComposerModelPickerOpen((open) => !open);
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      openReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen(true);
+      },
+      toggleReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen((open) => !open);
+      },
+      isReasoningPickerOpen: () => isComposerReasoningPickerOpen,
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -4857,7 +4904,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
-      openModelPicker,
+      isComposerReasoningPickerOpen,
+      hasProviderTraits,
       readComposerSnapshot,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -5792,7 +5840,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ComposerControlIcon icon={PaperclipIcon} />
                     <span>Attach</span>
                   </ComposerControl>
-                  {composerControlsInStrip ? null : composerControls}
+      {composerControlsInStrip ? null : composerControls}
                 </div>
 
                 {/* Right side: send / stop button */}
