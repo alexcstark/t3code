@@ -60,6 +60,29 @@ export function resolveDraftHeroState(input: {
   );
 }
 
+export function resolveTimelineThreadSnapshot<
+  T extends { readonly id: unknown; readonly environmentId: unknown },
+>(input: {
+  activeThread: T | null | undefined;
+  deferredThread: T | null | undefined;
+  liveFollowEnabled: boolean;
+}): T | null | undefined {
+  if (input.liveFollowEnabled) {
+    return input.activeThread;
+  }
+
+  const deferredThread = input.deferredThread;
+  const activeThread = input.activeThread;
+  if (
+    deferredThread?.id === activeThread?.id &&
+    deferredThread?.environmentId === activeThread?.environmentId
+  ) {
+    return deferredThread;
+  }
+
+  return activeThread;
+}
+
 export function resolveDraftPromotionNavigationTarget(input: {
   serverThreadRef: ScopedThreadRef | null;
   serverThreadStarted: boolean;
