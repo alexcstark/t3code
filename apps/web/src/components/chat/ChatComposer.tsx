@@ -489,6 +489,9 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  openReasoningPicker: () => void;
+  toggleReasoningPicker: () => void;
+  isReasoningPickerOpen: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -984,6 +987,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [isComposerReasoningPickerOpen, setIsComposerReasoningPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
@@ -1278,7 +1282,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
+    open: isComposerReasoningPickerOpen,
+    onOpenChange: (open) => {
+      setIsComposerReasoningPickerOpen(open);
+      if (open) {
+        setIsComposerModelPickerOpen(false);
+      }
+    },
   });
+  const hasProviderTraits = providerTraitsMenuContent !== null;
+  useEffect(() => {
+    if (!hasProviderTraits) {
+      setIsComposerReasoningPickerOpen(false);
+    }
+  }, [hasProviderTraits]);
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -2700,12 +2717,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       insertTextAtEnd: insertComposerTextAtEnd,
       openModelPicker: () => {
+        setIsComposerReasoningPickerOpen(false);
         setIsComposerModelPickerOpen(true);
       },
       toggleModelPicker: () => {
+        setIsComposerReasoningPickerOpen(false);
         setIsComposerModelPickerOpen((open) => !open);
       },
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      openReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen(true);
+      },
+      toggleReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen((open) => !open);
+      },
+      isReasoningPickerOpen: () => isComposerReasoningPickerOpen,
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -2808,6 +2838,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
+      isComposerReasoningPickerOpen,
+      hasProviderTraits,
       readComposerSnapshot,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -3370,6 +3402,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : {})}
                       onOpenChange={(open) => {
                         setIsComposerModelPickerOpen(open);
+                        if (open) {
+                          setIsComposerReasoningPickerOpen(false);
+                        }
                       }}
                       getModelDisabledReason={getModelDisabledReason}
                       onInstanceModelChange={onProviderModelSelect}
@@ -3382,6 +3417,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       runtimeMode={runtimeMode}
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
+                      open={isComposerReasoningPickerOpen}
+                      onOpenChange={(open) => {
+                        setIsComposerReasoningPickerOpen(open);
+                        if (open) {
+                          setIsComposerModelPickerOpen(false);
+                        }
+                      }}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
                     />
