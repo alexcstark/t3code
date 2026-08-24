@@ -5855,7 +5855,7 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (isCommandPaletteOpen()) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -5866,6 +5866,7 @@ export default function ChatView(props: ChatViewProps) {
         terminalFocus: terminalFocusOwner !== null,
         terminalOpen: Boolean(terminalUiState.terminalOpen),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        reasoningPickerOpen: composerRef.current?.isReasoningPickerOpen() ?? false,
       };
 
       // Providers treat a follow-up sent during a running turn as a queued
@@ -5885,8 +5886,10 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (
+        activeThreadId !== null &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
+        !shortcutContext.reasoningPickerOpen &&
         shouldTypeToFocusComposer(event)
       ) {
         if (composerRef.current?.insertTextAtEnd(event.key)) {
@@ -5900,6 +5903,22 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "modelPicker.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        composerRef.current?.toggleModelPicker();
+        return;
+      }
+
+      if (command === "reasoningPicker.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        composerRef.current?.toggleReasoningPicker();
+        return;
+      }
+
+      if (!activeThreadId) return;
 
       if (command === "thread.copyReference") {
         event.preventDefault();
@@ -6041,13 +6060,6 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         onToggleDiff();
-        return;
-      }
-
-      if (command === "modelPicker.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        composerRef.current?.toggleModelPicker();
         return;
       }
 

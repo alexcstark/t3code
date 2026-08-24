@@ -25,14 +25,31 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
    * open menu closes when its trigger hides.
    */
   hidden?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const size = props.size ?? "sm";
-  const [open, setOpen] = useComposerMenuState(props.hidden);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isOpen = props.open ?? uncontrolledOpen;
+  const setIsOpen = (open: boolean) => {
+    props.onOpenChange?.(open);
+    if (props.open === undefined) {
+      setUncontrolledOpen(open);
+    }
+  };
+  const hidden = props.hidden ?? false;
+  // Base UI does not report a close it did not initiate, so clear the state
+  // when the trigger hides or the menu would reopen by itself when the
+  // trigger returns.
+  const [wasHidden, setWasHidden] = useState(hidden);
+  if (hidden !== wasHidden) {
+    setWasHidden(hidden);
+    if (hidden) setIsOpen(false);
+  }
 
-  return (
-    <Menu open={open} onOpenChange={setOpen}>
+  return <Menu open={isOpen && !hidden} onOpenChange={setIsOpen}>
       <MenuTrigger
         render={
           <ComposerControl
