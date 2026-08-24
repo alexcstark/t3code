@@ -6,6 +6,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   formatShortcutLabel,
   isDiffToggleShortcut,
@@ -771,6 +772,23 @@ describe("resolveShortcutCommand", () => {
         context: { previewFocus: true },
       }),
       "thread.stop",
+    );
+  });
+
+  it("resolves Cmd/Ctrl+W to settle outside the terminal and close inside it", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.settle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.close",
     );
   });
 
