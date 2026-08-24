@@ -6,6 +6,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   formatShortcutLabel,
   isChatNewShortcut,
@@ -683,6 +684,23 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("resolves Cmd/Ctrl+W to settle outside the terminal and close inside it", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.settle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.close",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
