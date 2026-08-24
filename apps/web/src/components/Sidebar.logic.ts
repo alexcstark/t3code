@@ -1,7 +1,11 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ModelSelection, ServerProviderModel } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import {
+  getModelSelectionOptionDescriptors,
+  getProviderOptionCurrentLabel,
+} from "@t3tools/shared/model";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -23,6 +27,39 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // so this limit is a direct renderer-heap and server-load multiplier — keep
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
+
+const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+
+function isReasoningOptionId(id: string): boolean {
+  return REASONING_OPTION_IDS.has(id) || id.toLowerCase() === "reasoninglevel";
+}
+
+function formatReasoningFallback(value: string): string {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function resolveSidebarReasoningLabel(input: {
+  modelSelection: ModelSelection;
+  model: ServerProviderModel | null;
+}): string | null {
+  const descriptors = input.model?.capabilities
+    ? getModelSelectionOptionDescriptors(input.modelSelection, input.model.capabilities)
+    : [];
+  const reasoningDescriptor = descriptors.find(
+    (descriptor) =>
+      descriptor.label.trim().toLowerCase() === "reasoning" || isReasoningOptionId(descriptor.id),
+  );
+  const descriptorLabel = getProviderOptionCurrentLabel(reasoningDescriptor);
+  if (descriptorLabel) return descriptorLabel;
+
+  const rawSelection = input.modelSelection.options?.find(({ id }) => isReasoningOptionId(id));
+  return typeof rawSelection?.value === "string"
+    ? formatReasoningFallback(rawSelection.value)
+    : null;
+}
 
 // The list already reaches its destination through sortable transforms while
 // the pointer is down. dnd-kit's default also animates the committed DOM order
