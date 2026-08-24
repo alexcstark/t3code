@@ -383,6 +383,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  resolveTimelineThreadSnapshot,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1703,16 +1704,20 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // Keep the timeline on the current snapshot while it owns the live edge.
+  // A deferred snapshot can end at an older message, so scrolling to its end
+  // during send or streaming makes the viewport jump backwards.
+  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   // Thread detail snapshots arrive on the stream for every message/activity
   // update. Keep the composer and command surfaces current, but let the
   // expensive timeline projection consume those snapshots at background
   // priority so input, scrolling, and shell controls remain responsive.
   const deferredTimelineThread = useDeferredValue(activeThread);
-  const timelineThread =
-    deferredTimelineThread?.id === activeThread?.id &&
-    deferredTimelineThread?.environmentId === activeThread?.environmentId
-      ? deferredTimelineThread
-      : activeThread;
+  const timelineThread = resolveTimelineThreadSnapshot({
+    activeThread,
+    deferredThread: deferredTimelineThread,
+    liveFollowEnabled: timelineLiveFollowEnabled,
+  });
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -4399,7 +4404,6 @@ function ChatViewContent(props: ChatViewProps) {
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
-  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);

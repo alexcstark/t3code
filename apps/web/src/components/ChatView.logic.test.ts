@@ -43,6 +43,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveDraftHeroState,
+  resolveTimelineThreadSnapshot,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -424,6 +425,34 @@ describe("shouldReleaseTimelineAnchorForToolActivity", () => {
     expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, runningTurnId: null })).toBe(
       false,
     );
+  });
+});
+
+describe("resolveTimelineThreadSnapshot", () => {
+  it("uses the current snapshot while live-following", () => {
+    const current = { id: "thread-1", environmentId: "environment-local", revision: 2 };
+    const deferred = { id: "thread-1", environmentId: "environment-local", revision: 1 };
+
+    expect(
+      resolveTimelineThreadSnapshot({
+        activeThread: current,
+        deferredThread: deferred,
+        liveFollowEnabled: true,
+      }),
+    ).toBe(current);
+  });
+
+  it("keeps the deferred snapshot while reading history", () => {
+    const current = { id: "thread-1", environmentId: "environment-local", revision: 2 };
+    const deferred = { id: "thread-1", environmentId: "environment-local", revision: 1 };
+
+    expect(
+      resolveTimelineThreadSnapshot({
+        activeThread: current,
+        deferredThread: deferred,
+        liveFollowEnabled: false,
+      }),
+    ).toBe(deferred);
   });
 });
 
