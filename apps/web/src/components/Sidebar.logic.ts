@@ -1,6 +1,6 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ModelSelection, ServerProviderModel } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   activeThreadAnchorTimestampMs,
@@ -11,6 +11,10 @@ import {
   type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
+import {
+  getModelSelectionOptionDescriptors,
+  getProviderOptionCurrentLabel,
+} from "@t3tools/shared/model";
 import type { SidebarThreadSummary, Thread } from "../types";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
@@ -75,6 +79,39 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   }
   if (value !== null) return value;
   return key !== null && retained.current?.key === key ? retained.current.value : null;
+}
+
+const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+
+function isReasoningOptionId(id: string): boolean {
+  return REASONING_OPTION_IDS.has(id) || id.toLowerCase() === "reasoninglevel";
+}
+
+function formatReasoningFallback(value: string): string {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function resolveSidebarReasoningLabel(input: {
+  modelSelection: ModelSelection;
+  model: ServerProviderModel | null;
+}): string | null {
+  const descriptors = input.model?.capabilities
+    ? getModelSelectionOptionDescriptors(input.modelSelection, input.model.capabilities)
+    : [];
+  const reasoningDescriptor = descriptors.find(
+    (descriptor) =>
+      descriptor.label.trim().toLowerCase() === "reasoning" || isReasoningOptionId(descriptor.id),
+  );
+  const descriptorLabel = getProviderOptionCurrentLabel(reasoningDescriptor);
+  if (descriptorLabel) return descriptorLabel;
+
+  const rawSelection = input.modelSelection.options?.find(({ id }) => isReasoningOptionId(id));
+  return typeof rawSelection?.value === "string"
+    ? formatReasoningFallback(rawSelection.value)
+    : null;
 }
 
 // The list already reaches its destination through sortable transforms while

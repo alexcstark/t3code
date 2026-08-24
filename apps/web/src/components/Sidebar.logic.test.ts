@@ -21,6 +21,8 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarStageBadgeLabel,
+  resolveSidebarReasoningLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -46,6 +48,7 @@ import {
   OrchestrationLatestTurn,
   ProjectId,
   ProviderInstanceId,
+  type ServerProviderModel,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -250,6 +253,103 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
   });
 });
 
+describe("resolveSidebarStageBadgeLabel", () => {
+  it("returns Nightly for nightly primary server versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.28-nightly.20260616.12",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Nightly");
+  });
+
+  it("returns the fallback label for stable primary server versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.27",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Alpha");
+  });
+
+  it("returns the fallback label when the primary server version is missing", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: null,
+        fallbackStageLabel: "Dev",
+      }),
+    ).toBe("Dev");
+  });
+
+  it("returns the fallback label for malformed nightly prerelease versions", () => {
+    expect(
+      resolveSidebarStageBadgeLabel({
+        primaryServerVersion: "0.0.28-nightly.20260616",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Alpha");
+  });
+});
+
+describe("resolveSidebarReasoningLabel", () => {
+  const model = {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    },
+  } satisfies ServerProviderModel;
+
+  it("uses the selected model capability label", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: model.slug,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      }),
+    ).toBe("Extra High");
+  });
+
+  it("falls back to a readable raw option when model capabilities are unavailable", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "max" }],
+        },
+      }),
+    ).toBe("Max");
+  });
+
+  it("does not treat unrelated provider options as reasoning", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+          options: [{ id: "agent", value: "build" }],
+        },
+      }),
+    ).toBeNull();
+  });
+});
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
   startedAt?: string | null;
