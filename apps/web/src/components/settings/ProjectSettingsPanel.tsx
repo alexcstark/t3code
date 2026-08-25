@@ -291,6 +291,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const settings = usePrimarySettings();
+  const { environments } = useEnvironments();
+  const projectDefaultEnvironmentIds = useClientSettings(
+    (clientSettings) => clientSettings.projectDefaultEnvironmentIds,
+  );
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -472,6 +476,30 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       ),
     [updateAllMembers],
   );
+
+  const storedDefaultEnvironmentId = projectDefaultEnvironmentIds[group.projectKey] ?? null;
+  const defaultEnvironmentId = group.memberProjects.some(
+    (member) => member.environmentId === storedDefaultEnvironmentId,
+  )
+    ? storedDefaultEnvironmentId
+    : null;
+  const setDefaultEnvironmentId = useCallback(
+    (environmentId: string | null) => {
+      const next = { ...projectDefaultEnvironmentIds };
+      if (environmentId === null) {
+        delete next[group.projectKey];
+      } else {
+        next[group.projectKey] = environmentId as (typeof next)[string];
+      }
+      updateClientSettings({ projectDefaultEnvironmentIds: next });
+    },
+    [group.projectKey, projectDefaultEnvironmentIds, updateClientSettings],
+  );
+  const environmentLabel = (environmentId: string) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    group.memberProjects.find((member) => member.environmentId === environmentId)
+      ?.environmentLabel ??
+    environmentId;
 
   // ----- favicon -----
   const [faviconPickerOpen, setFaviconPickerOpen] = useState(false);
@@ -941,6 +969,44 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   </SelectItem>
                   <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
                   <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Location"
+            description="Where new threads in this project run when it has checkouts on multiple connected environments."
+            resetAction={
+              storedDefaultEnvironmentId !== null ? (
+                <SettingResetButton
+                  label="project default location"
+                  onClick={() => setDefaultEnvironmentId(null)}
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={defaultEnvironmentId ?? "inherit"}
+                onValueChange={(value) => {
+                  setDefaultEnvironmentId(value === "inherit" ? null : String(value));
+                }}
+              >
+                <SelectTrigger aria-label="New-thread location">
+                  <SelectValue>
+                    {defaultEnvironmentId === null
+                      ? group.memberProjects.length > 1
+                        ? "Default (current checkout)"
+                        : environmentLabel(group.memberProjects[0]!.environmentId)
+                      : environmentLabel(defaultEnvironmentId)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="inherit">Default (current checkout)</SelectItem>
+                  {group.memberProjects.map((member) => (
+                    <SelectItem key={member.environmentId} value={member.environmentId}>
+                      {environmentLabel(member.environmentId)}
+                    </SelectItem>
+                  ))}
                 </SelectPopup>
               </Select>
             }
