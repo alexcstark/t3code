@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ProjectId,
   TrimmedNonEmptyString,
@@ -355,6 +356,11 @@ export const ClientSettingsSchema = Schema.Struct({
     TrimmedNonEmptyString,
     SidebarProjectGroupingMode,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Environment ids belong to this client's connections, not to a server's
+  // project record, so this preference is intentionally client-local.
+  projectDefaultEnvironmentIds: Schema.Record(TrimmedNonEmptyString, EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
   ),
@@ -1278,6 +1284,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
+  ),
+  projectDefaultEnvironmentIds: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, EnvironmentId),
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
