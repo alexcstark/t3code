@@ -316,6 +316,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(representative.environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
+  const { environments } = useEnvironments();
+  const projectDefaultEnvironmentIds = useClientSettings(
+    (clientSettings) => clientSettings.projectDefaultEnvironmentIds,
+  );
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const threads = useThreadShells();
@@ -515,6 +519,31 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   // ----- project icon -----
+  const storedDefaultEnvironmentId = projectDefaultEnvironmentIds[group.projectKey] ?? null;
+  const defaultEnvironmentId = group.memberProjects.some(
+    (member) => member.environmentId === storedDefaultEnvironmentId,
+  )
+    ? storedDefaultEnvironmentId
+    : null;
+  const setDefaultEnvironmentId = useCallback(
+    (environmentId: string | null) => {
+      const next = { ...projectDefaultEnvironmentIds };
+      if (environmentId === null) {
+        delete next[group.projectKey];
+      } else {
+        next[group.projectKey] = environmentId as (typeof next)[string];
+      }
+      updateClientSettings({ projectDefaultEnvironmentIds: next });
+    },
+    [group.projectKey, projectDefaultEnvironmentIds, updateClientSettings],
+  );
+  const environmentLabel = (environmentId: string) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    group.memberProjects.find((member) => member.environmentId === environmentId)
+      ?.environmentLabel ??
+    environmentId;
+
+  // ----- favicon -----
   const [faviconPickerOpen, setFaviconPickerOpen] = useState(false);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
@@ -1035,6 +1064,44 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 aria-label="Automatically pull the default branch"
                 onCheckedChange={setAutoPull}
               />
+            }
+          />
+          <SettingsRow
+            title="Location"
+            description="Where new threads in this project run when it has checkouts on multiple connected environments."
+            resetAction={
+              storedDefaultEnvironmentId !== null ? (
+                <SettingResetButton
+                  label="project default location"
+                  onClick={() => setDefaultEnvironmentId(null)}
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={defaultEnvironmentId ?? "inherit"}
+                onValueChange={(value) => {
+                  setDefaultEnvironmentId(value === "inherit" ? null : String(value));
+                }}
+              >
+                <SelectTrigger aria-label="New-thread location">
+                  <SelectValue>
+                    {defaultEnvironmentId === null
+                      ? group.memberProjects.length > 1
+                        ? "Default (current checkout)"
+                        : environmentLabel(group.memberProjects[0]!.environmentId)
+                      : environmentLabel(defaultEnvironmentId)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="inherit">Default (current checkout)</SelectItem>
+                  {group.memberProjects.map((member) => (
+                    <SelectItem key={member.environmentId} value={member.environmentId}>
+                      {environmentLabel(member.environmentId)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             }
           />
         </SettingsSection>

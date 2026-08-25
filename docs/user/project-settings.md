@@ -13,6 +13,18 @@ let T3 Code detect an icon again.
 Enable **Automatically pull** to keep the default-branch checkout up to date with its configured
 upstream.
 
-T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
-or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
-local work, resolve it yourself before automatic pulls can resume.
+The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
+Pull failures do not prevent the server from starting.
+
+## Defaults for new threads
+
+Open **Settings** → **Projects**, select a project, and use **New threads** to set:
+
+- **Model**: the provider and model used by new threads in the project.
+- **Workspace**: whether new threads use the current checkout or a new worktree.
+- **Location**: which connected environment (such as a remote machine) receives new threads when
+  the project has checkouts on multiple environments.
+
+The location preference is stored locally in the T3 Code client. **Default** uses the checkout you
+opened or selected. Explicitly choosing a branch, worktree, or workspace in the composer overrides
+the project location default.
