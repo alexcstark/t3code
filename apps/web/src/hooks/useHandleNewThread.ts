@@ -61,6 +61,9 @@ export function useNewThreadHandler() {
   // the decoded defaults ("local" mode, current branch), since nothing can
   // set those values on a remote server.
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
+  const projectDefaultEnvironmentIds = useClientSettings(
+    (settings) => settings.projectDefaultEnvironmentIds,
+  );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -77,6 +80,7 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        carryComposerContent?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -89,6 +93,7 @@ export function useNewThreadHandler() {
         getDraftSession,
         getDraftThread,
         applyStickyState,
+        moveComposerPromptAndImages,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
@@ -129,11 +134,55 @@ export function useNewThreadHandler() {
         carrySourceShell?.interactionMode ??
         carrySourceDraft?.interactionMode ??
         null;
-      const project = projects.find(
+      // Content only moves when the caller opted in and the user is looking
+      // at a draft. The content check happens at move time, not here: the
+      // paths below await, and text typed during those awaits must still
+      // come along.
+      const carryContentSourceDraftId =
+        options?.carryComposerContent === true && currentRouteTarget?.kind === "draft"
+          ? currentRouteTarget.draftId
+          : null;
+      const carryComposerContentTo = (destinationDraftId: DraftId) => {
+        if (
+          carryContentSourceDraftId &&
+          carryContentSourceDraftId !== destinationDraftId &&
+          // Never clobber a destination the user already invested in — the
+          // move overwrites the destination prompt, so a concurrent repo
+          // change that carried content first must win.
+          !composerDraftHasUserContent(getComposerDraft(destinationDraftId)) &&
+          composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
+        ) {
+          moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
+        }
+      };
+      const requestedProject = projects.find(
         (candidate) =>
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      const requestedLogicalProjectKey = requestedProject
+        ? deriveLogicalProjectKeyFromSettings(requestedProject, projectGroupingSettings)
+        : scopedProjectKey(projectRef);
+      const hasExplicitProjectLocation =
+        options?.branch !== undefined ||
+        options?.worktreePath !== undefined ||
+        options?.envMode !== undefined ||
+        options?.startFromOrigin !== undefined;
+      const preferredEnvironmentId = hasExplicitProjectLocation
+        ? null
+        : (projectDefaultEnvironmentIds[requestedLogicalProjectKey] ?? null);
+      const project =
+        (preferredEnvironmentId === null
+          ? requestedProject
+          : (projects.find(
+              (candidate) =>
+                candidate.environmentId === preferredEnvironmentId &&
+                deriveLogicalProjectKeyFromSettings(candidate, projectGroupingSettings) ===
+                  requestedLogicalProjectKey,
+            ) ?? requestedProject)) ?? null;
+      const resolvedProjectRef = project
+        ? scopeProjectRef(project.environmentId, project.id)
+        : projectRef;
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection: project?.defaultModelSelection ?? null,
@@ -146,7 +195,7 @@ export function useNewThreadHandler() {
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-        const consultProjectFile = project !== undefined && project.defaultThreadEnvMode == null;
+        const consultProjectFile = project !== null && project.defaultThreadEnvMode == null;
         return resolveDefaultThreadEnvMode({
           projectSetting: project?.defaultThreadEnvMode,
           projectFile: consultProjectFile
@@ -158,9 +207,7 @@ export function useNewThreadHandler() {
           globalDefault: primaryServerSettings.defaultThreadEnvMode,
         });
       };
-      const logicalProjectKey = project
-        ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-        : scopedProjectKey(projectRef);
+      const logicalProjectKey = requestedLogicalProjectKey;
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
@@ -288,7 +335,7 @@ export function useNewThreadHandler() {
           // would otherwise wipe branch/worktree, undoing the write above.
           setLogicalProjectDraftThreadId(
             logicalProjectKey,
-            projectRef,
+            resolvedProjectRef,
             emptyStoredDraftThread.draftId,
             {
               threadId: emptyStoredDraftThread.threadId,
@@ -297,6 +344,7 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          carryComposerContentTo(emptyStoredDraftThread.draftId);
           const opened = {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
@@ -337,13 +385,18 @@ export function useNewThreadHandler() {
         ) {
           setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
         }
-        setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
-          threadId: latestActiveDraftThread.threadId,
-          createdAt: latestActiveDraftThread.createdAt,
-          runtimeMode: latestActiveDraftThread.runtimeMode,
-          interactionMode: latestActiveDraftThread.interactionMode,
-          ...pickExplicitWorkspaceOptions(options),
-        });
+        setLogicalProjectDraftThreadId(
+          logicalProjectKey,
+          resolvedProjectRef,
+          currentRouteTarget.draftId,
+          {
+            threadId: latestActiveDraftThread.threadId,
+            createdAt: latestActiveDraftThread.createdAt,
+            runtimeMode: latestActiveDraftThread.runtimeMode,
+            interactionMode: latestActiveDraftThread.interactionMode,
+            ...pickExplicitWorkspaceOptions(options),
+          },
+        );
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -377,13 +430,19 @@ export function useNewThreadHandler() {
           // this invocation's defaults here instead would clobber the
           // winner's explicit picks and could pair its worktreePath with a
           // contradictory envMode.
-          setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
-            threadId: racedDraft.threadId,
-            createdAt: racedDraft.createdAt,
-            runtimeMode: racedDraft.runtimeMode,
-            interactionMode: racedDraft.interactionMode,
-            ...pickExplicitWorkspaceOptions(options),
-          });
+          setLogicalProjectDraftThreadId(
+            logicalProjectKey,
+            resolvedProjectRef,
+            racedDraft.draftId,
+            {
+              threadId: racedDraft.threadId,
+              createdAt: racedDraft.createdAt,
+              runtimeMode: racedDraft.runtimeMode,
+              interactionMode: racedDraft.interactionMode,
+              ...pickExplicitWorkspaceOptions(options),
+            },
+          );
+          carryComposerContentTo(racedDraft.draftId);
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
@@ -391,7 +450,7 @@ export function useNewThreadHandler() {
           });
           return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
         }
-        setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
+        setLogicalProjectDraftThreadId(logicalProjectKey, resolvedProjectRef, draftId, {
           threadId,
           createdAt,
           branch: options?.branch ?? null,
@@ -413,6 +472,7 @@ export function useNewThreadHandler() {
           // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        carryComposerContentTo(draftId);
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },
@@ -421,7 +481,13 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, router],
+    [
+      getCurrentRouteTarget,
+      primaryServerSettings,
+      projectDefaultEnvironmentIds,
+      projectGroupingSettings,
+      router,
+    ],
   );
 }
 

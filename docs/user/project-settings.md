@@ -29,3 +29,16 @@ untracked files, or local commits.
 
 The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
 Pull failures do not prevent the server from starting.
+
+## Defaults for new threads
+
+Open **Settings** → **Projects**, select a project, and use **New threads** to set:
+
+- **Model**: the provider and model used by new threads in the project.
+- **Workspace**: whether new threads use the current checkout or a new worktree.
+- **Location**: which connected environment (such as a remote machine) receives new threads when
+  the project has checkouts on multiple environments.
+
+The location preference is stored locally in the T3 Code client. **Default** uses the checkout you
+opened or selected. Explicitly choosing a branch, worktree, or workspace in the composer overrides
+the project location default.
