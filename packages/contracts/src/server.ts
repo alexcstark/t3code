@@ -123,6 +123,18 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
+export const ServerProviderRateLimitWindow = Schema.Struct({
+  usedPercent: NonNegativeInt,
+  windowDurationMins: Schema.NullOr(NonNegativeInt),
+});
+export type ServerProviderRateLimitWindow = typeof ServerProviderRateLimitWindow.Type;
+
+export const ServerProviderRateLimits = Schema.Struct({
+  primary: Schema.NullOr(ServerProviderRateLimitWindow),
+  secondary: Schema.NullOr(ServerProviderRateLimitWindow),
+});
+export type ServerProviderRateLimits = typeof ServerProviderRateLimits.Type;
+
 /**
  * Availability of a configured provider instance from the runtime's POV.
  *
@@ -232,6 +244,8 @@ export const ServerProvider = Schema.Struct({
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  /** Rolling provider quota windows, when the provider exposes them. */
+  rateLimits: Schema.optionalKey(ServerProviderRateLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

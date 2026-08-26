@@ -21,6 +21,7 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
+  ServerProviderRateLimits,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
@@ -61,7 +62,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
-  readonly rateLimits?: CodexRateLimitsProbe;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -325,6 +326,25 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   return models;
 });
 
+function mapCodexRateLimits(
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+): ServerProviderRateLimits {
+  const mapWindow = (
+    window: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow | null | undefined,
+  ) =>
+    window === null || window === undefined
+      ? null
+      : {
+          usedPercent: window.usedPercent,
+          windowDurationMins: window.windowDurationMins ?? null,
+        };
+
+  return {
+    primary: mapWindow(response.rateLimits.primary),
+    secondary: mapWindow(response.rateLimits.secondary),
+  };
+}
+
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
@@ -355,6 +375,103 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
+  const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const environment = {
+    ...input.environment,
+    ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+  };
+  const spawnCommand = yield* resolveSpawnCommand(
+    input.binaryPath,
+    codexAppServerArgs(input.launchArgs),
+    {
+      env: environment,
+      extendEnv: true,
+    },
+  );
+  const child = yield* spawner
+    .spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: input.cwd,
+        env: environment,
+        extendEnv: true,
+        forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
+        shell: spawnCommand.shell,
+      }),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new CodexErrors.CodexAppServerSpawnError({
+            command: `${input.binaryPath} app-server`,
+            cause,
+          }),
+      ),
+    );
+  const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
+  const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+    Effect.provide(clientContext),
+  );
+
+  const initialize = yield* client.request("initialize", {
+    clientInfo: {
+      name: "t3code_desktop",
+      title: "T3 Code Desktop",
+      version: "0.1.0",
+    },
+    capabilities: {
+      experimentalApi: true,
+    },
+  });
+  yield* client.notify("initialized", undefined);
+
+  // Extract the version string after the first '/' in userAgent, up to the next space or the end
+  const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
+  const version = versionMatch ? versionMatch[1] : undefined;
+
+  const accountResponse = yield* client.request("account/read", {});
+  const rateLimits =
+    accountResponse.account?.type === "chatgpt"
+      ? yield* client.request("account/rateLimits/read", undefined).pipe(Effect.option)
+      : Option.none();
+  if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+    return {
+      account: accountResponse,
+      ...(Option.isSome(rateLimits) ? { rateLimits: rateLimits.value } : {}),
+      version,
+      models: appendCustomCodexModels([], input.customModels ?? []),
+      skills: [],
+    } satisfies CodexAppServerProviderSnapshot;
+  }
+
+  const [skillsResponse, models] = yield* Effect.all(
+    [
+      client.request("skills/list", {
+        cwds: [input.cwd],
+      }),
+      requestAllCodexModels(client),
+    ],
+    { concurrency: "unbounded" },
+  );
+
+  return {
+    account: accountResponse,
+    ...(Option.isSome(rateLimits) ? { rateLimits: rateLimits.value } : {}),
+    version,
+    models: applyPreferredCodexDefaultModel(
+      appendCustomCodexModels(models, input.customModels ?? []),
+    ),
+    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+  } satisfies CodexAppServerProviderSnapshot;
+});
+
+export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
@@ -684,7 +801,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
-      usageLimits,
+      ...(snapshot.rateLimits ? { rateLimits: mapCodexRateLimits(snapshot.rateLimits) } : {}),
     },
   });
 });
