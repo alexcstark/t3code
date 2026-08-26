@@ -69,6 +69,13 @@ export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
 
+export function shouldFocusComposerAfterResponseClick(input: {
+  readonly selectionInResponse: boolean;
+  readonly targetIsInteractive: boolean;
+}): boolean {
+  return !input.selectionInResponse && !input.targetIsInteractive;
+}
+
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
