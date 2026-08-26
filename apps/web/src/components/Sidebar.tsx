@@ -36,6 +36,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  ArchiveIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
@@ -51,6 +52,7 @@ import {
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
+  Trash2Icon,
   Undo2Icon,
   XIcon,
 } from "lucide-react";
@@ -134,6 +136,7 @@ import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
+  archiveSelectedThreadEntries,
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   buildBulkTitleRegenerationContextMenuItem,
@@ -208,6 +211,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -608,6 +612,7 @@ function SidebarSectionHeader(props: {
   marker: "snoozed-header" | "settled-header";
   label: string;
   isDropTarget?: boolean;
+  trailingAction?: ReactNode;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
   const snoozed = props.marker === "snoozed-header";
@@ -642,15 +647,18 @@ function SidebarSectionHeader(props: {
       data-testid={`sidebar-${props.marker}`}
       className="mx-0.5 h-8"
     >
-      <button
-        type="button"
-        onClick={props.toggle.onToggle}
-        aria-expanded={props.toggle.expanded}
-        data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
-        className={cn(className, "cursor-pointer")}
-      >
-        {content}
-      </button>
+      <div className="flex h-full items-center gap-1">
+        <button
+          type="button"
+          onClick={props.toggle.onToggle}
+          aria-expanded={props.toggle.expanded}
+          data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
+          className={cn(className, "min-w-0 flex-1 cursor-pointer")}
+        >
+          {content}
+        </button>
+        {props.trailingAction}
+      </div>
     </SortableSidebarMarker>
   );
 }
@@ -3791,6 +3799,98 @@ export default function Sidebar() {
     ],
   );
 
+  const handleBulkSettledAction = useCallback(
+    async (action: "archive" | "delete") => {
+      const api = readLocalApi();
+      if (!api || settledThreads.length === 0) return;
+
+      const entries = settledThreads.map((thread) => ({
+        threadKey: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        threadRef: scopeThreadRef(thread.environmentId, thread.id),
+      }));
+      const count = entries.length;
+
+      if (action === "archive") {
+        if (confirmThreadArchive) {
+          const confirmed = await settlePromise(() =>
+            api.dialogs.confirm(`Archive ${count} settled thread${count === 1 ? "" : "s"}?`),
+          );
+          if (confirmed._tag === "Failure" || !confirmed.value) return;
+        }
+
+        const outcome = await archiveSelectedThreadEntries({
+          entries,
+          archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+        });
+        removeFromSelection(outcome.archivedThreadKeys);
+
+        for (const failure of outcome.followupFailures) {
+          if (isAtomCommandInterrupted(failure)) continue;
+          const error = squashAtomCommandFailure(failure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Threads archived, but navigation failed",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        if (outcome.mutationFailure && !isAtomCommandInterrupted(outcome.mutationFailure)) {
+          const error = squashAtomCommandFailure(outcome.mutationFailure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to archive settled threads",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+
+      if (confirmThreadDelete) {
+        const confirmed = await settlePromise(() =>
+          api.dialogs.confirm(
+            [
+              `Delete ${count} settled thread${count === 1 ? "" : "s"}?`,
+              "This permanently clears conversation history for these threads.",
+            ].join("\n"),
+            { variant: "destructive" },
+          ),
+        );
+        if (confirmed._tag === "Failure" || !confirmed.value) return;
+      }
+
+      const deletedThreadKeys = new Set<string>();
+      for (const { threadKey, threadRef } of entries) {
+        const result = await deleteThread(threadRef, { deletedThreadKeys });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to delete settled threads",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          break;
+        }
+        deletedThreadKeys.add(threadKey);
+      }
+      removeFromSelection([...deletedThreadKeys]);
+    },
+    [
+      archiveThread,
+      confirmThreadArchive,
+      confirmThreadDelete,
+      deleteThread,
+      removeFromSelection,
+      settledThreads,
+    ],
+  );
+
   const handleThreadContextMenu = useCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -4746,6 +4846,42 @@ export default function Sidebar() {
                                     : `Settled (${settledThreads.length})`
                                 }
                                 isDropTarget={dragTargetSection === "settled"}
+                                trailingAction={
+                                  <Menu>
+                                    <MenuTrigger
+                                      render={
+                                        <Button
+                                          type="button"
+                                          size="micro"
+                                          variant="ghost-muted"
+                                          aria-label="Settled thread actions"
+                                          data-testid="sidebar-settled-actions"
+                                          title="Settled thread actions"
+                                          className="shrink-0 px-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground"
+                                        />
+                                      }
+                                    >
+                                      Actions
+                                    </MenuTrigger>
+                                    <MenuPopup align="end">
+                                      <MenuItem
+                                        data-testid="sidebar-settled-archive-all"
+                                        onClick={() => void handleBulkSettledAction("archive")}
+                                      >
+                                        <ArchiveIcon />
+                                        Archive all ({settledThreads.length})
+                                      </MenuItem>
+                                      <MenuItem
+                                        variant="destructive"
+                                        data-testid="sidebar-settled-delete-all"
+                                        onClick={() => void handleBulkSettledAction("delete")}
+                                      >
+                                        <Trash2Icon />
+                                        Delete all ({settledThreads.length})
+                                      </MenuItem>
+                                    </MenuPopup>
+                                  </Menu>
+                                }
                                 toggle={{
                                   expanded: settledShelfExpanded,
                                   onToggle: toggleSettledShelf,
