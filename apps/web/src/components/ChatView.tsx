@@ -4850,7 +4850,19 @@ export default function ChatView(props: ChatViewProps) {
         }
 
         const metrics = getActiveTimelineTurnMetrics(list);
-        if (!metrics || metrics.scrollDeltaToRevealEnd <= 1) {
+        if (!metrics) {
+          return;
+        }
+
+        // The anchored tail is only useful while the first few messages fit
+        // above the composer. Once the live content fills that space, release
+        // the special framing so ordinary end-follow keeps the latest text
+        // close to the composer instead of relying on a second scroll pass.
+        if (metrics.overflowsUsableViewport) {
+          scrollToEnd();
+          return;
+        }
+        if (metrics.scrollDeltaToRevealEnd <= 1) {
           return;
         }
 
@@ -4865,7 +4877,7 @@ export default function ChatView(props: ChatViewProps) {
         cancelAnimationFrame(secondFrame);
       }
     };
-  }, [activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
+  }, [activeThread?.id, getActiveTimelineTurnMetrics, scrollToEnd, timelineEntries]);
 
   useEffect(() => {
     if (!activeThread?.id || !latestTurnSettled) {
