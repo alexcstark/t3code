@@ -14,6 +14,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_RESPONSE_CLICK = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -83,6 +84,7 @@ import {
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
+  shouldFocusComposerAfterResponseClick,
   shouldPreserveAssistantLineBreaks,
   toolGroupAction,
   workEntryIsVisibleInGroup,
@@ -147,6 +149,7 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  onResponseClick: () => void;
 }
 
 interface TimelineRowActivityState {
@@ -238,6 +241,7 @@ interface MessagesTimelineProps {
   liveFollowEnabled: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
+  onResponseClick?: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -277,6 +281,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   liveFollowEnabled,
   onIsAtEndChange,
   onManualNavigation,
+  onResponseClick = NOOP_RESPONSE_CLICK,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
@@ -542,6 +547,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onResponseClick,
     }),
     [
       timestampFormat,
@@ -558,6 +564,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onResponseClick,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1154,9 +1161,36 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
+  const handleResponseClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const selection = window.getSelection();
+      const selectionInResponse =
+        selection !== null &&
+        !selection.isCollapsed &&
+        (selection.anchorNode !== null || selection.focusNode !== null) &&
+        (selection.anchorNode === null || event.currentTarget.contains(selection.anchorNode)) &&
+        (selection.focusNode === null || event.currentTarget.contains(selection.focusNode));
+      const targetIsInteractive =
+        event.target instanceof Element &&
+        event.target.closest(
+          'a, button, input, textarea, select, [contenteditable="true"], [role="button"]',
+        ) !== null;
+
+      if (
+        shouldFocusComposerAfterResponseClick({
+          selectionInResponse,
+          targetIsInteractive,
+        })
+      ) {
+        ctx.onResponseClick();
+      }
+    },
+    [ctx.onResponseClick],
+  );
+
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <div className="relative min-w-0 px-1 py-0.5" onClick={handleResponseClick}>
         <ChatMarkdown
           text={messageText}
           cwd={ctx.markdownCwd}
