@@ -2266,43 +2266,13 @@ export default function Sidebar() {
     );
     return routeThread === undefined ? [] : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
-
-  const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
-  );
-  const orderedThreadKeys = useMemo(
-    () =>
-      orderedThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    [orderedThreads],
-  );
-  // Rows call back into the click handler without carrying the ordered list as
-  // a prop — a fresh array identity per shell update would defeat every row's
-  // memoization. The ref keeps shift-range-select working against the list as
-  // rendered at click time.
-  const orderedThreadKeysRef = useRef(orderedThreadKeys);
-  orderedThreadKeysRef.current = orderedThreadKeys;
-  const threadByKey = useMemo(
-    () =>
-      new Map(
-        orderedThreads.map(
-          (thread) =>
-            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
-        ),
-      ),
-    [orderedThreads],
-  );
-  // Handlers read these through refs: depending on per-update Map/Set
-  // identities would give every row a fresh callback prop on each shell
-  // event and defeat row memoization during streaming.
-  const threadByKeyRef = useRef(threadByKey);
-  threadByKeyRef.current = threadByKey;
-  // handleNewThread is inherently unstable (depends on the projects list);
-  // a ref keeps it out of attemptSettle's dependency array.
+  // These refs let event handlers use the latest rendered order without
+  // making every row receive a fresh callback when the sidebar updates.
+  const orderedThreadKeysRef = useRef<readonly string[]>([]);
+  const threadByKeyRef = useRef<Map<string, EnvironmentThreadShell>>(new Map());
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   handleNewThreadRef.current = newThreadContext.handleNewThread;
+
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -2326,16 +2296,6 @@ export default function Sidebar() {
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
 
-  const jumpLabelByKey = useMemo(() => {
-    const mapping = new Map<string, string>();
-    for (const [index, threadKey] of orderedThreadKeys.entries()) {
-      const jumpCommand = threadJumpCommandForIndex(index);
-      if (!jumpCommand) break;
-      const label = shortcutLabelForCommand(keybindings, jumpCommand);
-      if (label) mapping.set(threadKey, label);
-    }
-    return mapping;
-  }, [keybindings, orderedThreadKeys]);
   const [showJumpHints, setShowJumpHints] = useState(false);
 
   // Settled threads are live shells, so opening one is plain navigation:
@@ -2643,6 +2603,54 @@ export default function Sidebar() {
       getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     });
   }, [optimisticPinnedOrder, pinnedThreads]);
+  // Shortcuts and keyboard navigation follow the same order the sidebar
+  // renders. Reordering active or pinned threads must therefore update both
+  // the destination and the label shown on each row.
+  const orderedThreads = useMemo(
+    () => [
+      ...orderedPinnedThreads,
+      ...orderedActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [orderedActiveThreads, orderedPinnedThreads, renderedSettledThreads, visibleSnoozedThreads],
+  );
+  const orderedThreadKeys = useMemo(
+    () =>
+      orderedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    [orderedThreads],
+  );
+  // Rows call back into the click handler without carrying the ordered list as
+  // a prop — a fresh array identity per shell update would defeat every row's
+  // memoization. The ref keeps shift-range-select working against the list as
+  // rendered at click time.
+  orderedThreadKeysRef.current = orderedThreadKeys;
+  const threadByKey = useMemo(
+    () =>
+      new Map(
+        orderedThreads.map(
+          (thread) =>
+            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+        ),
+      ),
+    [orderedThreads],
+  );
+  // Handlers read these through refs: depending on per-update Map/Set
+  // identities would give every row a fresh callback prop on each shell
+  // event and defeat row memoization during streaming.
+  threadByKeyRef.current = threadByKey;
+  const jumpLabelByKey = useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const [index, threadKey] of orderedThreadKeys.entries()) {
+      const jumpCommand = threadJumpCommandForIndex(index);
+      if (!jumpCommand) break;
+      const label = shortcutLabelForCommand(keybindings, jumpCommand);
+      if (label) mapping.set(threadKey, label);
+    }
+    return mapping;
+  }, [keybindings, orderedThreadKeys]);
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
     const canonical = pinnedThreads.filter((thread) =>
