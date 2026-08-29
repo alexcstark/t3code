@@ -11,6 +11,7 @@ import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-ro
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
+import { APP_BASE_NAME, APP_DISPLAY_NAME } from "../../branding";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -90,15 +91,29 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       )}
       to="/"
     >
-      <T3Wordmark />
-      <span
-        className={cn(
-          "-translate-y-px truncate text-sm font-medium tracking-tight",
-          onBackdrop ? "text-white/70" : "text-muted-foreground",
-        )}
-      >
-        Code
-      </span>
+      {APP_BASE_NAME === "T3 Code" ? (
+        <>
+          <T3Wordmark />
+          <span
+            className={cn(
+              "-translate-y-px truncate text-sm font-medium tracking-tight",
+              onBackdrop ? "text-white/70" : "text-muted-foreground",
+            )}
+          >
+            Code
+          </span>
+        </>
+      ) : (
+        <span
+          className={cn(
+            "-translate-y-px truncate text-sm font-semibold tracking-tight",
+            onBackdrop ? "text-white" : "text-foreground",
+          )}
+          data-app-branding="custom"
+        >
+          {APP_DISPLAY_NAME}
+        </span>
+      )}
     </Link>
   );
 }
