@@ -102,12 +102,14 @@ function resolveDesktopAppStageLabel(input: {
 export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly displayName: Option.Option<string>;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  const displayName = Option.getOrElse(input.displayName, () => `${APP_BASE_NAME} (${stageLabel})`);
   return {
-    baseName: APP_BASE_NAME,
+    baseName: Option.getOrElse(input.displayName, () => APP_BASE_NAME),
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName,
   };
 }
 
@@ -171,6 +173,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
+    displayName: config.desktopDisplayName,
   });
   const displayName = branding.displayName;
   const stateDir = resolveDesktopStateDir({
@@ -179,8 +182,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const defaultUserDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  const userDataDirName = Option.getOrElse(
+    config.desktopUserDataDirName,
+    () => defaultUserDataDirName,
+  );
+  const legacyUserDataDirName = Option.getOrElse(config.desktopUserDataDirName, () =>
+    isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
+  );
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
