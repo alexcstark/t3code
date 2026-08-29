@@ -149,6 +149,23 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("uses configured display and user-data names for parallel app variants", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {},
+        {
+          T3CODE_DESKTOP_DISPLAY_NAME: "T4 Code",
+          T3CODE_DESKTOP_USER_DATA_DIR_NAME: "t3code-t4",
+        },
+      );
+
+      assert.equal(environment.displayName, "T4 Code");
+      assert.equal(environment.branding.baseName, "T4 Code");
+      assert.equal(environment.userDataDirName, "t3code-t4");
+      assert.equal(environment.legacyUserDataDirName, "t3code-t4");
+    }),
+  );
+
   it.effect("resolves picker defaults without nullish sentinels", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment();
