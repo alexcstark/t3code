@@ -2,6 +2,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
+import { Platform, useWindowDimensions } from "react-native";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -24,6 +25,7 @@ import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export function HomeRouteScreen() {
+  const { width: windowWidth } = useWindowDimensions();
   const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
@@ -106,7 +108,11 @@ export function HomeRouteScreen() {
     return (
       <>
         <NativeStackScreenOptions
-          options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
+          options={
+            Platform.OS === "android"
+              ? { headerShown: false }
+              : { title: "", headerTitle: "", unstable_headerLeftItems: () => [] }
+          }
         />
         <WorkspaceSidebarToolbar
           afterSidebarButton={
@@ -129,18 +135,22 @@ export function HomeRouteScreen() {
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
-        {/* Restore the compact title after the split branch blanks the detail
-            header. The brand slot doubles as the connection status surface:
-            while an environment reconnects, the lockup fades to a status label
-            in place (no layout shift in the list below). */}
+        {/* Restore the header after leaving split view; screen options are
+            shallow-merged. The brand slot also doubles as the connection
+            status surface while an environment reconnects. */}
         <NativeStackScreenOptions
-          options={getConnectionAwareBrandHeaderOptions({
-            onOpenEnvironments: () =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "SettingsEnvironments" },
-              }),
-          })}
+          optionsVersion={windowWidth}
+          options={{
+            ...getConnectionAwareBrandHeaderOptions({
+              headerWidth: windowWidth,
+              onOpenEnvironments: () =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsEnvironments" },
+                }),
+            }),
+            headerShown: true,
+          }}
         />
         <HomeHeader
           environments={environments}

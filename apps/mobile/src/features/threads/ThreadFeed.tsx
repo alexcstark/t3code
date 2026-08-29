@@ -40,12 +40,13 @@ import {
   type ColorValue,
   useWindowDimensions,
   View,
+  type ViewStyle,
 } from "react-native";
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -75,7 +76,11 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
+import {
+  deriveCenteredContentHorizontalPadding,
+  deriveThreadFeedInitialContentInset,
+  type LayoutVariant,
+} from "../../lib/layout";
 import {
   resolveMarkdownFontSizes,
   resolveNativeMarkdownTypography,
@@ -105,6 +110,7 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl, useAssetUrlState } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -196,35 +202,48 @@ function MessageAttachmentImage(props: {
   );
 }
 
-/** Markdown image whose src is a workspace file — loads through a signed asset URL. */
-function ThreadMarkdownImage(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly path: string;
+function ThreadMarkdownImageView(props: {
+  readonly uri: string | null;
+  readonly sourceKey: string;
+  readonly unavailable: boolean;
   readonly alt: string | null;
   readonly onPressImage: (uri: string) => void;
 }) {
-  const codeBackground = useThemeColor("--color-md-code-bg");
+  const [availableWidth, setAvailableWidth] = useState(0);
+  const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
   const [failedUri, setFailedUri] = useState<string | null>(null);
-  const assetUrl = useAssetUrlState(props.environmentId, {
-    _tag: "workspace-file",
-    threadId: props.threadId,
-    path: props.path,
-  });
-  const uri = assetUrl._tag === "Success" ? assetUrl.url : null;
-  const failed = assetUrl._tag === "Failure" || (uri !== null && failedUri === uri);
+
+  useEffect(() => {
+    setSourceSize(null);
+  }, [props.sourceKey]);
+
+  useEffect(() => {
+    setFailedUri(null);
+  }, [props.uri]);
+
+  const displaySize =
+    sourceSize === null
+      ? null
+      : resolveMarkdownImageDisplaySize({
+          sourceWidth: sourceSize.width,
+          sourceHeight: sourceSize.height,
+          availableWidth,
+        });
+  const failed = props.unavailable || (props.uri !== null && failedUri === props.uri);
+  const placeholderWidth: ViewStyle["width"] =
+    availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
+  const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
 
   return (
-    <View style={{ gap: 6 }}>
-      {uri === null || failed ? (
+    <View
+      onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
+      style={{ alignSelf: "stretch", gap: 6 }}
+    >
+      {props.uri === null || failed ? (
         <View
+          className="items-center justify-center rounded-[10px] bg-md-code-bg"
           style={{
-            width: "100%",
-            aspectRatio: 16 / 9,
-            borderRadius: 10,
-            backgroundColor: codeBackground,
-            alignItems: "center",
-            justifyContent: "center",
+            ...frameStyle,
           }}
         >
           {failed ? (
@@ -238,20 +257,22 @@ function ThreadMarkdownImage(props: {
           accessibilityRole="imagebutton"
           accessibilityLabel={props.alt ?? "Markdown image"}
           activeOpacity={0.7}
-          onPress={() => props.onPressImage(uri)}
+          onPress={() => props.onPressImage(props.uri!)}
+          style={{ alignSelf: "flex-start" }}
         >
-          <Image
-            source={{ uri }}
-            resizeMode="contain"
-            accessible={false}
-            onError={() => setFailedUri(uri)}
+          <View
+            className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
             style={{
-              width: "100%",
-              aspectRatio: 16 / 9,
-              borderRadius: 10,
-              backgroundColor: codeBackground,
+              ...frameStyle,
             }}
-          />
+          >
+            <ThreadMarkdownImageRequest
+              key={props.uri}
+              uri={props.uri}
+              onLoad={setSourceSize}
+              onError={() => setFailedUri(props.uri)}
+            />
+          </View>
         </TouchableOpacity>
       )}
       {props.alt ? (
@@ -263,28 +284,72 @@ function ThreadMarkdownImage(props: {
   );
 }
 
-function ThreadMarkdownImageUnavailable(props: { readonly alt: string | null }) {
-  const codeBackground = useThemeColor("--color-md-code-bg");
+function ThreadMarkdownImageRequest(props: {
+  readonly uri: string;
+  readonly onLoad: (sourceSize: { width: number; height: number }) => void;
+  readonly onError: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+
   return (
-    <View style={{ gap: 6 }}>
-      <View
-        style={{
-          width: "100%",
-          aspectRatio: 16 / 9,
-          borderRadius: 10,
-          backgroundColor: codeBackground,
-          alignItems: "center",
-          justifyContent: "center",
+    <>
+      <Image
+        source={{ uri: props.uri }}
+        resizeMode="contain"
+        accessible={false}
+        onLoad={(event) => {
+          setLoaded(true);
+          props.onLoad(event.nativeEvent.source);
         }}
-      >
-        <Text className="text-xs text-foreground-muted">Image unavailable</Text>
-      </View>
-      {props.alt ? (
-        <Text selectable className="text-xs text-foreground-muted">
-          {props.alt}
-        </Text>
-      ) : null}
-    </View>
+        onError={props.onError}
+        style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
+      />
+      {loaded ? null : (
+        <View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
+        >
+          <Text className="text-xs text-foreground-muted">Loading image…</Text>
+        </View>
+      )}
+    </>
+  );
+}
+
+/** Markdown image whose src is a workspace file — loads through a signed asset URL. */
+function ThreadMarkdownImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly path: string;
+  readonly alt: string | null;
+  readonly onPressImage: (uri: string) => void;
+}) {
+  const assetUrl = useAssetUrlState(props.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadId,
+    path: props.path,
+  });
+
+  return (
+    <ThreadMarkdownImageView
+      uri={assetUrl._tag === "Success" ? assetUrl.url : null}
+      sourceKey={props.path}
+      unavailable={assetUrl._tag === "Failure"}
+      alt={props.alt}
+      onPressImage={props.onPressImage}
+    />
+  );
+}
+
+function ThreadMarkdownImageUnavailable(props: { readonly alt: string | null }) {
+  return (
+    <ThreadMarkdownImageView
+      uri={null}
+      sourceKey="unavailable"
+      unavailable
+      alt={props.alt}
+      onPressImage={() => undefined}
+    />
   );
 }
 
@@ -483,23 +548,18 @@ function MarkdownCodeBlock(props: {
 }
 
 function useReviewCommentColors(): ReviewCommentColors {
-  const background = useThemeColor("--color-card");
-  const border = useThemeColor("--color-border");
-  const mutedBackground = useThemeColor("--color-subtle");
-  const text = useThemeColor("--color-foreground");
-  const mutedText = useThemeColor("--color-foreground-muted");
-  const codeBackground = useThemeColor("--color-md-code-bg");
+  const theme = useUniwindTheme();
 
   return useMemo(
     () => ({
-      background,
-      border,
-      mutedBackground,
-      text,
-      mutedText,
-      codeBackground,
+      background: theme["--color-card"],
+      border: theme["--color-border"],
+      mutedBackground: theme["--color-subtle"],
+      text: theme["--color-foreground"],
+      mutedText: theme["--color-foreground-muted"],
+      codeBackground: theme["--color-md-code-bg"],
     }),
-    [background, border, codeBackground, mutedBackground, mutedText, text],
+    [theme],
   );
 }
 
@@ -517,25 +577,26 @@ function useMarkdownStyles(
     [appearance.baseFontSize],
   );
   const themeMode = themeAppearance;
-  const markdownBodyColor = String(useThemeColor("--color-md-body"));
-  const markdownStrongColor = String(useThemeColor("--color-md-strong"));
-  const markdownLinkColor = String(useThemeColor("--color-md-link"));
-  const markdownBlockquoteBg = String(useThemeColor("--color-md-blockquote-bg"));
-  const markdownBlockquoteBorder = String(useThemeColor("--color-md-blockquote-border"));
-  const markdownCodeBg = String(useThemeColor("--color-md-code-bg"));
-  const markdownCodeText = String(useThemeColor("--color-md-code-text"));
-  const markdownInlineCodeText = String(useThemeColor("--color-foreground-secondary"));
-  const markdownHrColor = String(useThemeColor("--color-md-hr"));
-  const markdownUserBodyColor = String(useThemeColor("--color-user-bubble-foreground"));
-  const markdownUserCodeBg = String(useThemeColor("--color-md-user-code-bg"));
-  const markdownUserCodeText = String(useThemeColor("--color-md-user-code-text"));
-  const markdownUserInlineCodeText = String(useThemeColor("--color-user-bubble-foreground-muted"));
-  const markdownUserFenceBg = String(useThemeColor("--color-md-user-fence-bg"));
-  const markdownUserFenceText = String(useThemeColor("--color-md-user-fence-text"));
-  const iconSubtleColor = String(useThemeColor("--color-icon-subtle"));
-  const inlineSkillForeground = String(useThemeColor("--color-inline-skill-foreground"));
-  const userBubbleSkillForeground = String(useThemeColor("--color-user-bubble-skill-foreground"));
-  const userBubbleForegroundMuted = String(useThemeColor("--color-user-bubble-foreground-muted"));
+  const theme = useUniwindTheme();
+  const markdownBodyColor = theme["--color-md-body"];
+  const markdownStrongColor = theme["--color-md-strong"];
+  const markdownLinkColor = theme["--color-md-link"];
+  const markdownBlockquoteBg = theme["--color-md-blockquote-bg"];
+  const markdownBlockquoteBorder = theme["--color-md-blockquote-border"];
+  const markdownCodeBg = theme["--color-md-code-bg"];
+  const markdownCodeText = theme["--color-md-code-text"];
+  const markdownInlineCodeText = theme["--color-foreground-secondary"];
+  const markdownHrColor = theme["--color-md-hr"];
+  const markdownUserBodyColor = theme["--color-user-bubble-foreground"];
+  const markdownUserCodeBg = theme["--color-md-user-code-bg"];
+  const markdownUserCodeText = theme["--color-md-user-code-text"];
+  const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
+  const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
+  const markdownUserFenceText = theme["--color-md-user-fence-text"];
+  const iconSubtleColor = theme["--color-icon-subtle"];
+  const inlineSkillForeground = theme["--color-inline-skill-foreground"];
+  const userBubbleSkillForeground = theme["--color-user-bubble-skill-foreground"];
+  const userBubbleForegroundMuted = theme["--color-user-bubble-foreground-muted"];
   const regularFontFamily = useFontFamily("regular");
   const boldFontFamily = useFontFamily("bold");
 
@@ -935,7 +996,7 @@ function renderFeedEntry(
         accessibilityState={{ expanded: entry.expanded }}
         onPress={() => props.onToggleTurnFold(entry.turnId)}
         hitSlop={4}
-        className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
+        className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
       >
         <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
           {entry.label}
@@ -943,7 +1004,7 @@ function renderFeedEntry(
         <SymbolView
           name={entry.expanded ? "chevron.down" : "chevron.right"}
           size={15}
-          tintColor={iconSubtleColor}
+          tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
         />
       </Pressable>
@@ -967,7 +1028,9 @@ function renderFeedEntry(
     const isUser = message.role === "user";
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
-    const attachments = message.attachments ?? [];
+    const attachments = (message.attachments ?? []).filter(
+      (attachment) => attachment.type === "image",
+    );
     const hasReviewCommentContext = message.text.includes("<review_comment");
     // A bubble that sizes itself from its content cannot lay out a block whose
     // intrinsic width overflows `maxWidth`: Android positions the bubble's
@@ -1027,7 +1090,7 @@ function renderFeedEntry(
             })}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
               {timestampLabel}
             </Text>
             {message.text.trim().length > 0 ? (
@@ -1082,7 +1145,7 @@ function renderFeedEntry(
               key={attachment.id}
               environmentId={props.environmentId}
               attachmentId={attachment.id}
-              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
+              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-adaptive-neutral-200-800"
               onPressImage={props.onPressImage}
             />
           );
@@ -1096,7 +1159,7 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
               {timestampLabel}
             </Text>
           </View>
@@ -1132,11 +1195,11 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
       <View className="flex-row items-center gap-1">
-        <View className="h-1 w-1 rounded-full bg-neutral-400 dark:bg-neutral-500" />
-        <View className="h-1 w-1 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
-        <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
+        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-500" />
+        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-a80-500-a80" />
+        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-a60-500-a60" />
       </View>
-      <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
         Working for {durationLabel}
       </Text>
     </View>
@@ -1228,6 +1291,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
+  const appTheme = useUniwindTheme();
   const NativeReviewDiffView = resolveNativeReviewDiffView();
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
@@ -1240,8 +1304,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     [nativeReviewDiffData.rows],
   );
   const nativeReviewDiffTheme = useMemo(
-    () => createNativeReviewDiffTheme(appearanceScheme, themeId),
-    [appearanceScheme, themeId],
+    () => createNativeReviewDiffTheme(appearanceScheme, themeId, appTheme),
+    [appearanceScheme, appTheme, themeId],
   );
   const nativeRowsJson = useMemo(() => JSON.stringify(compactNativeRows), [compactNativeRows]);
   const nativeThemeJson = useMemo(
@@ -1486,6 +1550,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
+  const initialContentInset = deriveThreadFeedInitialContentInset({
+    platform: Platform.OS,
+    usesNativeAutomaticInsets,
+    bottomContentInset,
+  });
   // With automatic insets the header inset lives in UIKit's adjustedContentInset,
   // which LegendList's JS anchoring math cannot see — it measures the anchored
   // end space from the scroll view's frame top. Fold the header height back into
@@ -1498,8 +1567,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ? navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT
     : topContentInset;
 
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const userBubbleColor = useThemeColor("--color-user-bubble");
+  const theme = useUniwindTheme();
+  const iconSubtleColor = theme["--color-icon-subtle"];
+  const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
       const presentation = resolveMarkdownLinkPresentation(href);
@@ -1530,7 +1600,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (image) => {
       const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
       if (imageSource._tag === "Direct") {
-        return null;
+        return (
+          <ThreadMarkdownImageView
+            uri={imageSource.uri}
+            sourceKey={imageSource.uri}
+            unavailable={false}
+            alt={image.alt}
+            onPressImage={(uri) => setExpandedImage({ uri })}
+          />
+        );
       }
       if (imageSource._tag === "Blocked") {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
@@ -1717,10 +1795,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // The empty↔filled key below remounts the list, which resets its imperative
   // content-inset override — and useKeyboardChatComposerInset (mounted above
   // the remount boundary) deduplicates by height, so it never re-reports the
-  // composer inset to the fresh instance. Without this, the remounted list's
-  // initial scroll-to-end computes with a zero end inset and rests one
-  // composer-height short of the end. Layout effect: it must land before the
-  // list's first positioning tick or the one-shot initial scroll misses it.
+  // composer inset to the fresh instance. Re-report the measured overlay height
+  // (composer plus any pending approval / user-input card) so the remounted
+  // list's scroll math gets the true value; on Android the declarative
+  // contentInset floor below covers the window before this effect lands.
   const listMountKey = `${feedThreadKey}:${props.feed.length === 0 ? "empty" : "filled"}`;
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
@@ -2027,6 +2105,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // ThreadDetailScreen); this tells LegendList's scroll math about the
             // extra so programmatic end scrolls land at the true resting offset.
             contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
+            // Android: the composer overlay only exists as the keyboard
+            // integration's animated bottom padding, which the list's scroll
+            // math cannot see until the inset reports above land — and those
+            // arrive via runOnJS, racing the remounted list's one-shot initial
+            // scroll-at-end. Seed the estimated overlay height as a declarative
+            // contentInset floor: LegendList consumes it in JS math only
+            // (Android's ScrollView has no native contentInset prop) and the
+            // first reported override REPLACES it instead of adding to it.
+            // Not on iOS: there the prop would reach UIKit and inset natively
+            // on top of the animated padding.
+            {...(initialContentInset ? { contentInset: initialContentInset } : {})}
             // The keyboard integration's offset math (end pinning, max scroll)
             // must add the same UIKit-added extra, or its keyboard-open end
             // targets land one safe-area short of the true resting offset.

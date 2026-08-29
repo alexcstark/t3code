@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   deriveProjectGroupingOverrideKey,
@@ -46,6 +46,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
+import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
@@ -112,6 +113,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -307,6 +309,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
+  const projectNameEditedRef = useRef(false);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
@@ -406,18 +409,20 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   const renameGroup = useCallback(
-    async (nextTitle: string) => {
+    async (nextTitle: string, wasEdited: boolean) => {
       const title = nextTitle.trim();
       if (!title) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
         setProjectTitle(group.displayName);
         return;
       }
-      if (title === group.displayName) {
-        setProjectTitle(title);
-        return;
-      }
-      if (group.memberProjects.every((member) => member.title === title)) {
+      if (
+        !projectGroupTitleNeedsUpdate(
+          group.memberProjects.map((member) => member.title),
+          title,
+          wasEdited,
+        )
+      ) {
         setProjectTitle(group.displayName);
         return;
       }
@@ -446,6 +451,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   // ----- default model -----
   const storedSelection = representative.defaultModelSelection;
   const resolvedSelection = resolveDefaultProviderModelSelection(serverProviders, storedSelection);
+  const resolvedInstanceId = resolvedSelection?.instanceId ?? null;
+  const resolvedModel = resolvedSelection?.model ?? null;
   const instanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
@@ -454,12 +461,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     [serverProviders, settings],
   );
   const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(settings, serverProviders),
-    [serverProviders, settings],
+    () =>
+      getCustomModelOptionsByInstance(settings, serverProviders, resolvedInstanceId, resolvedModel),
+    [resolvedInstanceId, resolvedModel, serverProviders, settings],
   );
-  const activeEntry = instanceEntries.find(
-    (entry) => entry.instanceId === resolvedSelection?.instanceId,
-  );
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === resolvedInstanceId);
   const setDefaultModel = useCallback(
     (selection: ModelSelection | null) =>
       void updateAllMembers({ defaultModelSelection: selection }, "Failed to update default model"),
@@ -785,6 +791,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           return;
         }
         const projectRef = scopeProjectRef(member.environmentId, member.id);
+        releaseProjectDraftUploads(
+          projectRef,
+          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+        );
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         if (projectDraftThread) {
           draftStore.clearDraftThread(projectDraftThread.draftId);
@@ -829,8 +839,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 value={projectTitle}
                 disabled={isSavingProjectTitle}
                 onChange={(event) => setProjectTitle(event.currentTarget.value)}
+                onInput={() => {
+                  projectNameEditedRef.current = true;
+                }}
                 onBlur={(event) => {
-                  void renameGroup(event.currentTarget.value);
+                  const wasEdited = projectNameEditedRef.current;
+                  projectNameEditedRef.current = false;
+                  void renameGroup(event.currentTarget.value, wasEdited);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
