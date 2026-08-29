@@ -57,11 +57,9 @@ so add one in **Settings** → **Keybindings** if you want to use it.
 `mod+shift+l`. Both shortcuts work while composing a new thread and while continuing an existing
 thread.
 
-`thread.settle` settles the active thread with `mod+w` when the terminal is not focused. When the
-terminal is focused, the same shortcut continues to close the active terminal.
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
-shortcut is `mod+shift+s`, and it does not run while the terminal has focus. In the fork build,
-`mod+w` is also supported when the terminal is not focused.
+shortcuts are `mod+w` and `mod+shift+s`, and it does not run while the terminal has focus. When the
+terminal is focused, `mod+w` continues to close the active terminal.
 
 `thread.pin` pins the active thread to the pinned section of the sidebar, or unpins it when it is
 already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
