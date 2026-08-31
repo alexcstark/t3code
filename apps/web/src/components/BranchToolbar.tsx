@@ -40,6 +40,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
+import { ComposerSurface } from "./chat/ComposerSurface";
 
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
@@ -466,7 +467,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div
+    <ComposerSurface.ContextStrip
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
       className="chat-composer-context-strip group/composer-context -mt-4 mx-auto flex w-[calc(100%-2.75rem)] items-center gap-2 overflow-x-clip overflow-y-visible ps-1 pe-2 pt-5 pb-1"
@@ -534,6 +535,6 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
       ) : null}
-    </div>
+    </ComposerSurface.ContextStrip>
   );
 });
