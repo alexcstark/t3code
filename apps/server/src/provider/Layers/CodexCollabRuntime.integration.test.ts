@@ -654,6 +654,52 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("Stop fails within its deadline when the parent interrupt RPC hangs", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        hangInterruptFor: ROOT,
+        notifications: [],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-hung-parent-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      const result = yield* runtime
+        .interruptTurn()
+        .pipe(Effect.result, Effect.timeoutOption("5 seconds"));
+
+      assert.equal(result._tag, "Some", "parent interrupt exceeded its runtime deadline");
+      if (result._tag === "Some") {
+        assert.equal(result.value._tag, "Failure");
+        if (result.value._tag === "Failure") {
+          assert.equal(result.value.failure._tag, "CodexAppServerRequestError");
+          assert.include(result.value.failure.message, "turn interrupt timed out");
+        }
+      }
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   const elicitationCases = [
     {
       decision: "accept",
