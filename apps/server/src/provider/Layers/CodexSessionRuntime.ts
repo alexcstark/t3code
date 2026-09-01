@@ -53,6 +53,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_TURN_INTERRUPT_TIMEOUT = "3 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -2376,17 +2377,33 @@ export const makeCodexSessionRuntime = (
                   threadId: childThreadId,
                   turnId: childTurnId,
                 })
-                .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
+                .pipe(Effect.timeoutOption(CODEX_TURN_INTERRUPT_TIMEOUT), Effect.ignore),
             { concurrency: 8, discard: true },
           ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
           const effectiveTurnId = turnId ?? session.activeTurnId;
           if (!effectiveTurnId) {
             return;
           }
-          yield* client.request("turn/interrupt", {
-            threadId: providerThreadId,
-            turnId: effectiveTurnId,
-          });
+          yield* client
+            .request("turn/interrupt", {
+              threadId: providerThreadId,
+              turnId: effectiveTurnId,
+            })
+            .pipe(
+              Effect.timeout(CODEX_TURN_INTERRUPT_TIMEOUT),
+              Effect.catchTag("TimeoutError", () =>
+                Effect.fail(
+                  CodexErrors.CodexAppServerRequestError.internalError(
+                    `Codex App Server turn interrupt timed out after ${CODEX_TURN_INTERRUPT_TIMEOUT}.`,
+                    undefined,
+                    {
+                      method: "turn/interrupt",
+                      operation: "receive-response",
+                    },
+                  ),
+                ),
+              ),
+            );
         }),
       readThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;
