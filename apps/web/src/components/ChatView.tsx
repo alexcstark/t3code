@@ -1,5 +1,5 @@
 import {
-  type ApprovalRequestId,
+  ApprovalRequestId,
   type ChatFileAttachment,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
@@ -1503,6 +1503,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
+  const userInputResponseFailureBaselineRef = useRef(new Map<ApprovalRequestId, string | null>());
 
   useEffect(() => {
     setIsWorkspaceFileDragActive(false);
@@ -2450,6 +2451,53 @@ function ChatViewContent(props: ChatViewProps) {
   const activePendingIsResponding = activePendingUserInput
     ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
+  const pendingUserInputResponseFailureActivityIds = useMemo(() => {
+    const activityIds = new Map<ApprovalRequestId, string>();
+    for (const activity of threadActivities) {
+      if (activity.kind !== "provider.user-input.respond.failed") {
+        continue;
+      }
+      const payload =
+        activity.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      if (typeof payload?.requestId === "string") {
+        activityIds.set(ApprovalRequestId.make(payload.requestId), activity.id);
+      }
+    }
+    return activityIds;
+  }, [threadActivities]);
+
+  useEffect(() => {
+    if (respondingUserInputRequestIds.length === 0) {
+      return;
+    }
+
+    const pendingRequestIds = new Set(pendingUserInputs.map((input) => input.requestId));
+    const next = respondingUserInputRequestIds.filter((requestId) => {
+      const failureActivityId = pendingUserInputResponseFailureActivityIds.get(requestId);
+      const baselineActivityId = userInputResponseFailureBaselineRef.current.get(requestId);
+      return (
+        pendingRequestIds.has(requestId) &&
+        (failureActivityId === undefined || failureActivityId === baselineActivityId)
+      );
+    });
+    if (next.length !== respondingUserInputRequestIds.length) {
+      setRespondingUserInputRequestIds(next);
+    }
+
+    const activeRequestIds = new Set(next);
+    for (const requestId of userInputResponseFailureBaselineRef.current.keys()) {
+      if (!activeRequestIds.has(requestId)) {
+        userInputResponseFailureBaselineRef.current.delete(requestId);
+      }
+    }
+  }, [
+    pendingUserInputResponseFailureActivityIds,
+    pendingUserInputs,
+    respondingUserInputRequestIds,
+  ]);
+
   const activeProposedPlan = useMemo(() => {
     if (!latestTurnSettled) {
       return null;
@@ -6483,6 +6531,10 @@ function ChatViewContent(props: ChatViewProps) {
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
       if (!activeThreadId) return;
 
+      userInputResponseFailureBaselineRef.current.set(
+        requestId,
+        pendingUserInputResponseFailureActivityIds.get(requestId) ?? null,
+      );
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
@@ -6501,10 +6553,19 @@ function ChatViewContent(props: ChatViewProps) {
           error instanceof Error ? error.message : "Failed to submit user input.",
         );
       }
-      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure") {
+        userInputResponseFailureBaselineRef.current.delete(requestId);
+        setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      }
       return result;
     },
-    [activeThreadId, environmentId, respondToThreadUserInput, setThreadError],
+    [
+      activeThreadId,
+      environmentId,
+      pendingUserInputResponseFailureActivityIds,
+      respondToThreadUserInput,
+      setThreadError,
+    ],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
