@@ -18,7 +18,8 @@ import {
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
 const NOOP_RESPONSE_CLICK = () => {};
-const NOOP_DOWNLOAD_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
+const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -1071,7 +1072,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     <div className="group flex flex-col items-start gap-1">
       <div className="flex min-w-0 w-full items-start gap-2">
         <div className="relative min-w-0 w-full rounded-xl border border-border/35 bg-message/45 px-2.5 py-2 text-message-foreground">
-          {regularImages.length > 0 && (
+          {(regularImages.length > 0 || userVideos.length > 0) && (
             <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
               {regularImages.map((image) => (
                 <div
@@ -1102,6 +1103,35 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   )}
                 </div>
               ))}
+              {userVideos.map((file) => {
+                const isOpening = ctx.openingVideoAttachmentId === file.id;
+                return (
+                  <div
+                    key={file.id}
+                    className="overflow-hidden rounded-lg border border-border/80 bg-black"
+                  >
+                    <button
+                      type="button"
+                      disabled={file.downloadable === false}
+                      className="flex min-h-[72px] w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-2 py-2 text-white disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50"
+                      aria-busy={isOpening || undefined}
+                      aria-disabled={isOpening || undefined}
+                      aria-label={`${isOpening ? "Loading" : "Play"} ${file.name}`}
+                      onClick={() => {
+                        if (isOpening) return;
+                        ctx.onFileOpen(file);
+                      }}
+                    >
+                      {isOpening ? (
+                        <span className="text-[11px]">Loading…</span>
+                      ) : (
+                        <PlayIcon className="size-8 fill-current" />
+                      )}
+                      <span className="max-w-full truncate text-[11px]">{file.name}</span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
           {previewAnnotations.map((annotation, index) => (
@@ -1111,9 +1141,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               image={previewImages[index] ?? null}
             />
           ))}
-          {userFiles.length > 0 || unknownAttachments.length > 0 ? (
+          {otherUserFiles.length > 0 || unknownAttachments.length > 0 ? (
             <div className="mb-2 flex flex-col gap-1">
-              {userFiles.map((file) => {
+              {otherUserFiles.map((file) => {
                 const content = (
                   <>
                     <FileIcon className="size-4 shrink-0 text-secondary-label" />
@@ -1141,7 +1171,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     key={file.id}
                     type="button"
                     aria-label={`Download ${file.name}`}
-                    onClick={() => ctx.onFileDownload(file)}
+                    onClick={() => ctx.onFileOpen(file)}
                     className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
                   >
                     {content}
