@@ -16,10 +16,7 @@ import {
   type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import {
-  getModelSelectionOptionDescriptors,
-  getProviderOptionCurrentLabel,
-} from "@t3tools/shared/model";
+import { getProviderOptionDescriptors, getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
@@ -103,7 +100,10 @@ export function resolveSidebarReasoningLabel(input: {
   model: ServerProviderModel | null;
 }): string | null {
   const descriptors = input.model?.capabilities
-    ? getModelSelectionOptionDescriptors(input.modelSelection, input.model.capabilities)
+    ? getProviderOptionDescriptors({
+        caps: input.model.capabilities,
+        selections: input.modelSelection.options,
+      })
     : [];
   const reasoningDescriptor = descriptors.find(
     (descriptor) =>
