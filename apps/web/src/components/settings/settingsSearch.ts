@@ -2,6 +2,7 @@ import { isElectron } from "~/env";
 
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/projects"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -26,6 +27,7 @@ export interface SettingsSearchItem {
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/projects": "Projects",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
@@ -110,6 +112,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",
+  },
+  {
+    id: "project-defaults",
+    title: "Project defaults",
+    to: "/settings/projects",
   },
   {
     id: "auto-settle-inactive-threads",

@@ -146,6 +146,52 @@ export function useSettingsProjectGroups(): SidebarProjectSnapshot[] {
   );
 }
 
+/** The Settings → Projects section, with the existing project editor below it. */
+export function ProjectsSettingsPanel() {
+  const groups = useSettingsProjectGroups();
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const selectedProject =
+    groups.find((group) => group.projectKey === selectedProjectKey) ?? groups[0] ?? null;
+
+  useEffect(() => {
+    const nextProjectKey = selectedProject?.projectKey ?? null;
+    if (selectedProjectKey !== nextProjectKey) {
+      setSelectedProjectKey(nextProjectKey);
+    }
+  }, [selectedProject, selectedProjectKey]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {groups.length > 0 ? (
+        <div className="flex shrink-0 items-center justify-end border-b border-border px-3 py-2 sm:px-5">
+          <Select
+            value={selectedProject?.projectKey ?? ""}
+            onValueChange={(value) => setSelectedProjectKey(String(value))}
+          >
+            <SelectTrigger className="max-w-72" aria-label="Project">
+              <SelectValue>{selectedProject?.displayName ?? "Select project"}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {groups.map((group) => (
+                <SelectItem key={group.projectKey} value={group.projectKey}>
+                  {group.displayName}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
+      ) : null}
+      {selectedProject ? (
+        <ProjectDetail key={selectedProject.projectKey} group={selectedProject} />
+      ) : (
+        <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+          Add a project from the sidebar to configure it here.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
 }

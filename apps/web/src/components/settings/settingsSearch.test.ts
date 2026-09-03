@@ -106,4 +106,11 @@ describe("searchSettings", () => {
       targetId: "browser",
     });
   });
+
+  it("routes project defaults to the projects section", () => {
+    expect(searchSettings("project defaults")[0]).toMatchObject({
+      id: "project-defaults",
+      to: "/settings/projects",
+    });
+  });
 });
