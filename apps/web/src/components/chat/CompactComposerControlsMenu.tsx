@@ -48,7 +48,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
     if (hidden) setIsOpen(false);
   }
 
-  return <Menu open={isOpen && !hidden} onOpenChange={setIsOpen}>
+  return (
+    <Menu open={isOpen && !hidden} onOpenChange={setIsOpen}>
       <MenuTrigger
         render={
           <ComposerControl
