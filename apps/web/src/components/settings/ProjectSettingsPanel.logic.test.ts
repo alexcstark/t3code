@@ -38,11 +38,10 @@ describe("resolveSelectedProjectGroup", () => {
     const otherGroup = projectGroup("other", ["other:project"]);
 
     expect(
-      resolveSelectedProjectGroup(
-        [otherGroup, nextGroup],
-        "repository",
-        { key: "repository", memberKeys: ["local:project", "remote:project"] },
-      ),
+      resolveSelectedProjectGroup([otherGroup, nextGroup], "repository", {
+        key: "repository",
+        memberKeys: ["local:project", "remote:project"],
+      }),
     ).toBe(nextGroup);
   });
 });
