@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  projectGroupTitleNeedsUpdate,
+  resolveSelectedProjectGroup,
+} from "./ProjectSettingsPanel.logic";
+
+function projectGroup(projectKey: string, memberKeys: ReadonlyArray<string>) {
+  return {
+    projectKey,
+    memberProjects: memberKeys.map((physicalProjectKey) => ({ physicalProjectKey })),
+  };
+}
 
 describe("projectGroupTitleNeedsUpdate", () => {
   it("updates divergent member titles even when the next title is the derived group label", () => {
@@ -19,5 +29,20 @@ describe("projectGroupTitleNeedsUpdate", () => {
     expect(projectGroupTitleNeedsUpdate(["Shared name", "Shared name"], "Shared name", true)).toBe(
       false,
     );
+  });
+});
+
+describe("resolveSelectedProjectGroup", () => {
+  it("follows the selected members when grouping changes the logical key", () => {
+    const nextGroup = projectGroup("repository-path", ["local:project", "remote:project"]);
+    const otherGroup = projectGroup("other", ["other:project"]);
+
+    expect(
+      resolveSelectedProjectGroup(
+        [otherGroup, nextGroup],
+        "repository",
+        { key: "repository", memberKeys: ["local:project", "remote:project"] },
+      ),
+    ).toBe(nextGroup);
   });
 });

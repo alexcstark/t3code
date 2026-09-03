@@ -109,11 +109,16 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  projectGroupTitleNeedsUpdate,
+  resolveSelectedProjectGroup,
+  type ProjectGroupSelection,
+} from "./ProjectSettingsPanel.logic";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -150,10 +155,20 @@ export function useSettingsProjectGroups(): SidebarProjectSnapshot[] {
 export function ProjectsSettingsPanel() {
   const groups = useSettingsProjectGroups();
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const selectedProject =
-    groups.find((group) => group.projectKey === selectedProjectKey) ?? groups[0] ?? null;
+  const lastSelectionRef = useRef<ProjectGroupSelection | null>(null);
+  const selectedProject = resolveSelectedProjectGroup(
+    groups,
+    selectedProjectKey,
+    lastSelectionRef.current,
+  );
 
   useEffect(() => {
+    if (selectedProject) {
+      lastSelectionRef.current = {
+        key: selectedProject.projectKey,
+        memberKeys: selectedProject.memberProjects.map((member) => member.physicalProjectKey),
+      };
+    }
     const nextProjectKey = selectedProject?.projectKey ?? null;
     if (selectedProjectKey !== nextProjectKey) {
       setSelectedProjectKey(nextProjectKey);
@@ -1035,6 +1050,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             }
           />
           <SettingsRow
+            id={searchableSetting("project-defaults").id}
             title="Location"
             description="Where new threads in this project run when it has checkouts on multiple connected environments."
             resetAction={
