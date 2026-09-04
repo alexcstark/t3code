@@ -137,6 +137,63 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
 }
 
 it.layer(NodeServices.layer)("decider deletion flows", (it) => {
+  it.effect("deletes an absent thread idempotently", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-absent"),
+          threadId: asThreadId("thread-never-created"),
+        },
+        readModel,
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe("thread.deleted");
+      if (events[0]?.type === "thread.deleted") {
+        expect(events[0].payload.threadId).toBe(asThreadId("thread-never-created"));
+      }
+    }),
+  );
+
+  it.effect("re-emits thread.deleted idempotently for an already deleted thread", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const deletedAt = "2026-01-02T00:00:00.000Z";
+      const withDeletedThread = yield* projectEvent(readModel, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-delete-1"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-1"),
+        type: "thread.deleted",
+        occurredAt: deletedAt,
+        commandId: asCommandId("cmd-thread-delete-1"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-delete-1"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-1"),
+          deletedAt,
+        },
+      });
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-1-retry"),
+          threadId: asThreadId("thread-delete-1"),
+        },
+        readModel: withDeletedThread,
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe("thread.deleted");
+      if (events[0]?.type === "thread.deleted") {
+        expect(events[0].payload.deletedAt).toBe(deletedAt);
+      }
+    }),
+  );
+
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;

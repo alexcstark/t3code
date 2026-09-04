@@ -22,6 +22,7 @@ import {
   type OrchestrationCommandRejection,
 } from "./Errors.ts";
 import {
+  findThreadById,
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
@@ -365,12 +366,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
+      const thread = findThreadById(readModel, command.threadId);
       const occurredAt = yield* nowIso;
+      // Absent or already-deleted threads are idempotent: stale client state may
+      // retry a delete after the row is gone, and the engine rejects zero-event
+      // commands, so re-emit thread.deleted instead of failing the invariant.
+      const deletedAt =
+        thread !== undefined && thread.deletedAt !== null ? thread.deletedAt : occurredAt;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -381,7 +383,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.deleted",
         payload: {
           threadId: command.threadId,
-          deletedAt: occurredAt,
+          deletedAt,
         },
       };
     }
