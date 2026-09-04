@@ -2721,10 +2721,45 @@ export default function Sidebar() {
     );
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  // Shortcuts, selection ranges, and keyboard traversal follow the exact
+  // order rendered by the unified sidebar drag model.
+  const orderedThreads = useMemo(
+    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [activeThreads, pinnedThreads, renderedSettledThreads, visibleSnoozedThreads],
+  );
+  const orderedThreadKeys = useMemo(
+    () =>
+      orderedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    [orderedThreads],
+  );
+  const threadByKey = useMemo(
+    () =>
+      new Map(
+        orderedThreads.map(
+          (thread) =>
+            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+        ),
+      ),
+    [orderedThreads],
+  );
+  const jumpLabelByKey = useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const [index, threadKey] of orderedThreadKeys.entries()) {
+      const jumpCommand = threadJumpCommandForIndex(index);
+      if (!jumpCommand) break;
+      const label = shortcutLabelForCommand(keybindings, jumpCommand);
+      if (label) mapping.set(threadKey, label);
+    }
+    return mapping;
+  }, [keybindings, orderedThreadKeys]);
   // These refs let event handlers use the latest rendered order without
   // making every row receive a fresh callback when the sidebar updates.
   const orderedThreadKeysRef = useRef<readonly string[]>([]);
   const threadByKeyRef = useRef<Map<string, EnvironmentThreadShell>>(new Map());
+  orderedThreadKeysRef.current = orderedThreadKeys;
+  threadByKeyRef.current = threadByKey;
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   handleNewThreadRef.current = newThreadContext.handleNewThread;
 

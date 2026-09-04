@@ -406,7 +406,6 @@ function ProjectDetail({
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(representative.environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
-  const { environments } = useEnvironments();
   const projectDefaultEnvironmentIds = useClientSettings(
     (clientSettings) => clientSettings.projectDefaultEnvironmentIds,
   );

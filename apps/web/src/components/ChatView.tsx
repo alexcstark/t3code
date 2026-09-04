@@ -3298,16 +3298,22 @@ export default function ChatView(props: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [
-    attachmentPreviewHandoffByMessageId,
-    optimisticUserMessages,
-    timelineDisplayServerMessages,
-  ]);
-  const timelineEntries = useMemo(
-    () =>
-      deriveTimelineEntries(timelineMessages, timelineThread?.proposedPlans ?? [], workLogEntries),
-    [timelineMessages, timelineThread?.proposedPlans, workLogEntries],
-  );
+  }, [attachmentPreviewHandoffByMessageId, optimisticUserMessages, timelineDisplayServerMessages]);
+  const timelineProjectionRef = useRef<{
+    threadKey: string | null;
+    projection: TimelineEntriesProjection;
+  } | null>(null);
+  const timelineEntries = useMemo(() => {
+    const previous = timelineProjectionRef.current;
+    const projection = deriveTimelineEntriesWithState(
+      timelineMessages,
+      timelineThread?.proposedPlans ?? [],
+      workLogEntries,
+      previous?.threadKey === activeThreadKey ? previous.projection : null,
+    );
+    timelineProjectionRef.current = { threadKey: activeThreadKey, projection };
+    return projection.entries;
+  }, [activeThreadKey, timelineMessages, timelineThread?.proposedPlans, workLogEntries]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -8280,7 +8286,7 @@ export default function ChatView(props: ChatViewProps) {
 
   return (
     <div {...terminalShellRootProps}>
-      {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
+      {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
