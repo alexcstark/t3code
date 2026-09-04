@@ -400,17 +400,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const minimapScrollFrameRef = useRef<number | null>(null);
-  const previousContentInsetEndAdjustmentRef = useRef(contentInsetEndAdjustment);
-
-  useLayoutEffect(() => {
-    keepTimelineEndVisibleAfterOverlayGrowth({
-      timeline: listRef.current,
-      previousOverlayHeight: previousContentInsetEndAdjustmentRef.current,
-      overlayHeight: contentInsetEndAdjustment,
-      followingEnd: liveFollowEnabled && anchorMessageId === null,
-    });
-    previousContentInsetEndAdjustmentRef.current = contentInsetEndAdjustment;
-  }, [anchorMessageId, contentInsetEndAdjustment, listRef, liveFollowEnabled]);
 
   useEffect(() => {
     return () => {
@@ -1251,151 +1240,151 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     <div className="group flex flex-col items-start gap-1">
       <div className="flex min-w-0 w-full items-start gap-2">
         <div className="relative min-w-0 w-full rounded-xl border border-border/35 bg-message/45 px-2.5 py-2 text-message-foreground">
-        {(regularImages.length > 0 || userVideos.length > 0) && (
-          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image) => (
-              <div
-                key={image.id}
-                className="aspect-[4/3] overflow-hidden rounded-lg border border-border/80 bg-background/70"
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="block h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block size-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[11px]">
-                    {image.name}
-                  </div>
-                )}
-              </div>
-            ))}
-            {userVideos.map((file) => (
-              <UserVideoAttachment key={file.id} file={file} />
-            ))}
-          </div>
-        )}
-        {previewAnnotations.map((annotation, index) => (
-          <UserMessagePreviewAnnotationCard
-            key={annotation.id}
-            annotation={annotation}
-            image={previewImages[index] ?? null}
-          />
-        ))}
-        {otherUserFiles.length > 0 || unknownAttachments.length > 0 ? (
-          <div className="mb-2 flex flex-col gap-1">
-            {otherUserFiles.map((file) => {
-              const opensInPreview = isBrowserPreviewAttachment(file);
-              const fileIdentity = (
-                <>
-                  <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
-                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                </>
-              );
-              if (opensInPreview && file.downloadable !== false) {
-                return (
-                  <div key={file.id} className="flex min-w-0 items-center gap-1">
+          {(regularImages.length > 0 || userVideos.length > 0) && (
+            <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+              {regularImages.map((image) => (
+                <div
+                  key={image.id}
+                  className="aspect-[4/3] overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                >
+                  {image.previewUrl ? (
                     <button
                       type="button"
-                      aria-label={`Preview ${file.name}`}
-                      onClick={() => ctx.onFileOpen(file)}
-                      className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+                      className="block h-full w-full cursor-zoom-in"
+                      aria-label={`Preview ${image.name}`}
+                      onClick={() => {
+                        const preview = buildExpandedImagePreview(regularImages, image.id);
+                        if (!preview) return;
+                        ctx.onImageExpand(preview);
+                      }}
                     >
-                      {fileIdentity}
-                      <EyeIcon className="size-4 shrink-0" />
+                      <img
+                        src={image.previewUrl}
+                        alt={image.name}
+                        className="block size-full object-cover"
+                      />
                     </button>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            aria-label={`Download ${file.name}`}
-                            onClick={() => ctx.onFileDownload(file)}
-                          />
-                        }
-                      >
-                        <DownloadIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">Download {file.name}</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                );
-              }
-
-              const content = (
-                <>
-                  {fileIdentity}
-                  {file.downloadable === false ? null : (
-                    <DownloadIcon className="size-4 shrink-0" />
+                  ) : (
+                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[11px]">
+                      {image.name}
+                    </div>
                   )}
-                </>
-              );
-              return file.previewUrl && !opensInPreview ? (
-                <a
-                  key={file.id}
-                  href={file.previewUrl}
-                  download={file.name}
-                  className="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-                >
-                  {content}
-                </a>
-              ) : file.downloadable === false ? (
-                <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                  {content}
                 </div>
-              ) : (
-                <button
-                  key={file.id}
-                  type="button"
-                  aria-label={`${opensInPreview ? "Preview" : "Download"} ${file.name}`}
-                  onClick={() => ctx.onFileOpen(file)}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-                >
-                  {content}
-                </button>
-              );
-            })}
-            {unknownAttachments.map((attachment) => (
-              <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                <PierreEntryIcon
-                  pathValue={attachment.name}
-                  kind="file"
-                  theme={ctx.resolvedTheme}
+              ))}
+              {userVideos.map((file) => (
+                <UserVideoAttachment key={file.id} file={file} />
+              ))}
+            </div>
+          )}
+          {previewAnnotations.map((annotation, index) => (
+            <UserMessagePreviewAnnotationCard
+              key={annotation.id}
+              annotation={annotation}
+              image={previewImages[index] ?? null}
+            />
+          ))}
+          {otherUserFiles.length > 0 || unknownAttachments.length > 0 ? (
+            <div className="mb-2 flex flex-col gap-1">
+              {otherUserFiles.map((file) => {
+                const opensInPreview = isBrowserPreviewAttachment(file);
+                const fileIdentity = (
+                  <>
+                    <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
+                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  </>
+                );
+                if (opensInPreview && file.downloadable !== false) {
+                  return (
+                    <div key={file.id} className="flex min-w-0 items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label={`Preview ${file.name}`}
+                        onClick={() => ctx.onFileOpen(file)}
+                        className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+                      >
+                        {fileIdentity}
+                        <EyeIcon className="size-4 shrink-0" />
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label={`Download ${file.name}`}
+                              onClick={() => ctx.onFileDownload(file)}
+                            />
+                          }
+                        >
+                          <DownloadIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                      </Tooltip>
+                    </div>
+                  );
+                }
+
+                const content = (
+                  <>
+                    {fileIdentity}
+                    {file.downloadable === false ? null : (
+                      <DownloadIcon className="size-4 shrink-0" />
+                    )}
+                  </>
+                );
+                return file.previewUrl && !opensInPreview ? (
+                  <a
+                    key={file.id}
+                    href={file.previewUrl}
+                    download={file.name}
+                    className="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                  >
+                    {content}
+                  </a>
+                ) : file.downloadable === false ? (
+                  <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                    {content}
+                  </div>
+                ) : (
+                  <button
+                    key={file.id}
+                    type="button"
+                    aria-label={`${opensInPreview ? "Preview" : "Download"} ${file.name}`}
+                    onClick={() => ctx.onFileOpen(file)}
+                    className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                  >
+                    {content}
+                  </button>
+                );
+              })}
+              {unknownAttachments.map((attachment) => (
+                <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                  <PierreEntryIcon
+                    pathValue={attachment.name}
+                    kind="file"
+                    theme={ctx.resolvedTheme}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {elementContexts.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {elementContexts.map((context) => (
+                <UserMessageElementContextChip
+                  key={`${context.header}:${context.body}`}
+                  context={context}
                 />
-                <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {elementContexts.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {elementContexts.map((context) => (
-              <UserMessageElementContextChip
-                key={`${context.header}:${context.body}`}
-                context={context}
-              />
-            ))}
-          </div>
-        ) : null}
-        <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          markdownCwd={ctx.markdownCwd}
-        />
+              ))}
+            </div>
+          ) : null}
+          <CollapsibleUserMessageBody
+            text={elementContextState.promptText}
+            terminalContexts={terminalContexts}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
+          />
         </div>
       </div>
       <div className="flex w-full items-center justify-start text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">

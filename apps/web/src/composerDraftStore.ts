@@ -45,6 +45,7 @@ import {
   type TerminalContextDraft,
   ensureInlineTerminalContextPlaceholders,
   normalizeTerminalContextText,
+  stripInlineTerminalContextPlaceholders,
 } from "./lib/terminalContext";
 import {
   type ElementContextDraft,
@@ -632,6 +633,11 @@ interface ComposerDraftStoreState {
    * prompt stash. Session-bound context stays in the source draft.
    */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Moves the prompt text and image attachments from one composer target to
+   * another. Session-bound context stays on the source draft.
+   */
+  moveComposerPromptAndImages: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -3867,6 +3873,56 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               delete nextDraftsByThreadKey[threadKey];
             } else {
               nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        moveComposerPromptAndImages: (from, to) => {
+          const fromKey = resolveComposerDraftKey(get(), from) ?? "";
+          const toKey = resolveComposerDraftKey(get(), to) ?? "";
+          if (fromKey.length === 0 || toKey.length === 0 || fromKey === toKey) {
+            return;
+          }
+          set((state) => {
+            const source = state.draftsByThreadKey[fromKey];
+            if (!source) {
+              return state;
+            }
+            const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+            const movedPrompt = ensureInlineTerminalContextPlaceholders(
+              stripInlineTerminalContextPlaceholders(source.prompt),
+              destination.terminalContexts.length,
+            );
+            const nextDestination: ComposerThreadDraftState = {
+              ...destination,
+              prompt: movedPrompt,
+              images: [...destination.images, ...source.images],
+              nonPersistedImageIds: [
+                ...destination.nonPersistedImageIds,
+                ...source.nonPersistedImageIds,
+              ],
+              persistedAttachments: [
+                ...destination.persistedAttachments,
+                ...source.persistedAttachments,
+              ],
+            };
+            const nextSource: ComposerThreadDraftState = {
+              ...source,
+              prompt: ensureInlineTerminalContextPlaceholders("", source.terminalContexts.length),
+              images: [],
+              nonPersistedImageIds: [],
+              persistedAttachments: [],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextSource)) {
+              delete nextDraftsByThreadKey[fromKey];
+            } else {
+              nextDraftsByThreadKey[fromKey] = nextSource;
+            }
+            if (shouldRemoveDraft(nextDestination)) {
+              delete nextDraftsByThreadKey[toKey];
+            } else {
+              nextDraftsByThreadKey[toKey] = nextDestination;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });

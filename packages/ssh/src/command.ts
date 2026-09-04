@@ -15,6 +15,7 @@ import { buildSshChildEnvironment, type SshAuthOptions } from "./auth.ts";
 import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 
 const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const T4_FORK_VERSION_PATTERN = /^(\d+\.\d+\.\d+)-t4\.[0-9A-Za-z.-]+$/u;
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_SSH_ERROR_OUTPUT_LENGTH = 4_000;
 
@@ -104,6 +105,10 @@ export function baseSshArgs(
   input?: { readonly batchMode?: "yes" | "no" },
 ): string[] {
   return [
+    // Remote bootstrap commands consume stdin as a script and never need a
+    // remote terminal. Explicitly disable PTY allocation even when a user's
+    // SSH config requests one for interactive sessions.
+    "-T",
     "-o",
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
@@ -370,6 +375,11 @@ export function resolveRemoteT3CliPackageSpec(input: {
   readonly isDevelopment?: boolean;
 }): string {
   const appVersion = input.appVersion.trim();
+  const t4BaseVersion = T4_FORK_VERSION_PATTERN.exec(appVersion)?.[1];
+  if (!input.isDevelopment && t4BaseVersion !== undefined) {
+    return `t3@${t4BaseVersion}`;
+  }
+
   if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
     return `t3@${appVersion}`;
   }
