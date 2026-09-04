@@ -91,34 +91,6 @@ function renderStreaming(markdown: string): string {
   return renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={markdown} isStreaming />);
 }
 
-function renderFilePreview(cwd: string, relativePath: string): string {
-  return renderToStaticMarkup(
-    <FileMarkdownPreview
-      cwd={cwd}
-      relativePath={relativePath}
-      text="![diagram](images/diagram.png)"
-      threadRef={threadRef}
-    />,
-  );
-}
-
-function copiedMarkdownFrom(html: string): string {
-  const copy = /data-markdown-copy="([^"]*)"/.exec(html)?.[1]?.replaceAll("&quot;", '"');
-  expect(copy).toBeDefined();
-  return copy ?? "";
-}
-
-function firstInlineStyle(html: string): Record<string, string> {
-  const style = /style="([^"]+)"/.exec(html)?.[1];
-  expect(style).toBeDefined();
-  return Object.fromEntries(
-    (style ?? "").split(";").map((declaration) => {
-      const separator = declaration.indexOf(":");
-      return [declaration.slice(0, separator), declaration.slice(separator + 1)];
-    }),
-  );
-}
-
 describe("ChatMarkdown workspace images", () => {
   beforeEach(() => {
     testState.resources = [];
