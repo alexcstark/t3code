@@ -15,7 +15,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";

@@ -2190,15 +2190,7 @@ const StreamingChatMarkdown = memo(function StreamingChatMarkdown({
   );
 });
 
-function ChatMarkdown(props: ChatMarkdownProps) {
-  if (props.isStreaming) {
-    return <StreamingChatMarkdown text={props.text} className={props.className} />;
-  }
-
-  return <SettledChatMarkdown {...props} isStreaming={false} />;
-}
-
-function SettledChatMarkdown({
+function useChatMarkdownState({
   text,
   cwd,
   threadRef,
@@ -3139,7 +3131,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
-function ChatMarkdown({
+function SettledChatMarkdown({
   text,
   className,
   lineBreaks = false,
@@ -3192,6 +3184,14 @@ function ChatMarkdown({
       ) : null}
     </div>
   );
+}
+
+function ChatMarkdown(props: ChatMarkdownProps) {
+  if (props.isStreaming) {
+    return <StreamingChatMarkdown text={props.text} className={props.className} />;
+  }
+
+  return <SettledChatMarkdown {...props} isStreaming={false} />;
 }
 
 export default memo(ChatMarkdown);

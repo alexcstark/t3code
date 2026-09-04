@@ -5662,7 +5662,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ComposerControlIcon icon={PaperclipIcon} />
                     <span>Attach</span>
                   </ComposerControl>
-      {composerControlsInStrip ? null : composerControls}
+                  {composerControlsInStrip ? null : composerControls}
                 </div>
 
                 {/* Right side: send / stop button */}

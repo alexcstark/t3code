@@ -102,7 +102,8 @@ export function ServerUpdateAction({
   const serverTargetVersion = isDesktopAppUpdate
     ? targetVersion
     : resolveServerUpdateTargetVersion(targetVersion);
-  const continueThreadsAfterServerUpdate = useClientSettings(
+  const continueThreadsAfterServerUpdate = useEnvironmentSettings(
+    environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
   );
   const updateServer = useAtomCommand(serverEnvironment.updateServer, {
