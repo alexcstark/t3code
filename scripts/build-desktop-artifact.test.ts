@@ -48,6 +48,7 @@ import {
   resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
+  resolveDesktopAppId,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
@@ -262,6 +263,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("switches desktop packaging product names to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+  });
+
+  it("uses the branded app identity override for packaging", () => {
+    assert.equal(
+      resolveDesktopAppId({ T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.alexcstark.t4code " }),
+      "com.alexcstark.t4code",
+    );
+    assert.equal(resolveDesktopAppId({}), "com.t3tools.t3code");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {

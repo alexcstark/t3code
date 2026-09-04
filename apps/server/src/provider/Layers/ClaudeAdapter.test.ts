@@ -5390,6 +5390,30 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("does not re-apply the initial permission mode for a default turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        interactionMode: "default",
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.setPermissionModeCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("captures ExitPlanMode as a proposed plan and denies auto-exit", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

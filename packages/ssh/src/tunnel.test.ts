@@ -136,6 +136,18 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
+  it("adds user tool directories before accepting a compatible system node", () => {
+    const script = buildRemoteT3RunnerScript();
+    const userBinIndex = script.indexOf('prepend_path_if_dir "$HOME/.local/bin"');
+    const nodeCheckIndex = script.indexOf(
+      "if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then",
+    );
+
+    assert.isAtLeast(userBinIndex, 0);
+    assert.isAtLeast(nodeCheckIndex, 0);
+    assert.isBelow(userBinIndex, nodeCheckIndex);
+  });
+
   it("shell-quotes package specs in the remote t3 runner", () => {
     const script = buildRemoteT3RunnerScript({
       packageSpec: "t3@nightly; touch /tmp/t3-owned",

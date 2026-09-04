@@ -1,6 +1,6 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
 import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
-import { createRef, type ReactNode, type Ref } from "react";
+import { act, createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
@@ -136,6 +136,89 @@ function matchMedia() {
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
 
+class TestNode {
+  parentNode: TestNode | null = null;
+  childNodes: TestNode[] = [];
+  readonly nodeName: string;
+  readonly tagName: string;
+  readonly namespaceURI = "http://www.w3.org/1999/xhtml";
+  readonly style = {};
+
+  constructor(
+    name: string,
+    readonly ownerDocument: TestNode | null = null,
+    readonly nodeType = 1,
+  ) {
+    this.nodeName = name.toUpperCase();
+    this.tagName = this.nodeName;
+  }
+
+  set textContent(_value: string) {
+    this.childNodes = [];
+  }
+
+  appendChild(child: TestNode) {
+    child.parentNode = this;
+    this.childNodes.push(child);
+    return child;
+  }
+
+  insertBefore(child: TestNode, before: TestNode | null) {
+    child.parentNode = this;
+    const index = before === null ? -1 : this.childNodes.indexOf(before);
+    if (index < 0) this.childNodes.push(child);
+    else this.childNodes.splice(index, 0, child);
+    return child;
+  }
+
+  removeChild(child: TestNode) {
+    this.childNodes.splice(this.childNodes.indexOf(child), 1);
+    child.parentNode = null;
+    return child;
+  }
+
+  createElement(name: string) {
+    return new TestNode(name, this);
+  }
+
+  createElementNS(_namespace: string, name: string) {
+    return this.createElement(name);
+  }
+
+  createTextNode(name: string) {
+    return new TestNode(name, this, 3);
+  }
+
+  addEventListener() {}
+  removeEventListener() {}
+  setAttribute() {}
+  removeAttribute() {}
+}
+
+function installTestDom() {
+  const document = new TestNode("#document", null, 9);
+  const window = {
+    document,
+    HTMLElement: TestNode,
+    HTMLIFrameElement: TestNode,
+    addEventListener() {},
+    removeEventListener() {},
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    },
+    cancelAnimationFrame() {},
+  };
+  vi.stubGlobal("document", document);
+  vi.stubGlobal("window", window);
+  vi.stubGlobal("HTMLElement", TestNode);
+  vi.stubGlobal("HTMLIFrameElement", TestNode);
+  vi.stubGlobal("requestAnimationFrame", window.requestAnimationFrame);
+  vi.stubGlobal("cancelAnimationFrame", window.cancelAnimationFrame);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  return document;
+}
+
 beforeAll(async () => {
   const classList = {
     add: () => {},
@@ -201,6 +284,20 @@ function buildProps() {
     onManualNavigation: () => {},
   };
 }
+
+it("mounts the empty timeline without throwing from layout effects", async () => {
+  const document = installTestDom();
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(document.createElement("div") as unknown as Element);
+
+  try {
+    await act(() => {
+      root.render(<MessagesTimeline {...buildProps()} timelineEntries={[]} />);
+    });
+  } finally {
+    await act(() => root.unmount());
+  }
+});
 
 function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
   return Array.from({ length: 9 }, (_, index) =>
