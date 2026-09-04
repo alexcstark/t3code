@@ -94,7 +94,7 @@ describe("ssh command", () => {
           },
           { batchMode: "no" },
         ),
-        ["-o", "BatchMode=no", "-o", "ConnectTimeout=10", "-p", "2222"],
+        ["-T", "-o", "BatchMode=no", "-o", "ConnectTimeout=10", "-p", "2222"],
       );
     }),
   );
@@ -130,6 +130,13 @@ describe("ssh command", () => {
           isDevelopment: true,
         }),
         "t3@nightly",
+      );
+      assert.equal(
+        resolveRemoteT3CliPackageSpec({
+          appVersion: "0.0.38-t4.0.0",
+          updateChannel: "latest",
+        }),
+        "t3@0.0.38",
       );
     }),
   );

@@ -1268,11 +1268,17 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   return {
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(env),
     teamId,
     rpDomains: uniqueRpDomains,
     provisioningProfilePath,
   };
+}
+
+export function resolveDesktopAppId(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  return env.T3CODE_DESKTOP_APP_USER_MODEL_ID?.trim() || DESKTOP_APP_ID;
 }
 
 function escapeXml(value: string): string {
@@ -2567,6 +2573,13 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+function resolveDesktopArtifactBaseName(): string {
+  if (configuredDesktopProductName) {
+    return configuredDesktopProductName.replaceAll(/[^A-Za-z0-9.-]+/gu, "-");
+  }
+  return "T3-Code";
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2587,9 +2600,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   arch?: typeof BuildArch.Type,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(),
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: `${resolveDesktopArtifactBaseName()}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
