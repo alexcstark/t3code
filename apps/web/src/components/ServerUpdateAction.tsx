@@ -11,7 +11,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { manualServerUpdateCommand } from "~/versionSkew";
+import { manualServerUpdateCommand, resolveServerUpdateTargetVersion } from "~/versionSkew";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -193,6 +193,9 @@ export function ServerUpdateAction({
   size = "xs",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
+  const serverTargetVersion = isDesktopAppUpdate
+    ? targetVersion
+    : resolveServerUpdateTargetVersion(targetVersion);
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -238,7 +241,7 @@ export function ServerUpdateAction({
       selfUpdate,
       desktopAppUpdate,
       threadContinuation,
-      targetVersion,
+      targetVersion: serverTargetVersion,
       continueThreadsAfterServerUpdate,
     });
   };

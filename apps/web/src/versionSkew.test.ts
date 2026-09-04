@@ -14,6 +14,7 @@ import {
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
+  manualServerUpdateCommand,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -72,6 +73,10 @@ describe("versionSkew", () => {
       serverVersion: "0.0.33",
       hint: MISMATCH_HINT,
     });
+  });
+
+  it("uses the public t3 version for a T4 fork server update", () => {
+    expect(manualServerUpdateCommand("0.0.34-t4.0.0")).toBe("npx t3@0.0.34");
   });
 
   it("does not warn when the server is ahead of the client", () => {
