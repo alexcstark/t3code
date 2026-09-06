@@ -81,6 +81,27 @@ function makeSession(status: OrchestrationSession["status"]): OrchestrationSessi
 }
 
 it.layer(NodeServices.layer)("settled thread decider", (it) => {
+  it.effect("removes a stale client thread that is missing from the server", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-missing"),
+          threadId: ThreadId.make("thread-missing"),
+        },
+        readModel: { ...makeReadModel(null), threads: [] },
+      });
+      const events = Array.isArray(event) ? event : [event];
+
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe("thread.deleted");
+      if (events[0]?.type === "thread.deleted") {
+        expect(events[0].payload.threadId).toBe(ThreadId.make("thread-missing"));
+        expect(events[0].payload.deletedAt).toBe(events[0].occurredAt);
+      }
+    }),
+  );
+
   it.effect("preserves the activity stamp when automatically settling", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({

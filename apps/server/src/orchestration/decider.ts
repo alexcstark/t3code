@@ -435,6 +435,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     case "thread.settle":
     case "thread.auto-settle": {
+      if (
+        command.type === "thread.settle" &&
+        findThreadById(readModel, command.threadId) === undefined
+      ) {
+        const occurredAt = yield* nowIso;
+        // A missing thread cannot retain settled state. Emit a deletion
+        // tombstone so clients discard the stale cached shell instead of
+        // surfacing an invariant error that the user cannot resolve.
+        return {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.deleted",
+          payload: {
+            threadId: command.threadId,
+            deletedAt: occurredAt,
+          },
+        };
+      }
       const thread = yield* requireThreadNotArchived({
         readModel,
         command,
