@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -54,6 +55,31 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_TURN_INTERRUPT_TIMEOUT = "3 seconds" as const;
+/**
+ * `config/mcpServer/reload` talks to every configured MCP server before a
+ * turn. A dead or wedged backend hangs it forever (the transport awaits an
+ * unbounded Deferred per request), which wedges every turn before
+ * `turn/start` — the user sees a session that silently never responds.
+ */
+const CODEX_MCP_RELOAD_TIMEOUT = "10 seconds" as const;
+
+/**
+ * Refreshes Codex's MCP tool catalog before a turn, bounded. On failure or
+ * timeout the turn still runs — Codex will simply be missing the toolkit —
+ * but the thread is told why, instead of the failure living only in a
+ * server-side log.
+ */
+export const refreshCodexMcpCatalog = <E>(
+  reload: () => Effect.Effect<unknown, E>,
+  onUnavailable: () => Effect.Effect<void, E>,
+) =>
+  reload().pipe(
+    Effect.timeoutOption(CODEX_MCP_RELOAD_TIMEOUT),
+    Effect.map(Option.isNone),
+    Effect.catch(() => Effect.succeed(true)),
+    Effect.catchDefect(() => Effect.succeed(true)),
+    Effect.flatMap((unavailable) => (unavailable ? onUnavailable() : Effect.void)),
+  );
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -2330,12 +2356,16 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
+            yield* refreshCodexMcpCatalog(
+              () => client.request("config/mcpServer/reload", undefined),
+              () =>
+                emitEvent({
+                  kind: "notification",
+                  threadId: options.threadId,
+                  method: "error",
+                  message:
+                    "Codex could not refresh the t3-code MCP connection before this turn. The agent may be missing T3 tools; restart the session if they are missing.",
                 }),
-              ),
             );
           }
           const normalizedModel = normalizeCodexModelSlug(

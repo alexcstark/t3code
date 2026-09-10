@@ -497,6 +497,21 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
+# TERM, wait, then KILL. A serve that ignores TERM is wedged, and leaking it
+# (with its provider app-servers) is how multi-day orphaned remote servers
+# happen. Returns non-zero only if the pid survives KILL.
+stop_remote_pid() {
+  PID_TO_STOP="$1"
+  [ -n "$PID_TO_STOP" ] || return 0
+  kill -0 "$PID_TO_STOP" 2>/dev/null || return 0
+  kill "$PID_TO_STOP" 2>/dev/null || true
+  wait_for_pid_exit "$PID_TO_STOP"
+  kill -0 "$PID_TO_STOP" 2>/dev/null || return 0
+  kill -9 "$PID_TO_STOP" 2>/dev/null || true
+  wait_for_pid_exit "$PID_TO_STOP"
+  kill -0 "$PID_TO_STOP" 2>/dev/null && return 1
+  return 0
+}
 resolve_default_runtime_port() {
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
 const fs = require("node:fs");
@@ -534,9 +549,9 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
       PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
-      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
-        kill "$PID_TO_STOP" 2>/dev/null || true
-        wait_for_pid_exit "$PID_TO_STOP"
+      if ! stop_remote_pid "$PID_TO_STOP"; then
+        printf 'Remote T3 server with PID %s survived SIGKILL. Its ownership files were kept; stop it manually.\\n' "$PID_TO_STOP" >&2
+        exit 1
       fi
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
@@ -563,15 +578,13 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_MANAGED=""
   fi
 elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-    REMOTE_PID=""
-    REMOTE_PORT=""
-    REMOTE_MANAGED=""
-  elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
+  if [ "$RUNNER_CHANGED" -eq 1 ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    # Reset the ownership files only once the old server is confirmed dead;
+    # resetting while it lives leaves an untracked orphan on the host.
+    if ! stop_remote_pid "$REMOTE_PID"; then
+      printf 'Remote T3 server with PID %s survived SIGKILL. Its ownership files were kept; stop it manually.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -599,8 +612,7 @@ if [ -z "$REMOTE_PORT" ]; then
     else
       printf 'It wrote nothing to %s, so it exited before producing any output.\\n' "$LOG_FILE" >&2
     fi
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
+    stop_remote_pid "$REMOTE_PID" || true
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
   fi
@@ -635,8 +647,18 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+  # A serve that ignores TERM is wedged; kill it rather than leak it (with its
+  # provider app-servers) as a multi-day orphan on the host.
   if kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Remote T3 server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+    kill -9 "$REMOTE_PID" 2>/dev/null || true
+    WAIT_COUNT=0
+    while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+      WAIT_COUNT=$((WAIT_COUNT + 1))
+      sleep 0.1
+    done
+  fi
+  if kill -0 "$REMOTE_PID" 2>/dev/null; then
+    printf 'Remote T3 server with PID %s survived SIGKILL. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
 fi
