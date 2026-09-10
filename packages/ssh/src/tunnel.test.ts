@@ -196,7 +196,8 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       "does not satisfy required range ",
     );
-    assert.include(buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
+    assert.include(buildRemoteLaunchScript(), 'stop_remote_pid "$REMOTE_PID"');
+    assert.include(buildRemoteLaunchScript(), 'kill -9 "$PID_TO_STOP"');
     assert.include(buildRemoteLaunchScript(), "wait_ready");
     assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');

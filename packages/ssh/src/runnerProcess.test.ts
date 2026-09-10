@@ -252,8 +252,9 @@ server.listen(0, "127.0.0.1", () => {
               { concurrency: "unbounded" },
             );
           }, Effect.scoped);
-          let result = yield* runStop();
-          if (mode !== "graceful") {
+          const result = yield* runStop();
+          if (mode === "external") {
+            // An external server is never signaled by the stop script.
             assert.isTrue(yield* child.isRunning);
             yield* Effect.callback<void, Error>((resume) => {
               const connection = NodeNet.connect(started.port, "127.0.0.1");
@@ -261,16 +262,6 @@ server.listen(0, "127.0.0.1", () => {
               connection.once("close", () => resume(Effect.void));
               return Effect.sync(() => connection.destroy());
             });
-          }
-          if (mode === "timeout") {
-            assert.equal(result.exitCode, 1);
-            assert.equal(result.stdout, "");
-            assert.include(result.stderr, "did not stop within 2 seconds");
-            assert.equal(yield* fs.readFileString(signalPath), "1");
-            for (const [name, contents] of Object.entries(savedState)) {
-              assert.equal(yield* fs.readFileString(path.join(fixture, name)), contents);
-            }
-            result = yield* runStop();
           }
           assert.equal(result.exitCode, 0);
           assert.equal(result.stdout, '{"stopped":true}\n');
@@ -280,9 +271,14 @@ server.listen(0, "127.0.0.1", () => {
           }
           if (mode === "external") {
             assert.isFalse(yield* fs.exists(signalPath));
+          } else if (mode === "timeout") {
+            // A server that ignores TERM is killed rather than leaked as an
+            // untracked orphan; its ownership files are gone after one stop.
+            assert.isFalse(yield* child.isRunning);
+            assert.equal(yield* fs.readFileString(signalPath), "1");
           } else {
             assert.equal(yield* child.exitCode, 0);
-            assert.equal(yield* fs.readFileString(signalPath), mode === "timeout" ? "2" : "1");
+            assert.equal(yield* fs.readFileString(signalPath), "1");
           }
         }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
