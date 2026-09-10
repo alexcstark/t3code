@@ -170,7 +170,11 @@ const buildCmd = Command.make(
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {
-        yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
+        // A server package without the bundled web client serves 503 on "/"
+        // ("No static directory configured") and fails every remote readiness
+        // probe, which the desktop app surfaces as an endless reconnect loop.
+        // Build the web app first (root `build` or apps/web build).
+        return yield* new ServerCliBuildAssetMissingError({ assetPath: webDist });
       }
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
