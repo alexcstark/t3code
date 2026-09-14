@@ -627,6 +627,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,
     [anchoredEndSpace, contentInsetEndAdjustment],
   );
+  // Live-follow pins with maintainScrollAtEnd. MVCP would freeze the
+  // estimated end rows after measurement and open long threads in history.
+  const pinToLiveEnd =
+    !citationPositioning && !anchoredEndSpace && liveFollowEnabled && !disclosureToggleSettling;
+  const handleListLoad = useCallback(() => {
+    onCitationListLoad();
+    if (citationRequest !== null || !liveFollowEnabled) {
+      return;
+    }
+    void listRef.current?.scrollToEnd?.({ animated: false });
+  }, [citationRequest, listRef, liveFollowEnabled, onCitationListLoad]);
 
   const measureContentOverflow = useCallback(
     () =>
@@ -868,19 +879,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             // Legend needs a data refresh to mount new pins without a scroll event.
             {...(readyCitationRequest ? { dataVersion: readyCitationRequest.key } : {})}
             {...(citationAlwaysRender ? { alwaysRender: citationAlwaysRender } : {})}
-            onLoad={onCitationListLoad}
+            onLoad={handleListLoad}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-            maintainScrollAtEnd={
-              citationPositioning ||
-              anchoredEndSpace ||
-              !liveFollowEnabled ||
-              disclosureToggleSettling
-                ? false
-                : TIMELINE_MAINTAIN_SCROLL_AT_END
-            }
+            maintainScrollAtEnd={pinToLiveEnd ? TIMELINE_MAINTAIN_SCROLL_AT_END : false}
             maintainVisibleContentPosition={
-              citationPositioning ? false : maintainVisibleContentPosition
+              citationPositioning || pinToLiveEnd ? false : maintainVisibleContentPosition
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
