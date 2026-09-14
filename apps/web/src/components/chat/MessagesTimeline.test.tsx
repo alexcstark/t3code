@@ -1081,6 +1081,36 @@ describe("MessagesTimeline", () => {
     ).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
+  it("does not freeze visible rows while live-following the end", () => {
+    const timelineEntries = [buildUserTimelineEntry("First prompt.")];
+
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+      ),
+    ).not.toContain('data-maintain-visible-content-position="object"');
+
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          liveFollowEnabled={false}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).toContain('data-maintain-visible-content-position="object"');
+
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={timelineEntries[0]!.message.id}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).toContain('data-maintain-visible-content-position="object"');
+  });
+
   it("renders collapse controls for long user messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
