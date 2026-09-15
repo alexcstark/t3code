@@ -7,6 +7,7 @@ import {
 } from "./fileCommentAnnotations";
 import {
   isMarkdownPreviewFile,
+  resolvedFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
@@ -67,6 +68,23 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("resolvedFilePreviewPath", () => {
+  it("keeps a workspace-relative request until a host path is returned", () => {
+    expect(resolvedFilePreviewPath("a1-strategies/src/Score.kt", undefined)).toBe(
+      "a1-strategies/src/Score.kt",
+    );
+    expect(
+      resolvedFilePreviewPath("a1-strategies/src/Score.kt", "a1-strategies/src/Score.kt"),
+    ).toBe("a1-strategies/src/Score.kt");
+  });
+
+  it("switches to the loaded absolute path so sibling files stay read-only", () => {
+    expect(
+      resolvedFilePreviewPath("a1-strategies/src/Score.kt", "/repos/a1-strategies/src/Score.kt"),
+    ).toBe("/repos/a1-strategies/src/Score.kt");
   });
 });
 

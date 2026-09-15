@@ -69,6 +69,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import {
   isMarkdownPreviewFile,
+  resolvedFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
@@ -986,18 +987,22 @@ export default function FilePreviewPanel({
   // PDFs have no text to show; HTML has, and can toggle between page and source.
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
-  // A file outside the workspace (an absolute path) is shown, never edited.
-  const isHostFile =
-    attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
   const file = useProjectFileQuery(
     environmentId,
     cwd,
     relativePath,
     attachment === undefined && !isMedia && !isPdf,
   );
+  // Sibling-repo reads come back as an absolute host path. Use that for display
+  // and to keep the file read-only; the query still keys on the requested path.
+  const previewRelativePath = resolvedFilePreviewPath(relativePath, file.data?.relativePath);
+  // A file outside the workspace (an absolute path) is shown, never edited.
+  const isHostFile =
+    attachment !== undefined ||
+    (previewRelativePath !== null && isAbsolutePath(previewRelativePath));
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const showExplorer = shouldShowFileExplorer({
-    relativePath,
+    relativePath: previewRelativePath,
     explorerOpen,
     attachmentOpen: attachment !== undefined,
   });
@@ -1039,7 +1044,9 @@ export default function FilePreviewPanel({
     isPreviewSupportedInRuntime() &&
     isBrowserPreviewFile(relativePath);
   const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+    previewRelativePath && attachment === undefined
+      ? resolvePathLinkTarget(previewRelativePath, cwd)
+      : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
@@ -1128,7 +1135,7 @@ export default function FilePreviewPanel({
                   environmentId={environmentId}
                   onOpenFile={onOpenFile}
                   projectName={projectName}
-                  relativePath={relativePath}
+                  relativePath={previewRelativePath ?? relativePath}
                   workspaceMutationId={workspaceMutationId}
                 />
               </div>
