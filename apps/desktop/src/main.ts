@@ -45,6 +45,7 @@ import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
+import * as DesktopPowerResume from "./app/DesktopPowerResume.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
@@ -199,6 +200,7 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
+  DesktopPowerResume.layer,
   desktopAppActivationLayer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
