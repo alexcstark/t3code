@@ -4,8 +4,9 @@
  *
  * Owns workspace-root-relative file read/write operations and their associated
  * safety checks and cache invalidation hooks. Reads also accept absolute host
- * paths so clients can show files an agent left outside the workspace; writes
- * never leave the root.
+ * paths so clients can show files an agent left outside the workspace, and
+ * relative paths that are missing in the workspace are retried as a sibling of
+ * the root. Writes never leave the root.
  *
  * @module WorkspaceFileSystem
  */
@@ -29,6 +30,32 @@ import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
+
+function isEnoentCause(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    (cause as { code: unknown }).code === "ENOENT"
+  );
+}
+
+/** Relative path missing in the workspace, retried next to the project root. */
+function siblingHostAbsolutePath(
+  path: {
+    readonly resolve: (...paths: string[]) => string;
+    readonly dirname: (file: string) => string;
+  },
+  workspaceRoot: string,
+  relativePath: string,
+): string | null {
+  if (relativePath.replaceAll("\\", "/").split("/").includes("..")) {
+    return null;
+  }
+  const siblingPath = path.resolve(path.dirname(workspaceRoot), relativePath);
+  const workspacePath = path.resolve(workspaceRoot, relativePath);
+  return siblingPath === workspacePath ? null : siblingPath;
+}
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
@@ -142,7 +169,10 @@ export const make = Effect.gen(function* () {
   /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
    * root, symlinks included. An absolute path reads a host file in place, such as a
-   * report an agent wrote to a temp directory; it gets no root check.
+   * report an agent wrote to a temp directory; it gets no root check. A relative
+   * path that is missing in the workspace is retried as a sibling of the root so
+   * orchestrator citations like `a1-strategies/src/foo.kt` open the neighboring
+   * repo; the result path is that absolute host path.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
@@ -181,7 +211,7 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const realTargetPath = yield* Effect.tryPromise({
+    const resolvedTarget = yield* Effect.tryPromise({
       try: () => NodeFSP.realpath(target.absolutePath),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
@@ -192,7 +222,29 @@ export const make = Effect.gen(function* () {
           operation: "realpath-target",
           cause,
         }),
-    });
+    }).pipe(
+      Effect.map((realTargetPath) => ({ kind: "workspace" as const, realTargetPath })),
+      Effect.catchTag("WorkspaceFileSystemOperationError", (error) => {
+        if (!isEnoentCause(error.cause)) {
+          return Effect.fail(error);
+        }
+        const siblingPath = siblingHostAbsolutePath(path, input.cwd, requestedPath);
+        if (siblingPath === null || siblingPath === target.absolutePath) {
+          return Effect.fail(error);
+        }
+        return Effect.tryPromise({
+          try: () => NodeFSP.realpath(siblingPath),
+          catch: () => error,
+        }).pipe(Effect.map((realTargetPath) => ({ kind: "host" as const, realTargetPath })));
+      }),
+    );
+    if (resolvedTarget.kind === "host") {
+      return {
+        relativePath: resolvedTarget.realTargetPath,
+        realTargetPath: resolvedTarget.realTargetPath,
+      };
+    }
+    const realTargetPath = resolvedTarget.realTargetPath;
     const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
     if (
       relativeRealPath.startsWith(`..${path.sep}`) ||

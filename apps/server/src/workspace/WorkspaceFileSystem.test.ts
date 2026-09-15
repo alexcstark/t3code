@@ -128,6 +128,61 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect("reads a sibling of the workspace when the relative path is missing inside it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir;
+        const cwd = path.join(parent, "orchestrator");
+        const siblingRepo = path.join(parent, "a1-strategies");
+        yield* fileSystem.makeDirectory(cwd);
+        yield* writeTextFile(siblingRepo, "src/Score.kt", "fun score() = 1\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "a1-strategies/src/Score.kt",
+        });
+        const realSiblingPath = yield* fileSystem.realPath(path.join(siblingRepo, "src/Score.kt"));
+
+        expect(result).toEqual({
+          relativePath: realSiblingPath,
+          contents: "fun score() = 1\n",
+          byteLength: 16,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("prefers a workspace file over a sibling with the same relative path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir;
+        const cwd = path.join(parent, "orchestrator");
+        yield* fileSystem.makeDirectory(cwd);
+        yield* writeTextFile(cwd, "a1-strategies/src/Score.kt", "fun score() = 2\n");
+        yield* writeTextFile(
+          path.join(parent, "a1-strategies"),
+          "src/Score.kt",
+          "fun score() = 1\n",
+        );
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "a1-strategies/src/Score.kt",
+        });
+
+        expect(result).toEqual({
+          relativePath: "a1-strategies/src/Score.kt",
+          contents: "fun score() = 2\n",
+          byteLength: 16,
+          truncated: false,
+        });
+      }),
+    );
+
     it.effect("rejects reads outside the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

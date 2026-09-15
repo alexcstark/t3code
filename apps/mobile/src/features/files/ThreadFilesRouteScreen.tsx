@@ -630,6 +630,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  const previewRelativePath =
+    fileData !== null && isAbsolutePath(fileData.relativePath)
+      ? fileData.relativePath
+      : relativePath;
 
   const handleSelectFile = useCallback(
     (path: string) => {
@@ -812,12 +816,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     );
   }
 
-  const parentDir = relativePath.slice(
+  const headerPath = previewRelativePath ?? relativePath;
+  const parentDir = headerPath.slice(
     0,
-    Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"), 0),
+    Math.max(headerPath.lastIndexOf("/"), headerPath.lastIndexOf("\\"), 0),
   );
   // A host file outside the workspace is not under the project name.
-  const headerSubtitle = isAbsolutePath(relativePath)
+  const headerSubtitle = isAbsolutePath(headerPath)
     ? parentDir
     : [projectName, parentDir].filter(Boolean).join(" · ");
 
