@@ -700,21 +700,30 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const resolveGitCommonDir = (cwd: string) =>
+  /**
+   * Resolves what checkpoint capture needs in one git call: the shared git dir (where the temp index
+   * is written), this worktree's own git dir (whose index we seed from), and whether cwd is the
+   * worktree root. Paths come back relative to cwd, so they are resolved against it.
+   */
+  const resolveCheckpointPaths = (cwd: string) =>
     Effect.gen(function* () {
       const result = yield* execute({
-        operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
+        operation: "GitVcsDriver.checkpoints.resolveCheckpointPaths",
         cwd,
-        args: ["rev-parse", "--git-common-dir"],
+        args: ["rev-parse", "--git-common-dir", "--git-dir", "--show-prefix"],
       });
-      const gitCommonDir = result.stdout.trim();
-      return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+      const [gitCommonDir = "", gitDir = "", prefix = ""] = result.stdout.split("\n");
+      return {
+        gitCommonDir: path.resolve(cwd, gitCommonDir.trim()),
+        gitDir: path.resolve(cwd, gitDir.trim()),
+        isWorktreeRoot: prefix.trim().length === 0,
+      };
     });
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
-      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+      const { gitCommonDir, gitDir, isWorktreeRoot } = yield* resolveCheckpointPaths(input.cwd);
       const tempIndexPath = path.join(
         gitCommonDir,
         `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
@@ -733,8 +742,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         .pipe(Effect.ignore);
 
       yield* Effect.gen(function* () {
-        const headExists = yield* hasHeadCommit(input.cwd);
-        if (headExists) {
+        // Seed the temp index from the repo's own index so git keeps its stat cache and `git add -A`
+        // only re-hashes files that actually changed. A tree read into an empty index carries no stat
+        // data, so git re-hashes the entire worktree on every turn, which times out on large repos.
+        // Only safe at the worktree root: below it `git add -A -- .` leaves outside paths at whatever
+        // the base index holds, and that base must be HEAD rather than the user's staged state.
+        const seededIndex = isWorktreeRoot
+          ? yield* fileSystem.copyFile(path.join(gitDir, "index"), tempIndexPath).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            )
+          : false;
+
+        if (!seededIndex && (yield* hasHeadCommit(input.cwd))) {
           yield* execute({
             operation,
             cwd: input.cwd,
