@@ -30,6 +30,7 @@ import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type ConnectionAttemptError,
   type ConnectionTarget,
   type NetworkStatus,
@@ -61,6 +62,16 @@ const TARGET_ENTRY: ConnectionCatalogEntry = {
 
 const RELAY_ENTRY: ConnectionCatalogEntry = {
   target: RELAY_TARGET,
+  profile: Option.none(),
+  enabled: true,
+};
+
+const SSH_ENTRY: ConnectionCatalogEntry = {
+  target: new SshConnectionTarget({
+    environmentId: TARGET.environmentId,
+    label: TARGET.label,
+    connectionId: "connection-ssh",
+  }),
   profile: Option.none(),
   enabled: true,
 };
@@ -476,6 +487,31 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment did not respond during connection setup.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps waiting on a cold SSH bootstrap past the default setup timeout", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Effect.sleep("40 seconds").pipe(Effect.as(PREPARED_CONNECTION))
+            : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "preparing",
+      );
+      yield* TestClock.adjust("30 seconds");
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connecting");
+
+      yield* TestClock.adjust("10 seconds");
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected.attempt).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

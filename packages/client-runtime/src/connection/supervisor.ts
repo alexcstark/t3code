@@ -31,6 +31,12 @@ import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+// A cold SSH environment has to open the SSH connection, start (and sometimes
+// install) the remote server, then bring the tunnel up. The desktop side allows
+// that minutes; 15 seconds only abandons an attempt that is still making
+// progress, and the retry then queues behind the same bootstrap and times out
+// again. Measured cold start against a real host: ~40s.
+const SSH_CONNECTION_ESTABLISHMENT_TIMEOUT = "2 minutes";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
@@ -223,6 +229,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
     target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : ""
   }`;
+  const establishmentTimeout =
+    target._tag === "SshConnectionTarget"
+      ? SSH_CONNECTION_ESTABLISHMENT_TIMEOUT
+      : CONNECTION_ESTABLISHMENT_TIMEOUT;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -508,9 +518,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetry,
         })),
       ),
-      Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
-        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
-      ),
+      Effect.sleep(establishmentTimeout).pipe(Effect.as<EstablishmentEvent>({ _tag: "TimedOut" })),
     ]);
 
     if (establishment._tag === "Interrupted") {
