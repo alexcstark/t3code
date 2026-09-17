@@ -1386,6 +1386,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
+    if (tunnels.get(entry.key) === entry) {
+      tunnels.delete(entry.key);
+    }
     yield* Effect.logDebug("ssh.tunnel.close.start", {
       ...sshTargetLogFields(entry.target),
       key: entry.key,
@@ -1575,56 +1578,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ),
     );
     tunnels.set(input.key, tunnelEntry);
-    const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystemService = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
+    // Closing a tunnel takes the local ssh process down and nothing else. The
+    // remote server outlives it so quitting the app, replacing a stale tunnel,
+    // or waking the laptop reconnects to a warm server instead of paying a cold
+    // start. Only `disconnectEnvironment` stops the remote, and the remote
+    // launch script restarts one that no longer answers.
     yield* Scope.addFinalizer(
       entryScope,
-      Effect.gen(function* () {
-        const stopRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
-        if (stopRemote) {
-          tunnels.delete(tunnelEntry.key);
-        }
-        yield* tunnelEntry.process
-          .kill({
-            killSignal: "SIGTERM",
-            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-          })
-          .pipe(Effect.ignore);
-        if (!stopRemote) {
-          return;
-        }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* stopRemoteServer(
-          tunnelEntry.target,
-          authSecret === null
-            ? {
-                batchMode: "yes",
-                interactiveAuth: false,
-              }
-            : {
-                authSecret,
-                batchMode: "no",
-                interactiveAuth: true,
-              },
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(FileSystem.FileSystem, fileSystemService),
-          Effect.provideService(Path.Path, pathService),
-        );
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-      }).pipe(Effect.ignore),
+      tunnelEntry.process
+        .kill({
+          killSignal: "SIGTERM",
+          forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+        })
+        .pipe(Effect.ignore),
     );
     yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1772,12 +1738,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           hasTunnel: entry !== null,
         });
         if (entry !== null) {
-          // Explicit disconnect owns the remote stop so its failure reaches the caller.
-          yield* Effect.gen(function* () {
-            tunnels.delete(key);
-            yield* closeTunnelEntry(entry);
-          }).pipe(Effect.uninterruptible);
+          yield* closeTunnelEntry(entry).pipe(Effect.uninterruptible);
         }
+        // Explicit disconnect is the only thing that stops the remote server, so
+        // its failure has to reach the caller.
         yield* runWithSshAuth({
           key,
           target: resolvedTarget,
