@@ -53,6 +53,7 @@ import {
   resolveDesktopBuildIconAssets,
   resolveDesktopAppId,
   resolveDesktopProductName,
+  resolveMacLsEnvironment,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
   resolveResourceMonitorRustTargets,
@@ -265,6 +266,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "com.alexcstark.t4code",
     );
     assert.equal(resolveDesktopAppId({}), "com.t3tools.t3code");
+  });
+
+  it("bakes fork branding into macOS LSEnvironment when those vars are set", () => {
+    assert.equal(resolveMacLsEnvironment({}), undefined);
+    assert.deepStrictEqual(
+      resolveMacLsEnvironment({
+        T3CODE_DESKTOP_DISPLAY_NAME: " T4 Code ",
+        T3CODE_DESKTOP_USER_DATA_DIR_NAME: "t3code-t4",
+        T3CODE_DISABLE_AUTO_UPDATE: "true",
+      }),
+      {
+        T3CODE_DESKTOP_DISPLAY_NAME: "T4 Code",
+        T3CODE_DESKTOP_USER_DATA_DIR_NAME: "t3code-t4",
+        T3CODE_DISABLE_AUTO_UPDATE: "true",
+      },
+    );
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {

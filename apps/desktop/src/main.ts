@@ -17,7 +17,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
+import { resolveRemoteArchiveVersion, type RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
@@ -99,7 +99,7 @@ const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  return { archiveVersion: environment.appVersion };
+  return { archiveVersion: resolveRemoteArchiveVersion(environment.appVersion) };
 };
 
 const desktopSshEnvironmentLayer = Layer.unwrap(

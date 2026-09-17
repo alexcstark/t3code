@@ -22,6 +22,7 @@ import {
   buildRemotePairingScript,
   buildRemoteStopScript,
   buildRemoteT3RunnerScript,
+  resolveRemoteArchiveVersion,
   SshInvalidArchiveVersionError,
   SshMissingRunnerError,
   describeReadinessCause,
@@ -248,6 +249,16 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, 'kill -9 "$PID_TO_STOP" 2>/dev/null || true');
     assert.include(launch, 'if ! stop_remote_pid "$REMOTE_PID"; then');
     assert.include(launch, "survived SIGKILL");
+  });
+
+  it("installs the upstream release a fork build is cut from", () => {
+    assert.equal(resolveRemoteArchiveVersion("0.0.42-t4.0.0"), "0.0.42");
+    assert.equal(resolveRemoteArchiveVersion(" 0.0.41-t4.0.5 "), "0.0.41");
+    assert.equal(resolveRemoteArchiveVersion("0.0.42"), "0.0.42");
+    assert.equal(
+      resolveRemoteArchiveVersion("0.0.43-nightly.20260917.1866"),
+      "0.0.43-nightly.20260917.1866",
+    );
   });
 
   it("uses the remote t3 runner for launch and pairing scripts", () => {

@@ -2636,6 +2636,25 @@ function resolveDesktopArtifactBaseName(): string {
   return "T3-Code";
 }
 
+const MAC_LS_ENVIRONMENT_KEYS = [
+  "T3CODE_DESKTOP_DISPLAY_NAME",
+  "T3CODE_DESKTOP_USER_DATA_DIR_NAME",
+  "T3CODE_DISABLE_AUTO_UPDATE",
+] as const;
+
+export function resolveMacLsEnvironment(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Record<string, string> | undefined {
+  const lsEnvironment: Record<string, string> = {};
+  for (const key of MAC_LS_ENVIRONMENT_KEYS) {
+    const value = env[key]?.trim();
+    if (value) {
+      lsEnvironment[key] = value;
+    }
+  }
+  return Object.keys(lsEnvironment).length > 0 ? lsEnvironment : undefined;
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2703,6 +2722,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    const lsEnvironment = resolveMacLsEnvironment();
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2710,6 +2730,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        ...(lsEnvironment === undefined ? {} : { LSEnvironment: lsEnvironment }),
       },
       protocols: [
         {

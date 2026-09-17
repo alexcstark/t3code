@@ -815,6 +815,16 @@ export class SshMissingRunnerError extends Schema.TaggedError<SshMissingRunnerEr
   }
 }
 
+// Fork builds carry a `-t4.<n>` suffix on top of the upstream release they were
+// cut from, and only upstream publishes runtime archives. The remote therefore
+// installs the upstream release the fork is based on, not the fork's own tag.
+const FORK_VERSION_PATTERN = /^(\d+\.\d+\.\d+)-t4\.[0-9A-Za-z.-]+$/u;
+
+export function resolveRemoteArchiveVersion(appVersion: string): string {
+  const trimmed = appVersion.trim();
+  return FORK_VERSION_PATTERN.exec(trimmed)?.[1] ?? trimmed;
+}
+
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
   const archiveVersion = input?.archiveVersion?.trim() || "";
