@@ -600,9 +600,11 @@ describe("ssh tunnel scripts", () => {
         Effect.provide(layer),
         Effect.scoped,
         Effect.andThen(
+          // Shutting the manager down takes the local tunnel with it and leaves
+          // the remote server running, so the next launch reuses a warm one.
           Effect.sync(() => {
             assert.equal(tunnelKillCount, 2);
-            assert.equal(stopCommandCount, mode === "failed stop" ? 3 : 2);
+            assert.equal(stopCommandCount, mode === "failed stop" ? 2 : 1);
           }),
         ),
       );
