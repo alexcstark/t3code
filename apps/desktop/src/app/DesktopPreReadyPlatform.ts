@@ -5,12 +5,20 @@ import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
+
+// Pre-ready startup has no config layer yet; the packaged app carries its fork
+// branding in the environment.
+function desktopDisplayNameFromEnvironment(): Option.Option<string> {
+  const displayName = process.env.T3CODE_DESKTOP_DISPLAY_NAME?.trim();
+  return displayName ? Option.some(displayName) : Option.none();
+}
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
@@ -74,6 +82,9 @@ export const make = Effect.gen(function* () {
             displayName: resolveDesktopAppBranding({
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
+              // Pre-ready startup has no config layer yet; the packaged app carries
+              // its fork branding in the environment.
+              displayName: desktopDisplayNameFromEnvironment(),
             }).displayName,
             execTarget: process.env.APPIMAGE?.trim() || process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),

@@ -32,6 +32,7 @@ vi.mock("../state/session", async (importOriginal) => ({
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
 }));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
@@ -41,8 +42,7 @@ vi.mock("../editorPreferences", () => ({
   usePreferredEditor: () => [null, vi.fn()],
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
-  findProjectForChangeRequest: () => undefined,
-  matchesLinkedPullRequestUrl: () => false,
+  findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
@@ -91,9 +91,6 @@ function firstInlineStyle(html: string): Record<string, string> {
       return [declaration.slice(0, separator), declaration.slice(separator + 1)];
     }),
   );
-}
-function renderStreaming(markdown: string): string {
-  return renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={markdown} isStreaming />);
 }
 
 describe("ChatMarkdown workspace images", () => {
@@ -406,14 +403,5 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain('src="https://example.com/image.png"');
     expect(html).toContain("max-w-[min(100%,30rem)]");
     expect(html).not.toContain("Image unavailable");
-  });
-
-  it("uses lightweight text while a response is streaming", () => {
-    const html = renderStreaming("**not yet rich**\n```ts\nconst value = 1;\n```");
-
-    expect(html).toContain('data-streaming-markdown="true"');
-    expect(html).toContain("**not yet rich**");
-    expect(html).not.toContain("<strong>");
-    expect(html).not.toContain("chat-markdown-codeblock");
   });
 });

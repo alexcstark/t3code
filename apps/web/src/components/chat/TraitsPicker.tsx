@@ -38,7 +38,7 @@ import {
   ComposerControlIcon,
   type ComposerControlSize,
 } from "./ComposerControl";
-import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
@@ -561,8 +561,11 @@ export const TraitsPicker = memo(function TraitsPicker({
     size?: ComposerControlSize;
     hidden?: boolean;
   }) {
-  const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
-  const isMenuOpen = open ?? uncontrolledIsMenuOpen;
+  const composerFloatingLayerProps = useComposerMenuProps();
+  // Upstream owns the uncontrolled state and the hidden-reset; the fork keeps the menu
+  // controllable from outside so the reasoning-picker shortcut can toggle it.
+  const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useComposerMenuState(hidden);
+  const isMenuOpen = (open ?? uncontrolledIsMenuOpen) && !hidden;
   const setIsMenuOpen = (nextOpen: boolean) => {
     onOpenChange?.(nextOpen);
     if (open === undefined) {
@@ -629,6 +632,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       <MenuTrigger
         render={
           <ComposerControl
+            data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
             variant={triggerVariant ?? "ghost"}
             size={size}
             className={cn(
