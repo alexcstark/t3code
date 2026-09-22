@@ -215,6 +215,8 @@ describe("KeybindingsSettings.logic", () => {
         "terminalOpen",
         "modelPickerOpen",
         "reasoningPickerOpen",
+        "isWeb",
+        "isDesktop",
         "true",
         "false",
       ]),
