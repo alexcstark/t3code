@@ -20,6 +20,7 @@ import { SshCommandError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
+  buildRemoteProbeScript,
   buildRemoteStopScript,
   buildRemoteT3RunnerScript,
   resolveRemoteArchiveVersion,
@@ -28,7 +29,6 @@ import {
   describeReadinessCause,
   issueRemotePairingToken,
   launchOrReuseRemoteServer,
-  REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
   waitForHttpReady,
 } from "./tunnel.ts";
@@ -167,12 +167,14 @@ describe("ssh tunnel scripts", () => {
       ...ARCHIVE,
       releaseBaseUrl: "https://mirror.example/t3/",
     });
-    assert.include(launch, "T3_ARCHIVE_MODE=1");
     assert.include(launch, "T3_RELEASE_BASE_URL='https://mirror.example/t3'");
-    assert.include(launch, '"$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE"');
-    assert.include(launch, '"$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT"');
-    assert.include(launch, '"$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"');
-    assert.include(buildRemoteLaunchScript(NODE_SCRIPT), "T3_ARCHIVE_MODE=0");
+    assert.include(launch, 'RUNNER_NEXT="$STATE_ROOT/run-t3.next.$$"');
+    assert.include(launch, '"$RUNNER_NEXT" --version >/dev/null');
+    assert.include(launch, '"$RUNNER_NEXT" __ssh-helper ensure-server');
+    assert.include(
+      buildRemoteLaunchScript(NODE_SCRIPT),
+      `T3_NODE_SCRIPT_PATH='${NODE_SCRIPT.nodeScriptPath}'`,
+    );
   });
 
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -242,13 +244,20 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "npx");
   });
 
-  it("escalates to SIGKILL before it resets remote ownership files", () => {
+  it("delegates stop policy to the lifecycle helper", () => {
     const launch = buildRemoteLaunchScript(ARCHIVE);
+    const stop = buildRemoteStopScript({
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    });
 
-    assert.include(launch, "stop_remote_pid()");
-    assert.include(launch, 'kill -9 "$PID_TO_STOP" 2>/dev/null || true');
-    assert.include(launch, 'if ! stop_remote_pid "$REMOTE_PID"; then');
-    assert.include(launch, "survived SIGKILL");
+    assert.include(launch, '"$RUNNER_NEXT" __ssh-helper ensure-server');
+    assert.notInclude(launch, "kill -9");
+    assert.include(stop, '"$RUNNER_FILE" __ssh-helper stop-server');
+    assert.include(stop, 'if [ "$REMOTE_MANAGED" = "managed" ]');
+    assert.notInclude(stop, "kill -9");
   });
 
   it("installs the upstream release a fork build is cut from", () => {
@@ -261,7 +270,7 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
-  it("uses the remote t3 runner for launch and pairing scripts", () => {
+  it("uses one global runner and lifecycle state for probe, launch, pairing, and stop", () => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -274,64 +283,28 @@ describe("ssh tunnel scripts", () => {
       nodeEngineRange: TEST_NODE_ENGINE_RANGE,
     });
 
-    assert.include(
-      launch,
-      '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
-    );
-    assert.include(launch, "RUNNER_CHANGED=1");
-    assert.include(launch, "ensure_remote_node_path()");
-    assert.include(launch, "if ! ensure_remote_node_path; then");
+    const probe = buildRemoteProbeScript();
+    const pairing = buildRemotePairingScript(target, ARCHIVE);
+    const stop = buildRemoteStopScript(target);
+
+    assert.include(probe, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
+    assert.include(probe, '"$RUNNER_FILE" __ssh-helper probe-server');
+    assert.include(probe, '{"status":"needs-ensure"}');
+    assert.include(launch, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
+    assert.include(launch, 'RUNNER_NEXT="$STATE_ROOT/run-t3.next.$$"');
+    assert.include(launch, '"$RUNNER_NEXT" __ssh-helper ensure-server');
     assert.include(devLaunch, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(devLaunch, "does not satisfy required range ");
-    assert.include(launch, 'stop_remote_pid "$REMOTE_PID"');
-    assert.include(launch, "wait_ready");
-    assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
-    assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
-    assert.notInclude(launch, "server-home");
-    assert.include(launch, "Remote T3 server did not become ready");
-    assert.include(launch, 'wait_ready "60000"');
-    assert.include(launch, 'if [ -s "$LOG_FILE" ]; then');
-    assert.include(launch, "It wrote nothing to %s");
     assert.include(launch, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
+    assert.notInclude(launch, "nohup env T3CODE_NO_BROWSER=1");
     assert.include(
-      buildRemotePairingScript(target, ARCHIVE),
+      pairing,
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
-    assert.include(
-      buildRemotePairingScript(target, ARCHIVE),
-      'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"',
-    );
-    assert.notInclude(buildRemotePairingScript(target, ARCHIVE), "server-home");
-    assert.include(
-      buildRemotePairingScript(target, ARCHIVE),
-      "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
-    );
-    assert.include(
-      buildRemoteStopScript(target),
-      'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
-    );
-    assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
-    assert.include(
-      launch,
-      'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
-    );
-    assert.include(launch, "resolve_default_runtime_port()");
-    assert.include(launch, 'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port');
-    assert.include(launch, "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))");
-    assert.include(launch, 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
-    assert.include(launch, 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
-    assert.include(launch, 'rm -f "$PID_FILE"');
-    assert.include(launch, "printf 'external\\n' >\"$MANAGED_FILE\"");
-    assert.include(launch, 'if [ -z "$REMOTE_PORT" ]; then');
-    assert.isBelow(
-      launch.indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
-      launch.indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
-    );
-    assert.isBelow(
-      launch.indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
-      launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
-    );
+    assert.include(pairing, 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
+    assert.notInclude(pairing, "T3_ARCHIVE_VERSION");
+    assert.include(stop, '"$RUNNER_FILE" __ssh-helper stop-server');
+    assert.include(stop, 'LEGACY_STATE_DIR="$STATE_ROOT/$STATE_KEY"');
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -345,6 +318,9 @@ describe("ssh tunnel scripts", () => {
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         spawnedCommands.push(commandArgs(command));
+        if (spawnedCommands.length === 1) {
+          return makeSuccessfulProcess('loaded nvm default\n{"status":"needs-ensure"}\n');
+        }
         return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
       }),
     );
@@ -354,7 +330,40 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
-      assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
+      assert.equal(spawnedCommands.length, 2);
+      assert.deepEqual(spawnedCommands[0]?.slice(-7, -3), ["sh", "-l", "-s", "--"]);
+      assert.equal(spawnedCommands[0]?.at(-2), ARCHIVE.archiveVersion);
+      assert.deepEqual(spawnedCommands[0], spawnedCommands[1]);
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("reuses a healthy warm server without entering the cold launch path", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    let commandCount = 0;
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.sync(() => {
+        commandCount += 1;
+        return makeSuccessfulProcess(
+          '{"status":"ready","remotePort":3774,"serverKind":"managed","decision":"reuse-managed","remotePid":1234,"serverVersion":"1.2.3-preview.20260911.4"}\n',
+        );
+      }),
+    );
+    const processLayer = Layer.merge(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const result = yield* launchOrReuseRemoteServer(target, undefined, ARCHIVE);
+      assert.equal(commandCount, 1);
+      assert.equal(result.remotePort, 3774);
+      assert.equal(result.lifecycleDecision, "reuse-managed");
+      assert.equal(result.remotePid, 1234);
     }).pipe(Effect.provide(processLayer));
   });
 
@@ -365,8 +374,14 @@ describe("ssh tunnel scripts", () => {
       username: "julius",
       port: 2222,
     } as const;
+    let commandCount = 0;
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 75_000)),
+      Effect.sync(() => {
+        commandCount += 1;
+        return commandCount === 1
+          ? makeSuccessfulProcess('{"status":"needs-ensure"}\n')
+          : makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 75_000);
+      }),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
@@ -380,6 +395,7 @@ describe("ssh tunnel scripts", () => {
 
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
+      assert.equal(commandCount, 2);
     }).pipe(Effect.provide(processLayer));
   });
 
@@ -390,8 +406,14 @@ describe("ssh tunnel scripts", () => {
       username: "julius",
       port: 2222,
     } as const;
+    let commandCount = 0;
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 800_000)),
+      Effect.sync(() => {
+        commandCount += 1;
+        return commandCount === 1
+          ? makeSuccessfulProcess('{"status":"needs-ensure"}\n')
+          : makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 800_000);
+      }),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
@@ -403,11 +425,8 @@ describe("ssh tunnel scripts", () => {
 
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
+      assert.equal(commandCount, 2);
     }).pipe(Effect.provide(processLayer));
-  });
-
-  it("allows the remote port picker to run without a state file path", () => {
-    assert.include(REMOTE_PICK_PORT_SCRIPT, 'const filePath = process.argv[2] ?? "";');
   });
 
   it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () =>
