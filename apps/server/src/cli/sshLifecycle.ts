@@ -23,6 +23,10 @@ const LOCK_TIMEOUT_MS = 90_000;
 const LOCK_OWNER_GRACE_MS = 2_000;
 const READY_TIMEOUT_MS = 60_000;
 const READY_PROBE_TIMEOUT_MS = 1_000;
+// Only a server this lifecycle owns gets an extended recovery window. External
+// servers are left untouched, while a refused localhost connection is absent.
+const UNRESPONSIVE_SERVER_GRACE_MS = 15_000;
+const UNRESPONSIVE_SERVER_PROBE_TIMEOUT_MS = 5_000;
 const STOP_GRACE_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 
@@ -132,11 +136,26 @@ interface ProcessIdentity {
   readonly processGroupId: number;
 }
 
-interface LiveServer {
+interface RunningServerProcess {
   readonly runtime: PersistedServerRuntimeState;
   readonly process: ProcessIdentity;
+}
+
+interface UnresponsiveServer extends RunningServerProcess {
+  readonly status: "unresponsive";
+}
+
+interface LiveServer extends RunningServerProcess {
+  readonly status: "live";
   readonly descriptor: ExecutionEnvironmentDescriptor;
 }
+
+type RunningServer = UnresponsiveServer | LiveServer;
+
+type EnvironmentDescriptorProbe =
+  | { readonly status: "live"; readonly descriptor: ExecutionEnvironmentDescriptor }
+  | { readonly status: "absent" }
+  | { readonly status: "unresponsive" };
 
 interface SshLifecyclePaths {
   readonly stateRoot: string;
@@ -476,10 +495,10 @@ function readRuntimeState(runtimePath: string): PersistedServerRuntimeState | un
 function fetchEnvironmentDescriptor(
   origin: string,
   timeoutMs: number,
-): Promise<ExecutionEnvironmentDescriptor | undefined> {
+): Promise<EnvironmentDescriptorProbe> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (value: ExecutionEnvironmentDescriptor | undefined) => {
+    const finish = (value: EnvironmentDescriptorProbe) => {
       if (settled) return;
       settled = true;
       resolve(value);
@@ -488,14 +507,14 @@ function fetchEnvironmentDescriptor(
     try {
       endpoint = new URL("/.well-known/t3/environment", origin);
     } catch {
-      finish(undefined);
+      finish({ status: "unresponsive" });
       return;
     }
     const request = NodeHttp.get(endpoint, { timeout: timeoutMs }, (response) => {
-      response.once("error", () => finish(undefined));
+      response.once("error", () => finish({ status: "unresponsive" }));
       if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
         response.resume();
-        finish(undefined);
+        finish({ status: "unresponsive" });
         return;
       }
       let body = "";
@@ -507,36 +526,82 @@ function fetchEnvironmentDescriptor(
       response.once("end", () => {
         try {
           const parsed: unknown = JSON.parse(body);
-          finish(Option.getOrUndefined(decodeEnvironmentDescriptor(parsed)));
+          const descriptor = Option.getOrUndefined(decodeEnvironmentDescriptor(parsed));
+          finish(
+            descriptor === undefined ? { status: "unresponsive" } : { status: "live", descriptor },
+          );
         } catch {
-          finish(undefined);
+          finish({ status: "unresponsive" });
         }
       });
     });
-    request.once("timeout", () => request.destroy());
-    request.once("error", () => finish(undefined));
+    request.once("timeout", () => {
+      finish({ status: "unresponsive" });
+      request.destroy();
+    });
+    request.once("error", (error) => {
+      finish(
+        error instanceof Error && "code" in error && error.code === "ECONNREFUSED"
+          ? { status: "absent" }
+          : { status: "unresponsive" },
+      );
+    });
   });
 }
 
-async function inspectLiveServer(runtimePath: string): Promise<LiveServer | undefined> {
+async function inspectRunningServer(
+  runtimePath: string,
+  probeTimeoutMs = READY_PROBE_TIMEOUT_MS,
+): Promise<RunningServer | undefined> {
   const runtime = readRuntimeState(runtimePath);
   if (runtime === undefined) return undefined;
   const identity = readProcessIdentity(runtime.pid);
   if (identity === undefined || identity.zombie) return undefined;
-  const descriptor = await fetchEnvironmentDescriptor(runtime.origin, READY_PROBE_TIMEOUT_MS);
-  if (descriptor === undefined) return undefined;
-  return { runtime, process: identity, descriptor };
+  const probe = await fetchEnvironmentDescriptor(runtime.origin, probeTimeoutMs);
+  switch (probe.status) {
+    case "absent":
+      return undefined;
+    case "unresponsive":
+      return { status: "unresponsive", runtime, process: identity };
+    case "live":
+      return { status: "live", runtime, process: identity, descriptor: probe.descriptor };
+  }
 }
 
-function stateMatchesLiveServer(state: SshServerState, live: LiveServer): boolean {
+function stateMatchesRunningServer(state: SshServerState, server: RunningServer): boolean {
   return (
-    state.pid === live.runtime.pid &&
-    state.port === live.runtime.port &&
-    state.processStartToken === live.process.startToken &&
+    state.pid === server.runtime.pid &&
+    state.port === server.runtime.port &&
+    state.processStartToken === server.process.startToken &&
     (state.kind === "external" ||
       state.serverStartedAt === undefined ||
-      state.serverStartedAt === live.runtime.startedAt)
+      state.serverStartedAt === server.runtime.startedAt)
   );
+}
+
+async function waitForRunningServerResponse(
+  runtimePath: string,
+  initialServer: UnresponsiveServer,
+): Promise<RunningServer | undefined> {
+  const deadline = Date.now() + UNRESPONSIVE_SERVER_GRACE_MS;
+  let server: RunningServer | undefined = initialServer;
+  while (server.status === "unresponsive" && Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    await sleep(Math.min(POLL_INTERVAL_MS, remainingMs));
+    server = await inspectRunningServer(
+      runtimePath,
+      Math.min(UNRESPONSIVE_SERVER_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+    );
+    if (
+      server === undefined ||
+      server.status === "live" ||
+      server.runtime.pid !== initialServer.runtime.pid ||
+      server.process.startToken !== initialServer.process.startToken
+    ) {
+      return server;
+    }
+  }
+  return server;
 }
 
 function runnerIsCompatible(
@@ -586,9 +651,9 @@ function readLegacyRunnerId(legacyRoot: string): string {
 function readLegacyManagedState(
   paths: SshLifecyclePaths,
   ownerKey: string,
-  live: LiveServer | undefined,
+  server: RunningServer | undefined,
 ): ManagedServerState | undefined {
-  if (live === undefined) return undefined;
+  if (server === undefined) return undefined;
   const legacyRoot = NodePath.join(paths.stateRoot, ownerKey);
   try {
     const managed = NodeFS.readFileSync(NodePath.join(legacyRoot, "managed"), "utf8").trim();
@@ -600,7 +665,7 @@ function readLegacyManagedState(
       NodeFS.readFileSync(NodePath.join(legacyRoot, "port"), "utf8").trim(),
       10,
     );
-    if (managed !== "managed" || pid !== live.runtime.pid || port !== live.runtime.port) {
+    if (managed !== "managed" || pid !== server.runtime.pid || port !== server.runtime.port) {
       return undefined;
     }
     return {
@@ -608,12 +673,12 @@ function readLegacyManagedState(
       kind: "managed",
       ownerKey,
       pid,
-      processStartToken: live.process.startToken,
-      processGroupId: live.process.processGroupId,
+      processStartToken: server.process.startToken,
+      processGroupId: server.process.processGroupId,
       port,
       runnerId: readLegacyRunnerId(legacyRoot),
-      serverStartedAt: live.runtime.startedAt,
-      serverVersion: live.descriptor.serverVersion,
+      serverStartedAt: server.runtime.startedAt,
+      ...(server.status === "live" ? { serverVersion: server.descriptor.serverVersion } : {}),
     };
   } catch {
     return undefined;
@@ -623,9 +688,9 @@ function readLegacyManagedState(
 function findLegacyManagedState(
   paths: SshLifecyclePaths,
   preferredOwnerKey: string,
-  live: LiveServer | undefined,
+  server: RunningServer | undefined,
 ): ManagedServerState | undefined {
-  if (live === undefined || live.runtime.serviceManaged) return undefined;
+  if (server === undefined || server.runtime.serviceManaged) return undefined;
   let ownerKeys: string[];
   try {
     ownerKeys = NodeFS.readdirSync(paths.stateRoot, { withFileTypes: true })
@@ -639,7 +704,7 @@ function findLegacyManagedState(
     ...ownerKeys.filter((ownerKey) => ownerKey !== preferredOwnerKey),
   ];
   for (const ownerKey of orderedOwnerKeys) {
-    const state = readLegacyManagedState(paths, ownerKey, live);
+    const state = readLegacyManagedState(paths, ownerKey, server);
     if (state !== undefined) return state;
   }
   return undefined;
@@ -884,14 +949,19 @@ async function spawnManagedServer(input: {
 
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const live = await inspectLiveServer(input.paths.runtimePath);
-      if (live !== undefined && live.runtime.pid === pid && live.runtime.port === port) {
+      const server = await inspectRunningServer(input.paths.runtimePath);
+      if (
+        server !== undefined &&
+        server.status === "live" &&
+        server.runtime.pid === pid &&
+        server.runtime.port === port
+      ) {
         writeServerState(input.paths.statePath, {
           ...launchingState,
-          serverStartedAt: live.runtime.startedAt,
-          serverVersion: live.descriptor.serverVersion,
+          serverStartedAt: server.runtime.startedAt,
+          serverVersion: server.descriptor.serverVersion,
         });
-        return live;
+        return server;
       }
       const current = readProcessIdentity(pid);
       if (current === undefined || current.zombie || current.startToken !== identity.startToken)
@@ -923,21 +993,23 @@ async function spawnManagedServer(input: {
 export async function probeSshServer(input: ProbeSshServerInput): Promise<SshLifecycleProbeResult> {
   validateOwnerKey(input.ownerKey);
   const paths = lifecyclePaths(input.stateRoot, input.baseDir);
-  const [state, live] = await Promise.all([
+  const [state, server] = await Promise.all([
     Promise.resolve(readServerState(paths.statePath)),
-    inspectLiveServer(paths.runtimePath),
+    inspectRunningServer(paths.runtimePath),
   ]);
-  if (live === undefined) return { status: "needs-ensure" };
+  if (server === undefined || server.status === "unresponsive") {
+    return { status: "needs-ensure" };
+  }
   if (
-    live.runtime.serviceManaged ||
+    server.runtime.serviceManaged ||
     state?.kind !== "managed" ||
     state.ownerKey !== input.ownerKey ||
-    !stateMatchesLiveServer(state, live)
+    !stateMatchesRunningServer(state, server)
   ) {
-    return readyResult(live, "external", "reuse-external");
+    return readyResult(server, "external", "reuse-external");
   }
-  return runnerIsCompatible(input.expectedVersion, input.runnerId, state, live)
-    ? readyResult(live, "managed", "reuse-managed")
+  return runnerIsCompatible(input.expectedVersion, input.runnerId, state, server)
+    ? readyResult(server, "managed", "reuse-managed")
     : { status: "needs-ensure" };
 }
 
@@ -947,23 +1019,51 @@ export async function ensureSshServer(
   validateOwnerKey(input.ownerKey);
   const paths = lifecyclePaths(input.stateRoot, input.baseDir);
   return withLifecycleLock(paths, async () => {
-    const live = await inspectLiveServer(paths.runtimePath);
+    let server = await inspectRunningServer(paths.runtimePath);
+    let live = server?.status === "live" ? server : undefined;
     let state = readServerState(paths.statePath);
+    let adoptedLegacyState: ManagedServerState | undefined;
     if (
       state === undefined ||
-      (state.kind === "external" && live !== undefined && stateMatchesLiveServer(state, live))
+      (state.kind === "external" &&
+        server !== undefined &&
+        stateMatchesRunningServer(state, server))
     ) {
-      const legacyState = findLegacyManagedState(paths, input.ownerKey, live);
-      if (legacyState !== undefined) {
-        state = legacyState;
-        writeServerState(paths.statePath, legacyState);
+      adoptedLegacyState = findLegacyManagedState(paths, input.ownerKey, server);
+      if (adoptedLegacyState !== undefined) {
+        state = adoptedLegacyState;
       }
+    }
+    if (
+      server?.status === "unresponsive" &&
+      server.runtime.serviceManaged !== true &&
+      state?.kind === "managed" &&
+      state.ownerKey === input.ownerKey &&
+      stateMatchesRunningServer(state, server)
+    ) {
+      server = await waitForRunningServerResponse(paths.runtimePath, server);
+      live = server?.status === "live" ? server : undefined;
+    }
+    const ownsUnresponsiveServer =
+      server?.status === "unresponsive" &&
+      live === undefined &&
+      server.runtime.serviceManaged !== true &&
+      state?.kind === "managed" &&
+      state.ownerKey === input.ownerKey &&
+      stateMatchesRunningServer(state, server);
+    if (server !== undefined && live === undefined && !ownsUnresponsiveServer) {
+      throw new Error(
+        `Remote T3 server PID ${String(server.runtime.pid)} on 127.0.0.1:${String(server.runtime.port)} is still running but did not answer readiness checks; refusing to start a competing server.`,
+      );
+    }
+    if (adoptedLegacyState !== undefined && live !== undefined) {
+      writeServerState(paths.statePath, adoptedLegacyState);
     }
     if (
       live !== undefined &&
       state?.kind === "managed" &&
       state.ownerKey !== input.ownerKey &&
-      stateMatchesLiveServer(state, live)
+      stateMatchesRunningServer(state, live)
     ) {
       return readyResult(live, "external", "reuse-external");
     }
@@ -989,7 +1089,7 @@ export async function ensureSshServer(
         live.runtime.serviceManaged ||
         state?.kind !== "managed" ||
         state.ownerKey !== input.ownerKey ||
-        !stateMatchesLiveServer(state, live)
+        !stateMatchesRunningServer(state, live)
       ) {
         writeServerState(paths.statePath, externalStateFrom(live));
         removeLegacyOwnershipFiles(paths, input.ownerKey);
@@ -1066,9 +1166,12 @@ export async function stopSshServer(input: StopSshServerInput): Promise<{ stoppe
   return withLifecycleLock(paths, async () => {
     let state = readServerState(paths.statePath);
     if (state?.kind !== "managed") {
-      const live = await inspectLiveServer(paths.runtimePath);
-      if (live !== undefined && (state === undefined || stateMatchesLiveServer(state, live))) {
-        state = readLegacyManagedState(paths, input.ownerKey, live) ?? state;
+      const server = await inspectRunningServer(paths.runtimePath);
+      if (
+        server !== undefined &&
+        (state === undefined || stateMatchesRunningServer(state, server))
+      ) {
+        state = readLegacyManagedState(paths, input.ownerKey, server) ?? state;
       }
     }
     if (state?.kind !== "managed" || state.ownerKey !== input.ownerKey) {

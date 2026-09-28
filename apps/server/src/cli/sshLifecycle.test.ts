@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeEvents from "node:events";
 
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 
 import { ensureSshServer, probeSshServer, stopSshServer } from "./sshLifecycle.ts";
 
@@ -32,6 +32,8 @@ const baseDir = valueAfter("--base-dir");
 if (!Number.isInteger(port) || !baseDir) process.exit(2);
 const runtimePath = path.join(baseDir, "userdata", "server-runtime.json");
 const providerPath = path.join(baseDir, "provider.pid");
+const delayedDescriptorPidPath = path.join(baseDir, "delayed-descriptor.pid");
+const unresponsiveDescriptorPidPath = path.join(baseDir, "unresponsive-descriptor.pid");
 fs.mkdirSync(path.dirname(runtimePath), { recursive: true });
 const provider = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
   detached: true,
@@ -44,14 +46,30 @@ const server = http.createServer((request, response) => {
     response.writeHead(404).end();
     return;
   }
-  response.setHeader("content-type", "application/json");
-  response.end(JSON.stringify({
-    environmentId: "00000000-0000-4000-8000-000000000001",
-    label: "SSH lifecycle test",
-    platform: { os: process.platform === "darwin" ? "darwin" : "linux", arch: "x64" },
-    serverVersion: version,
-    capabilities: { repositoryIdentity: false }
-  }));
+  const respond = () => {
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({
+      environmentId: "00000000-0000-4000-8000-000000000001",
+      label: "SSH lifecycle test",
+      platform: { os: process.platform === "darwin" ? "darwin" : "linux", arch: "x64" },
+      serverVersion: version,
+      capabilities: { repositoryIdentity: false }
+    }));
+  };
+  let delayedPid = "";
+  let unresponsivePid = "";
+  try {
+    delayedPid = fs.readFileSync(delayedDescriptorPidPath, "utf8").trim();
+  } catch {}
+  try {
+    unresponsivePid = fs.readFileSync(unresponsiveDescriptorPidPath, "utf8").trim();
+  } catch {}
+  if (unresponsivePid === String(process.pid)) return;
+  if (delayedPid === String(process.pid)) {
+    setTimeout(respond, 1500);
+  } else {
+    respond();
+  }
 });
 server.listen(port, "127.0.0.1", () => {
   fs.writeFileSync(runtimePath, JSON.stringify({
@@ -172,6 +190,14 @@ async function stopTestProcess(child: NodeChildProcess.ChildProcess): Promise<vo
   await NodeEvents.EventEmitter.once(child, "exit").catch(() => undefined);
 }
 
+function stopTestProvider(harness: Harness): void {
+  const providerPath = NodePath.join(harness.baseDir, "provider.pid");
+  if (!NodeFS.existsSync(providerPath)) return;
+  try {
+    process.kill(-Number(NodeFS.readFileSync(providerPath, "utf8")), "SIGKILL");
+  } catch {}
+}
+
 it("reuses the same legacy-managed server without signaling it", async () => {
   const harness = makeHarness();
   const runner = writeRunner(harness, "candidate.sh", "1.2.3");
@@ -265,6 +291,248 @@ it("adopts a service-managed server and never stops it", async () => {
     NodeFS.rmSync(harness.root, { recursive: true, force: true });
   }
 }, 20_000);
+
+it("does not replace a service-managed server whose descriptor is temporarily unresponsive", async () => {
+  const harness = makeHarness();
+  const port = await reservePort();
+  const child = spawnFakeServer(
+    harness,
+    writeRunner(harness, "service-runner.sh", "1.2.3"),
+    port,
+    true,
+  );
+  let unexpectedReplacementPid: number | undefined;
+  try {
+    await waitForFile(NodePath.join(harness.baseDir, "userdata", "server-runtime.json"));
+    const pid = child.pid;
+    assert.isDefined(pid);
+    await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate-first.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+    });
+    const statePath = NodePath.join(harness.stateRoot, "server-state.json");
+    const stateBeforeFailure = NodeFS.readFileSync(statePath, "utf8");
+    const runnerBeforeFailure = NodeFS.readFileSync(harness.stableRunnerPath, "utf8");
+    const replacementCandidate = writeRunner(harness, "candidate-second.sh", "1.2.3");
+    NodeFS.writeFileSync(NodePath.join(harness.baseDir, "delayed-descriptor.pid"), String(pid));
+
+    const input = {
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: replacementCandidate,
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+    } as const;
+    await expect(
+      ensureSshServer(input).then((result) => {
+        unexpectedReplacementPid = result.remotePid;
+        return result;
+      }),
+    ).rejects.toThrow("refusing to start a competing server");
+
+    assert.isTrue(processExists(pid));
+    assert.equal(NodeFS.readFileSync(statePath, "utf8"), stateBeforeFailure);
+    assert.equal(NodeFS.readFileSync(harness.stableRunnerPath, "utf8"), runnerBeforeFailure);
+    assert.isTrue(NodeFS.existsSync(replacementCandidate));
+  } finally {
+    if (unexpectedReplacementPid !== undefined) {
+      try {
+        process.kill(-unexpectedReplacementPid, "SIGKILL");
+      } catch {}
+    }
+    stopTestProvider(harness);
+    await stopTestProcess(child);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
+it("recovers a stale runtime whose recorded process has no server listener", async () => {
+  const harness = makeHarness();
+  const port = await reservePort();
+  const staleProcess = NodeChildProcess.spawn(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 1000)"],
+    { detached: true, stdio: "ignore" },
+  );
+  let activePid: number | undefined;
+  try {
+    const stalePid = staleProcess.pid;
+    assert.isDefined(stalePid);
+    const runtimePath = NodePath.join(harness.baseDir, "userdata", "server-runtime.json");
+    NodeFS.mkdirSync(NodePath.dirname(runtimePath), { recursive: true });
+    NodeFS.writeFileSync(
+      runtimePath,
+      `${JSON.stringify({
+        version: 1,
+        pid: stalePid,
+        port,
+        origin: `http://127.0.0.1:${String(port)}`,
+        startedAt: new Date().toISOString(),
+        serviceManaged: true,
+      })}\n`,
+    );
+
+    const recovered = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: port,
+    });
+    activePid = recovered.remotePid;
+
+    assert.equal(recovered.decision, "cold-start");
+    assert.equal(recovered.remotePort, port);
+    assert.notEqual(recovered.remotePid, stalePid);
+    assert.isTrue(processExists(stalePid));
+
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: true },
+    );
+    activePid = undefined;
+  } finally {
+    if (activePid !== undefined) {
+      try {
+        process.kill(-activePid, "SIGKILL");
+      } catch {}
+    }
+    stopTestProvider(harness);
+    await stopTestProcess(staleProcess);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
+it("reuses an owned server that responds during the overload grace", async () => {
+  const harness = makeHarness();
+  const port = await reservePort();
+  let activePid: number | undefined;
+  try {
+    const first = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate-first.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: port,
+    });
+    activePid = first.remotePid;
+    NodeFS.writeFileSync(
+      NodePath.join(harness.baseDir, "delayed-descriptor.pid"),
+      String(first.remotePid),
+    );
+
+    const recovered = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate-second.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: port,
+    });
+    activePid = recovered.remotePid;
+
+    assert.equal(recovered.decision, "reuse-managed");
+    assert.equal(recovered.remotePort, first.remotePort);
+    assert.equal(recovered.remotePid, first.remotePid);
+    assert.isTrue(processExists(first.remotePid));
+
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: true },
+    );
+    activePid = undefined;
+  } finally {
+    if (activePid !== undefined) {
+      try {
+        process.kill(-activePid, "SIGKILL");
+      } catch {}
+    }
+    stopTestProvider(harness);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+it("restarts an owned server only after the overload grace is exhausted", async () => {
+  const harness = makeHarness();
+  const port = await reservePort();
+  let activePid: number | undefined;
+  try {
+    const first = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate-first.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: port,
+    });
+    activePid = first.remotePid;
+    NodeFS.writeFileSync(
+      NodePath.join(harness.baseDir, "unresponsive-descriptor.pid"),
+      String(first.remotePid),
+    );
+
+    const replacement = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate-second.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: port,
+    });
+    activePid = replacement.remotePid;
+
+    assert.equal(replacement.decision, "restart-unhealthy");
+    assert.equal(replacement.remotePort, first.remotePort);
+    assert.notEqual(replacement.remotePid, first.remotePid);
+    assert.isFalse(processExists(first.remotePid));
+    assert.isTrue(processExists(replacement.remotePid));
+
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: true },
+    );
+    activePid = undefined;
+  } finally {
+    if (activePid !== undefined) {
+      try {
+        process.kill(-activePid, "SIGKILL");
+      } catch {}
+    }
+    stopTestProvider(harness);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 40_000);
 
 it("preserves another connection's legacy ownership during migration", async () => {
   const harness = makeHarness();
