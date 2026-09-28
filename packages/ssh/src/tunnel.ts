@@ -493,6 +493,21 @@ fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
+const REMOTE_PATH_T3_SCRIPT = `PATH_T3="$(command -v t3 2>/dev/null || true)"`;
+
+const REMOTE_LIFECYCLE_CONTROLLER_SCRIPT = `find_lifecycle_controller() {
+  for T3_CONTROLLER_CANDIDATE in "$@"; do
+    [ -n "$T3_CONTROLLER_CANDIDATE" ] || continue
+    [ -x "$T3_CONTROLLER_CANDIDATE" ] || continue
+    if "$T3_CONTROLLER_CANDIDATE" __ssh-helper --help 2>&1 | grep -q 'probe-server'; then
+      printf '%s\\n' "$T3_CONTROLLER_CANDIDATE"
+      return 0
+    fi
+  done
+  return 1
+}
+${REMOTE_PATH_T3_SCRIPT}`;
+
 const REMOTE_LIFECYCLE_PROBE_SCRIPT = `set -eu
 STATE_KEY="$1"
 EXPECTED_VERSION="$2"
@@ -501,10 +516,20 @@ RUNNER_ID="$3"
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_ROOT/run-t3.sh"
+@@T3_PATH_T3_SCRIPT@@
 if [ -x "$RUNNER_FILE" ]; then
-  if "$RUNNER_FILE" __ssh-helper probe-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$DEFAULT_SERVER_HOME"; then
-    exit 0
-  fi
+  for LIFECYCLE_CONTROLLER in "$RUNNER_FILE" "$PATH_T3"; do
+    [ -n "$LIFECYCLE_CONTROLLER" ] || continue
+    [ -x "$LIFECYCLE_CONTROLLER" ] || continue
+    if PROBE_OUTPUT="$("$LIFECYCLE_CONTROLLER" __ssh-helper probe-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$DEFAULT_SERVER_HOME" 2>/dev/null)"; then
+      case "$PROBE_OUTPUT" in
+        *'"status":"ready"'* | *'"status":"needs-ensure"'*)
+          printf '%s\\n' "$PROBE_OUTPUT"
+          exit 0
+          ;;
+      esac
+    fi
+  done
 fi
 printf '{"status":"needs-ensure"}\\n'
 `;
@@ -519,6 +544,7 @@ DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_ROOT/run-t3.sh"
 RUNNER_NEXT="$STATE_ROOT/run-t3.next.$$"
 mkdir -p "$STATE_ROOT"
+@@T3_LIFECYCLE_CONTROLLER_SCRIPT@@
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
 }
@@ -530,7 +556,11 @@ chmod 700 "$RUNNER_NEXT"
 # Archive mode may download and verify the release here. Warm reconnects use
 # the probe script and never enter this cold preparation path.
 "$RUNNER_NEXT" --version >/dev/null
-"$RUNNER_NEXT" __ssh-helper ensure-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$RUNNER_NEXT" "$RUNNER_FILE" "$DEFAULT_SERVER_HOME"
+LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3")" || {
+  printf 'The remote t3 runtime does not support the SSH lifecycle protocol. Install the current t3 CLI on the remote host.\\n' >&2
+  exit 1
+}
+"$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$RUNNER_NEXT" "$RUNNER_FILE" "$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_LIFECYCLE_PAIRING_SCRIPT = `set -eu
@@ -547,9 +577,14 @@ STATE_KEY="@@T3_STATE_KEY@@"
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_ROOT/run-t3.sh"
-if [ -x "$RUNNER_FILE" ]; then
-  "$RUNNER_FILE" __ssh-helper stop-server "$STATE_ROOT" "$STATE_KEY" "$DEFAULT_SERVER_HOME"
+@@T3_LIFECYCLE_CONTROLLER_SCRIPT@@
+if LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_FILE" "$PATH_T3")"; then
+  "$LIFECYCLE_CONTROLLER" __ssh-helper stop-server "$STATE_ROOT" "$STATE_KEY" "$DEFAULT_SERVER_HOME"
   exit 0
+fi
+if [ -f "$STATE_ROOT/server-state.json" ]; then
+  printf 'Remote T3 lifecycle state exists, but no installed t3 CLI can manage it. Install the current t3 CLI on the remote host.\\n' >&2
+  exit 1
 fi
 # Compatibility for a host that has not yet run the lifecycle helper.
 LEGACY_STATE_DIR="$STATE_ROOT/$STATE_KEY"
@@ -679,12 +714,15 @@ function remoteRunnerDescriptor(input?: RemoteT3RunnerOptions): {
 }
 
 export function buildRemoteProbeScript(): string {
-  return REMOTE_LIFECYCLE_PROBE_SCRIPT;
+  return applyScriptPlaceholders(REMOTE_LIFECYCLE_PROBE_SCRIPT, {
+    T3_PATH_T3_SCRIPT: REMOTE_PATH_T3_SCRIPT,
+  });
 }
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   const runner = remoteRunnerDescriptor(input);
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_LAUNCH_SCRIPT, {
+    T3_LIFECYCLE_CONTROLLER_SCRIPT: REMOTE_LIFECYCLE_CONTROLLER_SCRIPT,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(runner.script),
   });
 }
@@ -695,6 +733,7 @@ export function buildRemotePairingScript(): string {
 
 export function buildRemoteStopScript(target: DesktopSshEnvironmentTarget): string {
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_STOP_SCRIPT, {
+    T3_LIFECYCLE_CONTROLLER_SCRIPT: REMOTE_LIFECYCLE_CONTROLLER_SCRIPT,
     T3_STATE_KEY: remoteStateKey(target),
   });
 }
@@ -891,7 +930,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
     stateKey: remoteStateKey(target),
   });
   yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
+    remoteCommandArgs: ["sh", "-l", "-s"],
     stdin: buildRemoteStopScript(target),
     timeoutMs: REMOTE_STOP_TIMEOUT_MS,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
