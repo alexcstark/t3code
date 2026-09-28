@@ -839,6 +839,79 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
+  it.effect("preserves runtime discovery and rejects offline writes while a server is alive", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-unresponsive-live-test-"),
+      );
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-unresponsive-live-workspace-"),
+      );
+      const config = yield* makeCliTestServerConfig(baseDir);
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: {
+          version: 1,
+          pid: process.pid,
+          host: "127.0.0.1",
+          port: 1,
+          origin: "http://127.0.0.1:1",
+          startedAt: "2026-09-28T00:00:00.000Z",
+        },
+      });
+
+      const error = yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+      assert.include(error.message, "is running but not responding");
+      assert.isTrue(NodeFS.existsSync(config.serverRuntimeStatePath));
+      const afterAdd = yield* readPersistedSnapshot(baseDir);
+      assert.isFalse(afterAdd.projects.some((project) => project.workspaceRoot === workspaceRoot));
+    }),
+  );
+
+  it.effect("clears stale runtime discovery and writes offline after the server exits", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-stale-runtime-test-"),
+      );
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-stale-runtime-workspace-"),
+      );
+      const config = yield* makeCliTestServerConfig(baseDir);
+      const deadPid = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+      if (deadPid === undefined) {
+        assert.fail("Expected the reaped child process to have a pid");
+      }
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: {
+          version: 1,
+          pid: deadPid,
+          host: "127.0.0.1",
+          port: 1,
+          origin: "http://127.0.0.1:1",
+          startedAt: "2026-09-28T00:00:00.000Z",
+        },
+      });
+
+      yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+
+      assert.isFalse(NodeFS.existsSync(config.serverRuntimeStatePath));
+      const afterAdd = yield* readPersistedSnapshot(baseDir);
+      assert.isTrue(
+        afterAdd.projects.some(
+          (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+        ),
+      );
+    }),
+  );
+
   it.effect("rejects dev-url on project commands", () =>
     Effect.gen(function* () {
       const workspaceRoot = NodeFS.mkdtempSync(
