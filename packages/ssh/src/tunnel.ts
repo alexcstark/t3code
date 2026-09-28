@@ -55,7 +55,9 @@ import {
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+// A cold source launch first waits for the lifecycle lock and may then need the
+// full server readiness budget. Keep the SSH command alive for both phases.
+const REMOTE_LAUNCH_TIMEOUT_MS = 180_000;
 // A cold archive launch also downloads and unpacks a ~70 MB release archive
 // and may wait on another installer's lock. The budgets nest: the checksum
 // file is tiny and the archive download is bounded; a waiter outlasts both
@@ -66,7 +68,11 @@ const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
+// Warm reuse costs one SSH handshake. A cold start intentionally costs a
+// second so it can skip runner preparation and downloads on the common path.
 const REMOTE_WARM_PROBE_TIMEOUT_MS = 20_000;
+const REMOTE_STOP_TIMEOUT_MS = 120_000;
+const REMOTE_NO_EXPECTED_VERSION = "-";
 
 export interface RemoteT3RunnerOptions {
   /**
@@ -486,6 +492,7 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 const REMOTE_LIFECYCLE_PROBE_SCRIPT = `set -eu
 STATE_KEY="$1"
 EXPECTED_VERSION="$2"
+[ "$EXPECTED_VERSION" = "-" ] && EXPECTED_VERSION=""
 RUNNER_ID="$3"
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -501,6 +508,7 @@ printf '{"status":"needs-ensure"}\\n'
 const REMOTE_LIFECYCLE_LAUNCH_SCRIPT = `set -eu
 STATE_KEY="$1"
 EXPECTED_VERSION="$2"
+[ "$EXPECTED_VERSION" = "-" ] && EXPECTED_VERSION=""
 RUNNER_ID="$3"
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -545,8 +553,28 @@ LEGACY_PID_FILE="$LEGACY_STATE_DIR/pid"
 LEGACY_MANAGED_FILE="$LEGACY_STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$LEGACY_MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$LEGACY_PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+stop_legacy_pid() {
   kill "$REMOTE_PID" 2>/dev/null || true
+  WAIT_COUNT=0
+  while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 0.1
+  done
+  if kill -0 "$REMOTE_PID" 2>/dev/null; then
+    kill -9 "$REMOTE_PID" 2>/dev/null || true
+    WAIT_COUNT=0
+    while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+      WAIT_COUNT=$((WAIT_COUNT + 1))
+      sleep 0.1
+    done
+  fi
+  ! kill -0 "$REMOTE_PID" 2>/dev/null
+}
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+  if ! stop_legacy_pid; then
+    printf 'Remote T3 server with PID %s survived SIGKILL. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+    exit 1
+  fi
 fi
 rm -f "$LEGACY_STATE_DIR/pid" "$LEGACY_STATE_DIR/port" "$LEGACY_STATE_DIR/managed"
 printf '{"stopped":true}\\n'
@@ -657,13 +685,7 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   });
 }
 
-export function buildRemotePairingScript(
-  target: DesktopSshEnvironmentTarget,
-  input?: RemoteT3RunnerOptions,
-): string {
-  // Validate the runner input before building a script that assumes launch
-  // already installed the corresponding global helper.
-  remoteRunnerDescriptor(input);
+export function buildRemotePairingScript(): string {
   return REMOTE_LIFECYCLE_PAIRING_SCRIPT;
 }
 
@@ -707,7 +729,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       "-s",
       "--",
       remoteStateKey(target),
-      descriptor.expectedVersion,
+      descriptor.expectedVersion || REMOTE_NO_EXPECTED_VERSION,
       descriptor.runnerId,
     ];
     const authOptions = {
@@ -803,7 +825,6 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
 export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingToken")(function* (
   target: DesktopSshEnvironmentTarget,
   input?: SshAuthOptions,
-  runner?: RemoteT3RunnerOptions,
 ): Effect.fn.Return<
   {
     readonly credential: string;
@@ -817,7 +838,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   });
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemotePairingScript(target, runner),
+    stdin: buildRemotePairingScript(),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -868,6 +889,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemoteStopScript(target),
+    timeoutMs: REMOTE_STOP_TIMEOUT_MS,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1530,8 +1552,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           ? yield* runWithSshAuth({
               key,
               target: entry.target,
-              operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
+              operation: (authOptions) => issueRemotePairingToken(entry.target, authOptions),
             })
           : null;
         const pairingToken = pairingResult?.credential ?? null;

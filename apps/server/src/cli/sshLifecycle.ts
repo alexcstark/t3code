@@ -61,6 +61,13 @@ const LockOwner = Schema.Struct({
 });
 type LockOwner = typeof LockOwner.Type;
 
+interface LockObservation {
+  readonly owner: LockOwner | undefined;
+  readonly device: number;
+  readonly inode: number;
+  readonly modifiedAt: number;
+}
+
 const decodeServerState = Schema.decodeUnknownOption(Schema.fromJsonString(SshServerState));
 const encodeServerState = Schema.encodeSync(Schema.fromJsonString(SshServerState));
 const decodeLockOwner = Schema.decodeUnknownOption(Schema.fromJsonString(LockOwner));
@@ -354,6 +361,57 @@ function lockOwnerIsAlive(owner: LockOwner): boolean {
   );
 }
 
+function observeLifecycleLock(lockPath: string): LockObservation | undefined {
+  try {
+    const stats = NodeFS.statSync(lockPath);
+    return {
+      owner: readLockOwner(lockPath),
+      device: stats.dev,
+      inode: stats.ino,
+      modifiedAt: stats.mtimeMs,
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function reclaimLifecycleLock(lockPath: string, observed: LockObservation): boolean {
+  const claimPath = NodePath.join(lockPath, ".reclaim");
+  try {
+    NodeFS.mkdirSync(claimPath, { mode: 0o700 });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "EEXIST" || error.code === "ENOENT")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+
+  try {
+    const currentStats = NodeFS.statSync(lockPath);
+    const currentOwner = readLockOwner(lockPath);
+    const stillStale =
+      observed.owner === undefined
+        ? currentOwner === undefined &&
+          currentStats.dev === observed.device &&
+          currentStats.ino === observed.inode &&
+          Date.now() - observed.modifiedAt >= LOCK_OWNER_GRACE_MS
+        : currentOwner?.token === observed.owner.token && !lockOwnerIsAlive(currentOwner);
+    if (!stillStale) return false;
+    NodeFS.rmSync(lockPath, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  } finally {
+    NodeFS.rmSync(claimPath, { recursive: true, force: true });
+  }
+}
+
 async function withLifecycleLock<A>(paths: SshLifecyclePaths, body: () => Promise<A>): Promise<A> {
   NodeFS.mkdirSync(paths.stateRoot, { recursive: true, mode: 0o700 });
   const identity = readProcessIdentity(process.pid);
@@ -378,18 +436,8 @@ async function withLifecycleLock<A>(paths: SshLifecyclePaths, body: () => Promis
       break;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-      const existing = readLockOwner(paths.lockPath);
-      if (existing !== undefined && !lockOwnerIsAlive(existing)) {
-        NodeFS.rmSync(paths.lockPath, { recursive: true, force: true });
-        continue;
-      }
-      if (existing === undefined) {
-        const age = Date.now() - NodeFS.statSync(paths.lockPath).mtimeMs;
-        if (age >= LOCK_OWNER_GRACE_MS) {
-          NodeFS.rmSync(paths.lockPath, { recursive: true, force: true });
-          continue;
-        }
-      }
+      const observed = observeLifecycleLock(paths.lockPath);
+      if (observed !== undefined && reclaimLifecycleLock(paths.lockPath, observed)) continue;
       if (Date.now() >= deadline) {
         throw new Error("Timed out waiting for another SSH server lifecycle operation.", {
           cause: error,
@@ -444,6 +492,7 @@ function fetchEnvironmentDescriptor(
       return;
     }
     const request = NodeHttp.get(endpoint, { timeout: timeoutMs }, (response) => {
+      response.once("error", () => finish(undefined));
       if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
         response.resume();
         finish(undefined);
@@ -524,10 +573,19 @@ function readyResult(
   };
 }
 
+function readLegacyRunnerId(legacyRoot: string): string {
+  try {
+    return NodeCrypto.createHash("sha256")
+      .update(NodeFS.readFileSync(NodePath.join(legacyRoot, "run-t3.sh"), "utf8"))
+      .digest("hex");
+  } catch {
+    return "";
+  }
+}
+
 function readLegacyManagedState(
   paths: SshLifecyclePaths,
   ownerKey: string,
-  runnerId: string,
   live: LiveServer | undefined,
 ): ManagedServerState | undefined {
   if (live === undefined) return undefined;
@@ -553,13 +611,38 @@ function readLegacyManagedState(
       processStartToken: live.process.startToken,
       processGroupId: live.process.processGroupId,
       port,
-      runnerId,
+      runnerId: readLegacyRunnerId(legacyRoot),
       serverStartedAt: live.runtime.startedAt,
       serverVersion: live.descriptor.serverVersion,
     };
   } catch {
     return undefined;
   }
+}
+
+function findLegacyManagedState(
+  paths: SshLifecyclePaths,
+  preferredOwnerKey: string,
+  live: LiveServer | undefined,
+): ManagedServerState | undefined {
+  if (live === undefined || live.runtime.serviceManaged) return undefined;
+  let ownerKeys: string[];
+  try {
+    ownerKeys = NodeFS.readdirSync(paths.stateRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^[a-f0-9]{16}$/u.test(entry.name))
+      .map((entry) => entry.name);
+  } catch {
+    return undefined;
+  }
+  const orderedOwnerKeys = [
+    preferredOwnerKey,
+    ...ownerKeys.filter((ownerKey) => ownerKey !== preferredOwnerKey),
+  ];
+  for (const ownerKey of orderedOwnerKeys) {
+    const state = readLegacyManagedState(paths, ownerKey, live);
+    if (state !== undefined) return state;
+  }
+  return undefined;
 }
 
 function removeLegacyOwnershipFiles(paths: SshLifecyclePaths, ownerKey: string): void {
@@ -866,8 +949,23 @@ export async function ensureSshServer(
   return withLifecycleLock(paths, async () => {
     const live = await inspectLiveServer(paths.runtimePath);
     let state = readServerState(paths.statePath);
-    if (state === undefined) {
-      state = readLegacyManagedState(paths, input.ownerKey, input.runnerId, live);
+    if (
+      state === undefined ||
+      (state.kind === "external" && live !== undefined && stateMatchesLiveServer(state, live))
+    ) {
+      const legacyState = findLegacyManagedState(paths, input.ownerKey, live);
+      if (legacyState !== undefined) {
+        state = legacyState;
+        writeServerState(paths.statePath, legacyState);
+      }
+    }
+    if (
+      live !== undefined &&
+      state?.kind === "managed" &&
+      state.ownerKey !== input.ownerKey &&
+      stateMatchesLiveServer(state, live)
+    ) {
+      return readyResult(live, "external", "reuse-external");
     }
     const knownManagedVersion =
       state?.kind === "managed"
@@ -966,13 +1064,20 @@ export async function stopSshServer(input: StopSshServerInput): Promise<{ stoppe
   validateOwnerKey(input.ownerKey);
   const paths = lifecyclePaths(input.stateRoot, input.baseDir);
   return withLifecycleLock(paths, async () => {
-    const state = readServerState(paths.statePath);
+    let state = readServerState(paths.statePath);
+    if (state?.kind !== "managed") {
+      const live = await inspectLiveServer(paths.runtimePath);
+      if (live !== undefined && (state === undefined || stateMatchesLiveServer(state, live))) {
+        state = readLegacyManagedState(paths, input.ownerKey, live) ?? state;
+      }
+    }
     if (state?.kind !== "managed" || state.ownerKey !== input.ownerKey) {
       return { stopped: false };
     }
     await stopManagedProcess(state);
     removeRuntimeStateIfOwned(paths.runtimePath, state);
     NodeFS.rmSync(paths.statePath, { force: true });
+    removeLegacyOwnershipFiles(paths, input.ownerKey);
     return { stopped: true };
   });
 }

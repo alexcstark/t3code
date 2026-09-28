@@ -266,6 +266,154 @@ it("adopts a service-managed server and never stops it", async () => {
   }
 }, 20_000);
 
+it("preserves another connection's legacy ownership during migration", async () => {
+  const harness = makeHarness();
+  const otherOwnerKey = "fedcba9876543210";
+  const runner = writeRunner(harness, "legacy-runner.sh", "1.2.3");
+  const port = await reservePort();
+  const child = spawnFakeServer(harness, runner, port);
+  try {
+    await waitForFile(NodePath.join(harness.baseDir, "userdata", "server-runtime.json"));
+    const pid = child.pid;
+    assert.isDefined(pid);
+    const legacy = NodePath.join(harness.stateRoot, OWNER_KEY);
+    NodeFS.mkdirSync(legacy, { recursive: true });
+    NodeFS.copyFileSync(runner, NodePath.join(legacy, "run-t3.sh"));
+    NodeFS.writeFileSync(NodePath.join(legacy, "pid"), `${String(pid)}\n`);
+    NodeFS.writeFileSync(NodePath.join(legacy, "port"), `${String(port)}\n`);
+    NodeFS.writeFileSync(NodePath.join(legacy, "managed"), "managed\n");
+
+    const ensured = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: otherOwnerKey,
+      expectedVersion: "1.2.3",
+      runnerId: "other-runner",
+      candidateRunnerPath: writeRunner(harness, "candidate-other.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+    });
+    assert.deepInclude(ensured, {
+      decision: "reuse-external",
+      serverKind: "external",
+      remotePid: pid,
+    });
+    const state = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(harness.stateRoot, "server-state.json"), "utf8"),
+    ) as { kind?: string; ownerKey?: string };
+    assert.deepInclude(state, { kind: "managed", ownerKey: OWNER_KEY });
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: otherOwnerKey,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: false },
+    );
+
+    const exited = NodeEvents.EventEmitter.once(child, "exit");
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: true },
+    );
+    await exited;
+  } finally {
+    await stopTestProcess(child);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
+it("keeps the winning owner when different connections race a cold start", async () => {
+  const harness = makeHarness();
+  const otherOwnerKey = "fedcba9876543210";
+  const port = await reservePort();
+  let remotePid: number | undefined;
+  try {
+    const attempts = [
+      {
+        ownerKey: OWNER_KEY,
+        candidateRunnerPath: writeRunner(harness, "candidate-owner-one.sh", "1.2.3"),
+      },
+      {
+        ownerKey: otherOwnerKey,
+        candidateRunnerPath: writeRunner(harness, "candidate-owner-two.sh", "1.2.3"),
+      },
+    ] as const;
+    const results = await Promise.all(
+      attempts.map((attempt) =>
+        ensureSshServer({
+          stateRoot: harness.stateRoot,
+          ownerKey: attempt.ownerKey,
+          expectedVersion: "1.2.3",
+          runnerId: "runner-one",
+          candidateRunnerPath: attempt.candidateRunnerPath,
+          stableRunnerPath: harness.stableRunnerPath,
+          baseDir: harness.baseDir,
+          defaultPort: port,
+        }),
+      ),
+    );
+    const winningIndex = results.findIndex((result) => result.serverKind === "managed");
+    const losingIndex = results.findIndex((result) => result.serverKind === "external");
+    assert.notEqual(winningIndex, -1);
+    assert.notEqual(losingIndex, -1);
+    const winner = results[winningIndex];
+    const loser = results[losingIndex];
+    const winningAttempt = attempts[winningIndex];
+    const losingAttempt = attempts[losingIndex];
+    assert.isDefined(winner);
+    assert.isDefined(loser);
+    assert.isDefined(winningAttempt);
+    assert.isDefined(losingAttempt);
+    remotePid = winner.remotePid;
+    assert.equal(winner.decision, "cold-start");
+    assert.equal(loser.decision, "reuse-external");
+    assert.equal(loser.remotePid, winner.remotePid);
+
+    const state = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(harness.stateRoot, "server-state.json"), "utf8"),
+    ) as { kind?: string; ownerKey?: string };
+    assert.deepInclude(state, {
+      kind: "managed",
+      ownerKey: winningAttempt.ownerKey,
+    });
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: losingAttempt.ownerKey,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: false },
+    );
+    assert.isTrue(processExists(winner.remotePid));
+    assert.deepEqual(
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: winningAttempt.ownerKey,
+        baseDir: harness.baseDir,
+      }),
+      { stopped: true },
+    );
+    remotePid = undefined;
+  } finally {
+    if (remotePid !== undefined) {
+      try {
+        process.kill(-remotePid, "SIGKILL");
+      } catch {}
+    }
+    const providerPath = NodePath.join(harness.baseDir, "provider.pid");
+    if (NodeFS.existsSync(providerPath)) {
+      try {
+        process.kill(Number(NodeFS.readFileSync(providerPath, "utf8")), "SIGKILL");
+      } catch {}
+    }
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
 it("serializes concurrent cold starts and performs one controlled upgrade", async () => {
   const harness = makeHarness();
   const port = await reservePort();
