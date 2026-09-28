@@ -53,7 +53,11 @@ import {
 } from "./errors.ts";
 
 const SSH_READY_TIMEOUT_MS = 20_000;
-const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
+// A busy backend gets the same grace as the client connection probe. A tunnel
+// whose SSH process already exited bypasses this wait below.
+const SSH_EXISTING_TUNNEL_READY_TIMEOUT_MS = 15_000;
+const SSH_READY_PROBE_TIMEOUT_MS = 5_000;
+const SSH_READY_PATH = "/.well-known/t3/environment";
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 // A cold source launch first waits for the lifecycle lock and may then need the
 // full server readiness budget. Keep the SSH command alive for both phases.
@@ -1156,6 +1160,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     waitForHttpReady({
       baseUrl: input.httpBaseUrl,
       timeoutMs: SSH_READY_TIMEOUT_MS,
+      path: SSH_READY_PATH,
     }),
     exitFailure,
   ).pipe(
@@ -1476,24 +1481,35 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         localPort: entry.localPort,
         remotePort: entry.remotePort,
       });
-      const readinessExit = yield* Effect.exit(
-        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
-      );
-      if (Exit.isSuccess(readinessExit)) {
-        yield* Effect.logDebug("ssh.environment.tunnel.reused", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-          localPort: entry.localPort,
-          remotePort: entry.remotePort,
-        });
-        return entry;
+      const processRunningExit = yield* Effect.exit(entry.process.isRunning);
+      let staleCause: unknown;
+      if (Exit.isSuccess(processRunningExit) && !processRunningExit.value) {
+        staleCause = "SSH tunnel process exited.";
+      } else {
+        const readinessExit = yield* Effect.exit(
+          waitForHttpReady({
+            baseUrl: entry.httpBaseUrl,
+            timeoutMs: SSH_EXISTING_TUNNEL_READY_TIMEOUT_MS,
+            path: SSH_READY_PATH,
+          }),
+        );
+        if (Exit.isSuccess(readinessExit)) {
+          yield* Effect.logDebug("ssh.environment.tunnel.reused", {
+            ...sshTargetLogFields(resolvedTarget),
+            key,
+            localPort: entry.localPort,
+            remotePort: entry.remotePort,
+          });
+          return entry;
+        }
+        staleCause = readinessExit.cause;
       }
       yield* Effect.logWarning("ssh.environment.tunnel.existing.stale", {
         ...sshTargetLogFields(resolvedTarget),
         key,
         localPort: entry.localPort,
         remotePort: entry.remotePort,
-        cause: readinessExit.cause,
+        cause: staleCause,
       });
       yield* closeTunnelEntry(entry);
     }
