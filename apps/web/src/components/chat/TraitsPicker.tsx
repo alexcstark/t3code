@@ -16,9 +16,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
-import type { VariantProps } from "class-variance-authority";
-import { GaugeIcon, ZapIcon } from "lucide-react";
-import { buttonVariants } from "../ui/button";
+import { BrainIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -95,10 +93,7 @@ const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 function DefaultBadge() {
   return (
-    <Badge
-      variant="outline"
-      className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
-    >
+    <Badge variant="outline" size="sm" className="min-w-0">
       Default
     </Badge>
   );
@@ -282,7 +277,6 @@ export interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   isComposerOwned?: boolean;
 }
@@ -551,7 +545,6 @@ export const TraitsPicker = memo(function TraitsPicker({
   planModeEnabled,
   open,
   onOpenChange,
-  triggerVariant,
   triggerClassName,
   isComposerOwned,
   size = "sm",
@@ -639,7 +632,6 @@ export const TraitsPicker = memo(function TraitsPicker({
                 <ComposerControl
                   aria-label={accessibleLabel}
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
-                  variant={triggerVariant ?? "ghost"}
                   size={size}
                   className={cn(
                     isCodexStyle
@@ -666,7 +658,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   data-composer-control-compact-icon
                   className="pointer-events-none invisible absolute"
                 >
-                  <ComposerControlIcon icon={GaugeIcon} size={size} />
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
                 </span>
               )}
               <span data-composer-control-label className="min-w-0 truncate">
@@ -681,7 +673,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   data-composer-control-compact-icon
                   className="pointer-events-none invisible absolute"
                 >
-                  <ComposerControlIcon icon={GaugeIcon} size={size} />
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
                 </span>
               )}
               <span data-composer-control-label>{triggerLabel}</span>
