@@ -559,13 +559,22 @@ LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3")" ||
 "$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$RUNNER_NEXT" "$RUNNER_FILE" "$DEFAULT_SERVER_HOME"
 `;
 
+// Pair with this client's runner, not the shared run-t3.sh: a server the
+// lifecycle reused (e.g. the boot service) can be newer than the runner a past
+// cold launch left behind, and an older CLI writes the credential where the
+// running server never looks.
 const REMOTE_LIFECYCLE_PAIRING_SCRIPT = `set -eu
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
-RUNNER_FILE="$STATE_ROOT/run-t3.sh"
-[ -x "$RUNNER_FILE" ] || { printf 'Remote T3 runner is missing; reconnect before pairing.\\n' >&2; exit 1; }
+mkdir -p "$STATE_ROOT"
+PAIRING_RUNNER="$STATE_ROOT/run-t3.pair.$$"
+trap 'rm -f "$PAIRING_RUNNER"' EXIT
+cat >"$PAIRING_RUNNER" <<'SH'
+@@T3_RUNNER_SCRIPT@@
+SH
+chmod 700 "$PAIRING_RUNNER"
 PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
-"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+"$PAIRING_RUNNER" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
 `;
 
 const REMOTE_LIFECYCLE_STOP_SCRIPT = `set -eu
@@ -724,8 +733,10 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   });
 }
 
-export function buildRemotePairingScript(): string {
-  return REMOTE_LIFECYCLE_PAIRING_SCRIPT;
+export function buildRemotePairingScript(runner: RemoteT3RunnerOptions | undefined): string {
+  return applyScriptPlaceholders(REMOTE_LIFECYCLE_PAIRING_SCRIPT, {
+    T3_RUNNER_SCRIPT: remoteRunnerDescriptor(runner).script,
+  });
 }
 
 export function buildRemoteStopScript(target: DesktopSshEnvironmentTarget): string {
@@ -864,6 +875,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
 
 export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingToken")(function* (
   target: DesktopSshEnvironmentTarget,
+  runner: RemoteT3RunnerOptions | undefined,
   input?: SshAuth.SshAuthOptions,
 ): Effect.fn.Return<
   {
@@ -878,7 +890,9 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   });
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemotePairingScript(),
+    stdin: buildRemotePairingScript(runner),
+    // A warm reconnect skips the launch, so pairing may install the archive.
+    ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1605,7 +1619,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           ? yield* runWithSshAuth({
               key,
               target: entry.target,
-              operation: (authOptions) => issueRemotePairingToken(entry.target, authOptions),
+              operation: (authOptions) =>
+                issueRemotePairingToken(entry.target, runner, authOptions),
             })
           : null;
         const pairingToken = pairingResult?.credential ?? null;

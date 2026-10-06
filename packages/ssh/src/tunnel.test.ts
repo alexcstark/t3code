@@ -285,7 +285,7 @@ describe("ssh tunnel scripts", () => {
     });
 
     const probe = SshTunnel.buildRemoteProbeScript();
-    const pairing = SshTunnel.buildRemotePairingScript();
+    const pairing = SshTunnel.buildRemotePairingScript(ARCHIVE);
     const stop = SshTunnel.buildRemoteStopScript(target);
 
     assert.include(probe, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
@@ -303,10 +303,9 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(launch, "nohup env T3CODE_NO_BROWSER=1");
     assert.include(
       pairing,
-      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+      '"$PAIRING_RUNNER" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
     assert.include(pairing, 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
-    assert.notInclude(pairing, "T3_ARCHIVE_VERSION");
     assert.include(stop, '"$LIFECYCLE_CONTROLLER" __ssh-helper stop-server');
     assert.include(stop, 'if [ -f "$STATE_ROOT/server-state.json" ]; then');
     assert.include(stop, 'LEGACY_STATE_DIR="$STATE_ROOT/$STATE_KEY"');
@@ -415,13 +414,24 @@ describe("ssh tunnel scripts", () => {
       assert.include(launch.stdout, '"status":"ready"');
       assert.isTrue(NodeFS.existsSync(NodePath.join(stateRoot, "run-t3.sh")));
 
+      // The reused server is newer than the runner the old launch left behind,
+      // so pairing must mint the credential with this client's runner.
+      const newServer = NodePath.join(temporaryHome, "new-server.mjs");
+      NodeFS.writeFileSync(
+        newServer,
+        'process.stdout.write(\'{"credential":"new-runner-credential"}\\n\');\n',
+      );
       const pairing = NodeChildProcess.spawnSync("sh", ["-s"], {
         encoding: "utf8",
         env: environment,
-        input: SshTunnel.buildRemotePairingScript(),
+        input: SshTunnel.buildRemotePairingScript({ nodeScriptPath: newServer }),
       });
       assert.equal(pairing.status, 0, pairing.stderr);
-      assert.include(pairing.stdout, '"credential":"test-credential"');
+      assert.include(pairing.stdout, '"credential":"new-runner-credential"');
+      assert.deepEqual(
+        NodeFS.readdirSync(stateRoot).filter((name) => name.startsWith("run-t3.pair.")),
+        [],
+      );
 
       const stop = NodeChildProcess.spawnSync("sh", ["-s"], {
         encoding: "utf8",
@@ -718,7 +728,7 @@ describe("ssh tunnel scripts", () => {
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const layerProcess = Layer.merge(NodeServices.layer, layerSpawner);
     return Effect.gen(function* () {
-      const result = yield* SshTunnel.issueRemotePairingToken(target);
+      const result = yield* SshTunnel.issueRemotePairingToken(target, ARCHIVE);
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
@@ -746,7 +756,7 @@ describe("ssh tunnel scripts", () => {
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const layerProcess = Layer.merge(NodeServices.layer, layerSpawner);
     return Effect.gen(function* () {
-      const result = yield* SshTunnel.issueRemotePairingToken(target);
+      const result = yield* SshTunnel.issueRemotePairingToken(target, ARCHIVE);
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
