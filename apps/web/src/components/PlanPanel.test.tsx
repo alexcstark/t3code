@@ -18,7 +18,7 @@ describe("PlanPanel", () => {
   it("shows current progress, step status, and completed-step duration", () => {
     const html = renderPlan({
       createdAt: "2026-08-23T00:00:00.000Z",
-      turnId: null,
+      runId: null,
       explanation: "Implementing the remote flow",
       steps: [
         { step: "Update the contract", status: "completed", durationMs: 12_000 },
