@@ -22,7 +22,8 @@ const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismiss
 // Runtime failures retain their identity until the next attempt. Dismiss only
 // that attempt, across chat remounts, without clearing the error in Settings.
 const dismissedServerUpdateFailures = new WeakSet<ServerUpdateState>();
-const T4_FORK_VERSION_PATTERN = /^(\d+\.\d+\.\d+)-t4\.[0-9A-Za-z.-]+$/u;
+const T4_FORK_VERSION_PATTERN =
+  /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)-t4\.[0-9A-Za-z.-]+$/u;
 
 export function isServerUpdateFailureDismissed(state: ServerUpdateState): boolean {
   return state.status === "failed" && dismissedServerUpdateFailures.has(state);

@@ -93,6 +93,9 @@ describe("versionSkew", () => {
 
   it("uses the public t3 version for a T4 fork server update", () => {
     expect(manualServerUpdateCommand("0.0.34-t4.0.0")).toBe("npx t3@0.0.34");
+    expect(manualServerUpdateCommand("0.0.46-nightly.20261005.2702-t4.0.0")).toBe(
+      "npx t3@0.0.46-nightly.20261005.2702",
+    );
   });
 
   it("does not warn when the server is ahead of the client", () => {
