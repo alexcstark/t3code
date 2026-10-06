@@ -31,9 +31,15 @@
   background: var(--terminal-shell-background);
 }
 
-[data-terminal-shell="true"] [data-timeline-root="true"] {
+/* The timeline runs full width; the composer stack shares its inset so the
+   composer's left edge always lines up with the chat text. */
+[data-terminal-shell="true"] [data-timeline-root="true"],
+[data-terminal-shell="true"] [data-chat-composer-stack="true"] {
   max-width: none;
   padding-inline: clamp(1rem, 4vw, 4rem);
+}
+
+[data-terminal-shell="true"] [data-timeline-root="true"] {
   font-family: var(--font-mono);
   font-size: 0.9375rem;
   line-height: 1.55;
@@ -193,8 +199,12 @@
 }
 
 @media (max-width: 639px) {
-  [data-terminal-shell="true"] [data-timeline-root="true"] {
+  [data-terminal-shell="true"] [data-timeline-root="true"],
+  [data-terminal-shell="true"] [data-chat-composer-stack="true"] {
     padding-inline: 1rem;
+  }
+
+  [data-terminal-shell="true"] [data-timeline-root="true"] {
     font-size: 0.875rem;
   }
 }

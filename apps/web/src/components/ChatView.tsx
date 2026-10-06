@@ -11216,8 +11216,6 @@ export default function ChatView(props: ChatViewProps) {
                 <div
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
-                  // Fork terminal shell insets the timeline by this clamp; keep the composer aligned.
-                  style={{ paddingInline: "clamp(1rem, 4vw, 4rem)" }}
                 >
                   {!isDraftHeroState ? (
                     <TerminalShellStatus
