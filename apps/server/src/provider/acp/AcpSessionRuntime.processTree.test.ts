@@ -682,7 +682,8 @@ describe("terminatePosixOwnedProcessTree", () => {
       const ledger = new Map<string, AcpSessionRuntime.AcpOwnedPosixProcess>();
       const root: AcpSessionRuntime.AcpPosixOwnershipRoot = { value: undefined };
       for (let index = 0; index < 5_000; index += 1) {
-        const tombstone = identity(100_000 + index, 1, 100_000 + index, 100_000 + index);
+        const pid = process.pid + 100_000 + index;
+        const tombstone = identity(pid, 1, pid, pid);
         ledger.set(`${tombstone.pid}:${tombstone.startTime}`, {
           ...tombstone,
           parentExecutable: undefined,
