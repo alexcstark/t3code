@@ -66,7 +66,12 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import {
+  reconcileThreadShellRuntimeFromDetail,
+  threadRuntimeCanArchive,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
+import { deriveThreadRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -88,6 +93,7 @@ import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   readThreadShell,
   useProjects,
+  useThreadProjection,
   useThreadShells,
   useThreadShellsForProjectRefs,
 } from "../state/entities";
@@ -3149,7 +3155,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function LegacySidebar() {
   const projects = useProjects();
-  const sidebarThreads = useThreadShells();
+  const shellThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -3174,6 +3180,24 @@ export default function LegacySidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const routeThreadDetail = useThreadProjection(routeThreadRef);
+  const routeDetailRuntime = useMemo(
+    () => (routeThreadDetail === null ? null : deriveThreadRuntime(routeThreadDetail.projection)),
+    [routeThreadDetail],
+  );
+  const sidebarThreads = useMemo(() => {
+    if (routeThreadKey === null || !threadRuntimeIsActive(routeDetailRuntime)) return shellThreads;
+    let changed = false;
+    const next = shellThreads.map((thread) => {
+      if (scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) !== routeThreadKey) {
+        return thread;
+      }
+      const reconciled = reconcileThreadShellRuntimeFromDetail(thread, routeDetailRuntime);
+      if (reconciled !== thread) changed = true;
+      return reconciled;
+    });
+    return changed ? next : shellThreads;
+  }, [routeDetailRuntime, routeThreadKey, shellThreads]);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen

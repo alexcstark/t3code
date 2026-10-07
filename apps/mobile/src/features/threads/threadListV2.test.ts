@@ -157,6 +157,29 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(thread)).toBe("approval");
   });
 
+  it("keeps Working when an async question is pending during a live run (#15258)", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      hasPendingUserInput: true,
+      runtime: {
+        status: "running",
+        activeRunId: RunId.make("run-t"),
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+    expect(resolveThreadListV2Status(thread)).toBe("working");
+    expect(
+      resolveThreadListV2Status({
+        ...thread,
+        runtime: { ...thread.runtime!, status: "waiting" },
+      }),
+    ).toBe("input");
+  });
+
   it("reports waiting when presentation parks runtime idle for background tasks", () => {
     expect(
       resolveThreadListV2Status(

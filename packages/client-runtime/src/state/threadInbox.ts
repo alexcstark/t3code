@@ -1,4 +1,8 @@
-import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
+import {
+  threadHasBlockingPendingUserInput,
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 
 // Working section beta, shared so web and mobile fold and order the inbox the
@@ -16,9 +20,10 @@ type WorkingThreadInput = Pick<
 
 /** Threads busy with work that does not need the user fold into the Working
     section: a running run, or one stopped with background work that will wake
-    it. Approvals, questions, plan prompts, and failures stay in the inbox. */
+    it. Approvals, blocking questions, plan prompts, and failures stay in the
+    inbox. Async questions that leave the agent working (#15258) stay here. */
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.hasPendingApprovals || threadHasBlockingPendingUserInput(thread)) return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   // A plan prompt outranks lingering background work: the user has to act on it.
   const run = thread.latestRun;
