@@ -2359,9 +2359,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.asSome,
       // Settling a thread the server never stored has nothing to settle. Accept
       // it without events so a stale client shell does not surface an error.
-      Effect.catchTag("ProjectionStoreThreadNotFoundError", (error) =>
-        command.type === "thread.settle" ? Effect.succeedNone : Effect.fail(error),
-      ),
+      Effect.catchTags({
+        ProjectionStoreThreadNotFoundError: (error) =>
+          command.type === "thread.settle" ? Effect.succeedNone : Effect.fail(error),
+      }),
       Effect.mapError(
         (cause) =>
           new OrchestratorProjectionError({
@@ -10147,7 +10148,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ])
           .pipe(
             Effect.asSome,
-            Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeedNone),
+            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeedNone }),
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),

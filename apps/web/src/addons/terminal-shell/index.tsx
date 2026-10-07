@@ -17,7 +17,7 @@ export function TerminalShellStatus({
   return (
     <div
       aria-live="polite"
-      className="flex items-center gap-2 px-1 pb-1.5 text-[11px] text-muted-foreground"
+      className="flex items-center gap-2 px-1 pb-1.5 text-2xs text-muted-foreground"
       data-terminal-shell-status="true"
     >
       <span data-terminal-shell-status-state={isWorking ? "working" : "ready"}>

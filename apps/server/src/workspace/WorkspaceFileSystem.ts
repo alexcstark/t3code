@@ -224,18 +224,20 @@ export const make = Effect.gen(function* () {
         }),
     }).pipe(
       Effect.map((realTargetPath) => ({ kind: "workspace" as const, realTargetPath })),
-      Effect.catchTag("WorkspaceFileSystemOperationError", (error) => {
-        if (!isEnoentCause(error.cause)) {
-          return Effect.fail(error);
-        }
-        const siblingPath = siblingHostAbsolutePath(path, input.cwd, requestedPath);
-        if (siblingPath === null || siblingPath === target.absolutePath) {
-          return Effect.fail(error);
-        }
-        return Effect.tryPromise({
-          try: () => NodeFSP.realpath(siblingPath),
-          catch: () => error,
-        }).pipe(Effect.map((realTargetPath) => ({ kind: "host" as const, realTargetPath })));
+      Effect.catchTags({
+        WorkspaceFileSystemOperationError: (error) => {
+          if (!isEnoentCause(error.cause)) {
+            return Effect.fail(error);
+          }
+          const siblingPath = siblingHostAbsolutePath(path, input.cwd, requestedPath);
+          if (siblingPath === null || siblingPath === target.absolutePath) {
+            return Effect.fail(error);
+          }
+          return Effect.tryPromise({
+            try: () => NodeFSP.realpath(siblingPath),
+            catch: () => error,
+          }).pipe(Effect.map((realTargetPath) => ({ kind: "host" as const, realTargetPath })));
+        },
       }),
     );
     if (resolvedTarget.kind === "host") {

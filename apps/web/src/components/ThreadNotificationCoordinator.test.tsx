@@ -61,7 +61,9 @@ function mockThreadShell() {
       ? "completed"
       : state.sessionError || state.turnError || state.limited
         ? "failed"
-        : "running",
+        : state.input
+          ? "waiting"
+          : "running",
     lastErrorClass: state.limited ? "usage_limit" : null,
     pendingRuntimeRequest: state.input
       ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }

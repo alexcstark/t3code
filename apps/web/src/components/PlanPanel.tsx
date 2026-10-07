@@ -47,7 +47,7 @@ function PlanStep({ step }: { step: ActivePlanState["steps"][number] }) {
       </span>
       <span className={cn("min-w-0 flex-1", completed && "line-through")}>{step.step}</span>
       {step.durationMs !== undefined ? (
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
+        <span className="shrink-0 text-2xs tabular-nums text-muted-foreground/60">
           {formatDuration(step.durationMs)}
         </span>
       ) : null}
@@ -153,7 +153,7 @@ export function PlanPanel({ activePlan, proposedPlan, cwd, threadRef }: PlanPane
               />
             ))}
           </div>
-          <div className="mt-1.5 flex justify-between gap-2 text-[11px] text-muted-foreground">
+          <div className="mt-1.5 flex justify-between gap-2 text-2xs text-muted-foreground">
             <span className="min-w-0 truncate">
               {currentStep ? currentStep.step : allComplete ? "All steps complete" : "Plan ready"}
             </span>
