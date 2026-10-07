@@ -65,6 +65,23 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+/**
+ * Async `user_input` questions (message-mode) stay pending while the agent keeps
+ * working. List badges must not treat those as blocked Input (#15258); only a
+ * turn that is no longer interruptibly live should own that label. Approvals
+ * still outrank everything.
+ */
+export function threadHasBlockingPendingUserInput(thread: {
+  readonly hasPendingUserInput: boolean;
+  readonly runtime: Pick<ThreadRuntimeSummary, "status"> | null | undefined;
+}): boolean {
+  if (!thread.hasPendingUserInput) return false;
+  const status = thread.runtime?.status;
+  return (
+    status !== "preparing" && status !== "queued" && status !== "starting" && status !== "running"
+  );
+}
+
 /** Archiving may discard queued work, but it must not detach a provider that
  * is preparing, starting, or running a turn. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
@@ -333,4 +350,30 @@ export function resolveThreadWorkingStartedAt(input: {
     return valid(run.startedAt) ?? valid(run.requestedAt);
   }
   return null;
+}
+
+/**
+ * Shell and detail streams are independent. When detail still shows live work
+ * (composer Working / Stop / Running tools) but the shell row has already gone
+ * idle — a lag that leaves the open thread without a Working badge — prefer the
+ * detail runtime for list presentation. Idle detail never demotes an active
+ * shell: the shell may still be catching up on a start.
+ */
+export function reconcileThreadShellRuntimeFromDetail(
+  thread: EnvironmentThreadShell,
+  detailRuntime: ThreadRuntimeSummary | null,
+): EnvironmentThreadShell {
+  if (detailRuntime === null || !threadRunStatusIsActive(detailRuntime.status)) return thread;
+  const shellRuntime = thread.runtime;
+  if (
+    shellRuntime === detailRuntime ||
+    (shellRuntime !== null &&
+      threadRunStatusIsActive(shellRuntime.status) &&
+      shellRuntime.status === detailRuntime.status &&
+      shellRuntime.activeRunId === detailRuntime.activeRunId &&
+      shellRuntime.activityStartedAt === detailRuntime.activityStartedAt)
+  ) {
+    return thread;
+  }
+  return { ...thread, runtime: detailRuntime };
 }

@@ -41,10 +41,13 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import {
+  reconcileThreadShellRuntimeFromDetail,
   resolveThreadProviderStack,
   threadRuntimeCanArchive,
+  threadRuntimeIsActive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { deriveThreadRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -153,6 +156,7 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useProjects,
+  useThreadProjection,
   useThreadShells,
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -2500,6 +2504,26 @@ export default function Sidebar() {
   // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
+  // Chat mounts this detail already; reuse it so a lagging shell cannot hide
+  // Working on the open row while the composer still shows a live turn.
+  const routeThreadDetail = useThreadProjection(routeThreadRef);
+  const routeDetailRuntime = useMemo(
+    () => (routeThreadDetail === null ? null : deriveThreadRuntime(routeThreadDetail.projection)),
+    [routeThreadDetail],
+  );
+  const presentedThreads = useMemo(() => {
+    if (routeThreadKey === null || !threadRuntimeIsActive(routeDetailRuntime)) return threads;
+    let changed = false;
+    const next = threads.map((thread) => {
+      if (scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) !== routeThreadKey) {
+        return thread;
+      }
+      const reconciled = reconcileThreadShellRuntimeFromDetail(thread, routeDetailRuntime);
+      if (reconciled !== thread) changed = true;
+      return reconciled;
+    });
+    return changed ? next : threads;
+  }, [routeDetailRuntime, routeThreadKey, threads]);
 
   const environmentLabelById = useMemo(
     () =>
@@ -2540,8 +2564,9 @@ export default function Sidebar() {
     ],
   );
   const projectGroups = useMemo(
-    () => sortSidebarV2ProjectGroups(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    () =>
+      sortSidebarV2ProjectGroups(unsortedProjectGroups, presentedThreads, sidebarProjectSortOrder),
+    [presentedThreads, sidebarProjectSortOrder, unsortedProjectGroups],
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
@@ -2767,8 +2792,8 @@ export default function Sidebar() {
     const preciseNow = new Date().toISOString();
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
-    inboxReturns.observe(workingShelfEnabled ? threads : null);
+    const visible = filterSidebarV2VisibleThreads(presentedThreads, scopedProjectKeys);
+    inboxReturns.observe(workingShelfEnabled ? presentedThreads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const working: EnvironmentThreadShell[] = [];
@@ -2870,10 +2895,10 @@ export default function Sidebar() {
   }, [
     nowMinute,
     optimisticDrop,
+    presentedThreads,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
-    threads,
     workingShelfEnabled,
   ]);
 

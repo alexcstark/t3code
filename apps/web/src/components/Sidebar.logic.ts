@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadHasBlockingPendingUserInput,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -1027,7 +1030,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.hasPendingApprovals) {
     return "approval";
   }
-  if (thread.hasPendingUserInput) {
+  // Async questions stay pending while the agent works; only a blocked turn
+  // should own Input (#15258). Interruptible runtimes fall through to Working.
+  if (threadHasBlockingPendingUserInput(thread)) {
     return "input";
   }
   if (
@@ -1218,7 +1223,9 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.hasPendingUserInput) {
+  // Same rule as resolveSidebarThreadStatus: async questions do not steal the
+  // Working pill while the run is still interruptible (#15258).
+  if (threadHasBlockingPendingUserInput(thread)) {
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
