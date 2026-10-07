@@ -102,6 +102,7 @@ import { projectFileCacheKey } from "./fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  resolvedFilePreviewPath,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -1040,9 +1041,6 @@ export default function FilePreviewPanel({
   // PDFs have no text to show; HTML has, and can toggle between page and source.
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
-  // A file outside the workspace (an absolute path) is shown, never edited.
-  const isHostFile =
-    attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -1057,6 +1055,13 @@ export default function FilePreviewPanel({
     attachment === undefined && relativePath !== null,
   );
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
+  // Sibling-repo reads come back as an absolute host path. Use that for display
+  // and to keep the file read-only; the query still keys on the requested path.
+  const previewRelativePath = resolvedFilePreviewPath(relativePath, file.data?.relativePath);
+  // A file outside the workspace (an absolute path) is shown, never edited.
+  const isHostFile =
+    attachment !== undefined ||
+    (previewRelativePath !== null && isAbsolutePath(previewRelativePath));
   // A chat link cannot tell a folder from a file, so a folder arrives here as
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
@@ -1064,7 +1069,7 @@ export default function FilePreviewPanel({
   // path cannot be revealed in the workspace tree, so it keeps the read error.
   const isDirectory = file.isNotFile && !isHostFile;
   // Everything preview-related keys off previewPath; a folder has no preview.
-  const previewPath = isDirectory ? null : relativePath;
+  const previewPath = isDirectory ? null : (previewRelativePath ?? relativePath);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const showExplorer = shouldShowFileExplorer({
     relativePath: previewPath,
@@ -1137,7 +1142,9 @@ export default function FilePreviewPanel({
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+    previewRelativePath && attachment === undefined
+      ? resolvePathLinkTarget(previewRelativePath, cwd)
+      : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
@@ -1240,7 +1247,7 @@ export default function FilePreviewPanel({
                 environmentId={environmentId}
                 onOpenFile={onOpenFile}
                 projectName={projectName}
-                relativePath={relativePath}
+                relativePath={previewRelativePath ?? relativePath}
                 workspaceMutationId={workspaceMutationId}
               />
             </div>

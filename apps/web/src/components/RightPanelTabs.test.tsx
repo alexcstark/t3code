@@ -132,6 +132,7 @@ function renderTabs(
       onAddPullRequests={() => undefined}
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
+      onAddPlan={() => undefined}
       onAddDevice={() => undefined}
       browserAvailable
       terminalAvailable={false}
@@ -139,6 +140,7 @@ function renderTabs(
       filesAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
+      planAvailable={false}
       deviceAvailable={false}
     >
       <div>content</div>

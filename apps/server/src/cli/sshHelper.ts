@@ -10,6 +10,8 @@ import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
 import { Argument, Command } from "effect/cli";
 
+import { ensureSshServer, probeSshServer, stopSshServer } from "./sshLifecycle.ts";
+
 /**
  * Small helpers the SSH launch script needs on the remote host. The script
  * used to run these as inline `node -` snippets; archive-distributed runtimes
@@ -120,7 +122,62 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
+const probeServer = Command.make("probe-server", {
+  stateRoot: Argument.String("state-root"),
+  ownerKey: Argument.String("owner-key"),
+  expectedVersion: Argument.String("expected-version"),
+  runnerId: Argument.String("runner-id"),
+  baseDir: Argument.String("base-dir"),
+}).pipe(
+  Command.withHandler((input) =>
+    Effect.promise(async () => {
+      const result = await probeSshServer(input);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - result is produced by the typed lifecycle helper.
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    }),
+  ),
+);
+
+const ensureServer = Command.make("ensure-server", {
+  stateRoot: Argument.String("state-root"),
+  ownerKey: Argument.String("owner-key"),
+  expectedVersion: Argument.String("expected-version"),
+  runnerId: Argument.String("runner-id"),
+  candidateRunnerPath: Argument.String("candidate-runner-path"),
+  stableRunnerPath: Argument.String("stable-runner-path"),
+  baseDir: Argument.String("base-dir"),
+}).pipe(
+  Command.withHandler((input) =>
+    Effect.promise(async () => {
+      const result = await ensureSshServer(input);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - result is produced by the typed lifecycle helper.
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    }),
+  ),
+);
+
+const stopServer = Command.make("stop-server", {
+  stateRoot: Argument.String("state-root"),
+  ownerKey: Argument.String("owner-key"),
+  baseDir: Argument.String("base-dir"),
+}).pipe(
+  Command.withHandler((input) =>
+    Effect.promise(async () => {
+      const result = await stopSshServer(input);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - result is produced by the typed lifecycle helper.
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    }),
+  ),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort]),
+  Command.withSubcommands([
+    pickPort,
+    waitReady,
+    runtimePort,
+    probeServer,
+    ensureServer,
+    stopServer,
+  ]),
 );

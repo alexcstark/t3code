@@ -335,7 +335,7 @@ describe("project settings permissions", () => {
     const name = root.findByProps({ "aria-label": "Project name" });
 
     await act(async () => {
-      name.props.onChange();
+      name.props.onChange({ currentTarget: { value: "Renamed" } });
       name.props.onBlur({ currentTarget: { value: "Renamed" } });
       root.findByType(ProjectFaviconPickerDialog).props.onSelect("/work/icon.png");
     });
@@ -350,7 +350,7 @@ describe("project settings permissions", () => {
     const root = await mountPanel();
     await act(async () => {
       const name = root.findByProps({ "aria-label": "Project name" });
-      name.props.onChange();
+      name.props.onChange({ currentTarget: { value: "Renamed" } });
       name.props.onBlur({ currentTarget: { value: "Renamed" } });
     });
     expect(state.update.mock.calls.map(([request]) => request.environmentId)).toEqual([
@@ -366,7 +366,7 @@ describe("project settings permissions", () => {
     const root = await mountPanel();
     await act(async () => {
       const name = root.findByProps({ "aria-label": "Project name" });
-      name.props.onChange();
+      name.props.onChange({ currentTarget: { value: "Renamed" } });
       name.props.onBlur({ currentTarget: { value: "Renamed" } });
     });
     expect(state.update).toHaveBeenCalledOnce();
@@ -436,7 +436,7 @@ describe("project settings permissions", () => {
     const staleSave = name().props.onBlur;
     await act(async () => {
       state.registry!.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
-      name().props.onChange();
+      name().props.onChange({ currentTarget: { value: "Renamed" } });
       staleSave({ currentTarget: { value: "Renamed" } });
     });
     expect(state.update).not.toHaveBeenCalled();
@@ -445,7 +445,7 @@ describe("project settings permissions", () => {
     await grant(remoteId, writable());
     expect(name().props.disabled).toBe(false);
     await act(async () => {
-      name().props.onChange();
+      name().props.onChange({ currentTarget: { value: "Renamed" } });
       name().props.onBlur({ currentTarget: { value: "Renamed" } });
     });
     expect(state.projects.map((project) => project.title)).toEqual(["Renamed", "Renamed"]);
@@ -467,7 +467,7 @@ describe("project settings permissions", () => {
       const name = root.findByProps({ "aria-label": "Project name" });
       expect(name.props.disabled).toBe(!allowed);
       await act(async () => {
-        name.props.onChange();
+        name.props.onChange({ currentTarget: { value: "Renamed" } });
         name.props.onBlur({ currentTarget: { value: "Renamed" } });
       });
       expect(state.update).toHaveBeenCalledTimes(allowed ? 2 : 0);

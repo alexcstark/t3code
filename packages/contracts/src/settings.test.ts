@@ -744,6 +744,22 @@ describe("ClientSettings pull request merge methods", () => {
   });
 });
 
+describe("ClientSettings project default locations", () => {
+  it("defaults to no project location overrides and preserves valid environment ids", () => {
+    expect(decodeClientSettings({}).projectDefaultEnvironmentIds).toEqual({});
+    expect(
+      decodeClientSettings({
+        projectDefaultEnvironmentIds: { "repo:app": "environment-remote" },
+      }).projectDefaultEnvironmentIds,
+    ).toEqual({ "repo:app": "environment-remote" });
+    expect(
+      decodeClientSettingsPatch({
+        projectDefaultEnvironmentIds: { "repo:app": "environment-remote" },
+      }).projectDefaultEnvironmentIds,
+    ).toEqual({ "repo:app": "environment-remote" });
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

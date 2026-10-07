@@ -2285,6 +2285,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("fails Stop within its deadline when the turn interrupt RPC hangs", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "hung-interrupt-thread";
+      const nativeTurnId = "hung-interrupt-turn";
+      const prompt = "Keep working.";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "hung-turn-interrupt",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: nativeTurnId },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("hung-interrupt-attempt"),
+          text: prompt,
+        }),
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId,
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* TestClock.adjust("3 seconds");
+      const error = yield* Fiber.join(interrupt);
+      assert.equal(error._tag, "ProviderAdapterInterruptError");
+      assert.include(String(error.cause), "did not acknowledge the turn interrupt");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("settles Stop when a queued native turn fails before starting", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";

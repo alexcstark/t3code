@@ -1,7 +1,8 @@
 # Remote access
 
 Connect a phone, browser, or another desktop app to T3 Code running on a different
-machine. That machine must stay running and reachable while you work.
+machine. That machine must stay running and reachable while you work. If the
+client sleeps, it reconnects when it wakes; work on the host continues.
 
 ## T3 Connect
 

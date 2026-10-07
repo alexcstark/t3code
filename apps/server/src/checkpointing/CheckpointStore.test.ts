@@ -127,6 +127,51 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
     }),
   );
+
+  describe("captureCheckpoint", () => {
+    it.effect("snapshots the working tree even when the user's index is staged differently", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-staged-index");
+        const baseline = checkpointRefForThreadTurn(threadId, 0);
+        const turn = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baseline });
+        yield* writeTextFile(NodePath.join(tmp, "staged.txt"), "staged\n");
+        yield* git(tmp, ["add", "staged.txt"]);
+        yield* writeTextFile(NodePath.join(tmp, "staged.txt"), "worktree\n");
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# edited\n");
+        yield* git(tmp, ["rm", "--cached", "--quiet", "README.md"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: turn });
+
+        const summary = parseTurnDiffFilesFromNumstat(
+          yield* checkpointStore.diffCheckpoints({
+            cwd: tmp,
+            fromCheckpointRef: baseline,
+            toCheckpointRef: turn,
+            ignoreWhitespace: false,
+            format: "numstat",
+          }),
+        );
+
+        expect(summary).toEqual([
+          { path: "README.md", additions: 1, deletions: 1 },
+          { path: "staged.txt", additions: 1, deletions: 0 },
+        ]);
+        expect(
+          yield* checkpointStore.diffCheckpoints({
+            cwd: tmp,
+            fromCheckpointRef: baseline,
+            toCheckpointRef: turn,
+            ignoreWhitespace: false,
+          }),
+        ).toContain("+worktree");
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

@@ -12,6 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -66,6 +67,30 @@ const layerTest = (input: {
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
 }) => {
+  const layerFileSystem = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      if (input.platform !== "darwin") return fs;
+      // Editor discovery must see fixture bundles rather than host applications.
+      return {
+        ...fs,
+        stat: (file: string) =>
+          file.startsWith("/Applications/")
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "stat",
+                  pathOrDescriptor: file,
+                }),
+              )
+            : fs.stat(file),
+        readDirectory: (directory: string) =>
+          directory === "/Applications" ? Effect.succeed([]) : fs.readDirectory(directory),
+      };
+    }),
+  );
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
@@ -84,7 +109,10 @@ const layerTest = (input: {
   );
 
   return Layer.mergeAll(
-    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, layerSpawner))),
+    ExternalLauncher.layer.pipe(
+      Layer.provide(Layer.merge(layerFileSystem, layerSpawner)),
+      Layer.provide(NodeServices.layer),
+    ),
     Layer.succeed(HostProcessPlatform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,

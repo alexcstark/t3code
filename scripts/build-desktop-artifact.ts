@@ -55,6 +55,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+const configuredDesktopProductName = process.env.T3CODE_DESKTOP_PRODUCT_NAME?.trim();
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1273,11 +1274,17 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   return {
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(env),
     teamId,
     rpDomains: uniqueRpDomains,
     provisioningProfilePath,
   };
+}
+
+export function resolveDesktopAppId(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  return env.T3CODE_DESKTOP_APP_USER_MODEL_ID?.trim() || DESKTOP_APP_ID;
 }
 
 function escapeXml(value: string): string {
@@ -2644,9 +2651,39 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
+  if (configuredDesktopProductName) {
+    return configuredDesktopProductName;
+  }
+
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
+}
+
+function resolveDesktopArtifactBaseName(): string {
+  if (configuredDesktopProductName) {
+    return configuredDesktopProductName.replaceAll(/[^A-Za-z0-9.-]+/gu, "-");
+  }
+  return "T3-Code";
+}
+
+const MAC_LS_ENVIRONMENT_KEYS = [
+  "T3CODE_DESKTOP_DISPLAY_NAME",
+  "T3CODE_DESKTOP_USER_DATA_DIR_NAME",
+  "T3CODE_DISABLE_AUTO_UPDATE",
+] as const;
+
+export function resolveMacLsEnvironment(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Record<string, string> | undefined {
+  const lsEnvironment: Record<string, string> = {};
+  for (const key of MAC_LS_ENVIRONMENT_KEYS) {
+    const value = env[key]?.trim();
+    if (value) {
+      lsEnvironment[key] = value;
+    }
+  }
+  return Object.keys(lsEnvironment).length > 0 ? lsEnvironment : undefined;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2669,9 +2706,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   arch?: typeof BuildArch.Type,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(),
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: `${resolveDesktopArtifactBaseName()}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2716,6 +2753,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    const lsEnvironment = resolveMacLsEnvironment();
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2723,6 +2761,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        ...(lsEnvironment === undefined ? {} : { LSEnvironment: lsEnvironment }),
       },
       protocols: [
         {

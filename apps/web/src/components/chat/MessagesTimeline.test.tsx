@@ -420,6 +420,21 @@ function buildProps() {
   };
 }
 
+it("mounts the empty timeline without throwing from layout effects", async () => {
+  vi.unstubAllGlobals();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  const root = createRoot(container);
+
+  try {
+    await act(() => {
+      root.render(<MessagesTimeline {...buildProps()} timelineEntries={[]} />);
+    });
+  } finally {
+    await act(() => root.unmount());
+  }
+});
+
 function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
   return Array.from({ length: 9 }, (_, index) =>
     index === 8 ? tail : `Line ${index + 1}: ${"verbose prompt content ".repeat(8).trim()}`,
@@ -1353,7 +1368,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
-    expect(markup).toContain("rounded-2xl bg-message p-3");
+    expect(markup).toContain("rounded-xl border border-border/35 bg-message/45");
   });
 
   it("identifies user-role messages sent by another agent", async () => {

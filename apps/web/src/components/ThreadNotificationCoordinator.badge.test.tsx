@@ -99,7 +99,9 @@ function toV2ThreadShell(input: typeof thread) {
         ? "completed"
         : latestTurn.state === "error" || input.session?.status === "error"
           ? "failed"
-          : "running",
+          : latestTurn.state === "waiting"
+            ? "waiting"
+            : "running",
     pendingRuntimeRequest: input.hasPendingUserInput
       ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
       : input.hasPendingApprovals
@@ -279,7 +281,16 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "badges %s and clears when notifications are disabled",
   async (flag) => {
     await render();
-    state.shells.set("one", shell({ [flag]: true }));
+    state.shells.set(
+      "one",
+      shell({
+        [flag]: true,
+        latestTurn: {
+          ...thread.latestTurn,
+          state: flag === "hasPendingUserInput" ? "waiting" : "running",
+        },
+      }),
+    );
     await render();
     expect(state.badge).toHaveBeenLastCalledWith(1);
     const notification = TestNotification.sent[0]!;

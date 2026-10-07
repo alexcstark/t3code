@@ -30,6 +30,7 @@ import {
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
+  resolveSidebarReasoningLabel,
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
@@ -62,7 +63,14 @@ import {
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  type ServerProviderModel,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -355,6 +363,66 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("resolveSidebarReasoningLabel", () => {
+  const model = {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    },
+  } satisfies ServerProviderModel;
+
+  it("uses the selected model capability label", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: model.slug,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      }),
+    ).toBe("Extra High");
+  });
+
+  it("falls back to a readable raw option when model capabilities are unavailable", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "max" }],
+        },
+      }),
+    ).toBe("Max");
+  });
+
+  it("does not treat unrelated provider options as reasoning", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+          options: [{ id: "agent", value: "build" }],
+        },
+      }),
+    ).toBeNull();
   });
 });
 
@@ -905,10 +973,17 @@ describe("resolveSidebarThreadStatus", () => {
     );
   });
 
-  it("prioritizes awaiting input over a running runtime, below approval", () => {
+  it("keeps Working when an async question is pending during a live run (#15258)", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, runtime })).toBe(
-      "input",
+      "working",
     );
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingUserInput: true,
+        runtime: { ...runtime, status: "starting" as const },
+      }),
+    ).toBe("working");
     expect(
       resolveSidebarThreadStatus({
         ...idle,
@@ -919,6 +994,26 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("approval");
   });
 
+  it("shows Input when a pending question blocks a settled or waiting turn", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingUserInput: true,
+        runtime: { ...runtime, status: "waiting" as const },
+      }),
+    ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingUserInput: true,
+        runtime: { ...runtime, status: "completed" as const },
+      }),
+    ).toBe("input");
+    expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, runtime: null })).toBe(
+      "input",
+    );
+  });
+
   it("reports working for running and starting runtimes", () => {
     expect(resolveSidebarThreadStatus({ ...idle, runtime })).toBe("working");
     expect(
@@ -927,6 +1022,17 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "starting" as const },
       }),
     ).toBe("working");
+  });
+
+  it("reports working after detail runtime is reconciled onto an idle shell", () => {
+    const completed = {
+      ...runtime,
+      status: "completed" as const,
+      activeRunId: null,
+      activityStartedAt: null,
+    };
+    expect(resolveSidebarThreadStatus({ ...idle, runtime: completed })).toBe("ready");
+    expect(resolveSidebarThreadStatus({ ...idle, runtime })).toBe("working");
   });
 
   it("keeps usage-limit stops Limited and visible until the thread recovers", () => {
@@ -1233,12 +1339,24 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Pending Approval", pulse: false });
   });
 
-  it("shows awaiting input when plan mode is blocked on user answers", () => {
+  it("keeps Working when an async question is pending during a live run (#15258)", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
           ...baseThread,
           hasPendingUserInput: true,
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows awaiting input when a pending question blocks a waiting turn", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingUserInput: true,
+          runtime: { ...baseThread.runtime, status: "waiting" as const },
         },
       }),
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
@@ -2135,7 +2253,9 @@ describe("Working shelf (beta)", () => {
     expect(isSidebarThreadWorking(waiting)).toBe(true);
     expect(isSidebarThreadWorking(idle)).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingApprovals: true })).toBe(false);
-    expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(false);
+    // Async questions leave the agent working (#15258); blocking ones do not.
+    expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(true);
+    expect(isSidebarThreadWorking({ ...waiting, hasPendingUserInput: true })).toBe(false);
     expect(
       isSidebarThreadWorking({
         ...waiting,

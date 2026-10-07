@@ -2375,7 +2375,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    const thread = yield* projectionStore.getThread(command.threadId).pipe(
+    const found = yield* projectionStore.getThread(command.threadId).pipe(
+      Effect.asSome,
+      // Settling a thread the server never stored has nothing to settle. Accept
+      // it without events so a stale client shell does not surface an error.
+      Effect.catchTags({
+        ProjectionStoreThreadNotFoundError: (error) =>
+          command.type === "thread.settle" ? Effect.succeedNone : Effect.fail(error),
+      }),
       Effect.mapError(
         (cause) =>
           new OrchestratorProjectionError({
@@ -2384,6 +2391,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    if (Option.isNone(found)) return;
+    const thread = found.value;
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -8086,8 +8095,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * process will report on: work on the provider thread whose interrupt just
    * returned (`stoppedProviderThreadId`), and work on provider threads with no
    * live session at all. Only the stopped run's work and older runs' is ended
-   * (`throughRunOrdinal`); a later run's work is its own. A dead process's
-   * roster goes too, as on restart.
+   * (`throughRunOrdinal`); a later run's work is its own. Stopped and dead
+   * processes' rosters go too, as on restart.
    */
   const settleBackgroundWork = (input: {
     readonly command: Extract<
@@ -8097,7 +8106,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
     readonly projection: Pick<
       OrchestrationV2ThreadProjection,
-      "runs" | "turnItems" | "providerThreads"
+      "runs" | "attempts" | "turnItems" | "providerThreads"
     >;
     readonly stoppedProviderThreadId: OrchestrationV2ProviderThread["id"] | null;
     readonly throughRunOrdinal: number;
@@ -8106,6 +8115,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const emitEvent = emit(input.events, input.command);
       const runOrdinals = new Map(input.projection.runs.map((run) => [run.id, run.ordinal]));
+      // A failed start leaves the stopped turn's roster, but a later accepted
+      // turn can own new background work even after its foreground work ends.
+      const newerAcceptedProviderThreadIds = new Set(
+        input.projection.attempts
+          .filter(
+            (attempt) =>
+              attempt.providerTurnId !== null &&
+              (runOrdinals.get(attempt.runId) ?? -1) > input.throughRunOrdinal,
+          )
+          .map((attempt) => attempt.providerThreadId),
+      );
       const liveness = new Map<string, boolean>();
       const hasLiveSession = (providerThreadId: OrchestrationV2ProviderThread["id"]) =>
         Effect.gen(function* () {
@@ -8157,10 +8177,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       for (const providerThread of input.projection.providerThreads) {
-        // A live process owns its roster and reports clearing it.
+        // After a failed start, the old run's roster clear can be rejected
+        // because that run no longer owns the provider thread. Stop clears
+        // it here even while the session remains registered.
         if (
           (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 ||
-          (yield* hasLiveSession(providerThread.id))
+          ((providerThread.id !== input.stoppedProviderThreadId ||
+            newerAcceptedProviderThreadIds.has(providerThread.id)) &&
+            (yield* hasLiveSession(providerThread.id)))
         ) {
           continue;
         }
@@ -10176,14 +10200,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "providerSessions",
           ])
           .pipe(
+            Effect.asSome,
+            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeedNone }),
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        // Stale client state can delete or settle a thread the server never
+        // stored. It is already gone, so accept without events instead of failing.
+        if (Option.isNone(projection)) break;
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
-            projection,
+            projection: projection.value,
             attachmentIds: yield* projectionStore
               .getThreadAttachmentIds(command.threadId)
               .pipe(mapDispatchError(command)),
@@ -10474,10 +10503,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
         // stop that finds nothing running, has nothing to record. That is
-        // its expected outcome, not a failure.
+        // its expected outcome, not a failure. Neither is deleting or
+        // settling a thread the server never stored.
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
-        command.type === "thread.stop"
+        command.type === "thread.stop" ||
+        command.type === "thread.delete" ||
+        command.type === "thread.settle"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

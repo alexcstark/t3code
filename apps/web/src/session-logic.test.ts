@@ -25,6 +25,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActivePlanState,
   deriveCanInterruptRunningThread,
+  deriveIsWorking,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
@@ -107,6 +108,28 @@ describe("V2 session presentation", () => {
 
     // No runtime at all: nothing to interrupt.
     expect(deriveCanInterruptRunningThread(true, null)).toBe(false);
+  });
+
+  it("does not present Thinking/Working while the run is only waiting", () => {
+    const idle = {
+      phase: "ready" as const,
+      runtimeStatus: "completed" as const,
+      isSendBusy: false,
+      isConnecting: false,
+      isCompacting: false,
+      runlessWorkStartedAt: null,
+    };
+    expect(deriveIsWorking({ ...idle, phase: "running", runtimeStatus: "running" })).toBe(true);
+    expect(deriveIsWorking({ ...idle, phase: "running", runtimeStatus: "waiting" })).toBe(false);
+    expect(
+      deriveIsWorking({
+        ...idle,
+        phase: "running",
+        runtimeStatus: "waiting",
+        isSendBusy: true,
+      }),
+    ).toBe(true);
+    expect(deriveIsWorking(idle)).toBe(false);
   });
 
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {

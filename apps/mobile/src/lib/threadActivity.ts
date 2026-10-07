@@ -1208,7 +1208,12 @@ export function deriveThreadFeedPresentation(
   const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
   const activeTailGroup = sourceFeed.at(-1);
   const activeRunId = unsettledRunId(latestRun);
-  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
+  // `waiting` is post-success checkpoint / blocked wait: keep the feed settled
+  // rather than a shimmering Thinking row that looks like the model is live.
+  const isWorking =
+    activeWorkStartedAt !== null &&
+    latestRun?.status !== "preparing" &&
+    latestRun?.status !== "waiting";
   const foldsByAnchorId = deriveThreadFeedRunFolds(
     sourceFeed,
     latestRun,

@@ -81,6 +81,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpProtocol: OtlpProtocol;
     readonly branding: DesktopAppBranding;
     readonly displayName: string;
+    /** Fork variants (e.g. T4) get their own Electron profile so they can run beside T3 Code. */
+    readonly userDataDirName?: string;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
@@ -109,12 +111,14 @@ function resolveDesktopAppStageLabel(input: {
 export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly displayName: Option.Option<string>;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  const displayName = Option.getOrElse(input.displayName, () => `${APP_BASE_NAME} (${stageLabel})`);
   return {
-    baseName: APP_BASE_NAME,
+    baseName: Option.getOrElse(input.displayName, () => APP_BASE_NAME),
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName,
   };
 }
 
@@ -178,6 +182,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
+    displayName: config.desktopDisplayName,
   });
   const displayName = branding.displayName;
   const stateDir = resolveDesktopStateDir({
@@ -235,6 +240,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     otlpProtocol: config.otlpProtocol,
     branding,
     displayName,
+    ...Option.match(config.desktopUserDataDirName, {
+      onNone: () => ({}),
+      onSome: (userDataDirName) => ({ userDataDirName }),
+    }),
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
       isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
     ),

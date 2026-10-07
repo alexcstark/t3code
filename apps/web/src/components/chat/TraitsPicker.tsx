@@ -279,6 +279,8 @@ export interface TraitsMenuContentProps {
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   triggerClassName?: string;
   isComposerOwned?: boolean;
 }
@@ -577,6 +579,8 @@ export const TraitsPicker = memo(function TraitsPicker({
   reportedModelSelection,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  open,
+  onOpenChange,
   triggerClassName,
   isComposerOwned,
   size = "sm",
@@ -590,7 +594,18 @@ export const TraitsPicker = memo(function TraitsPicker({
     disabled?: boolean;
   }) {
   const composerFloatingLayerProps = useComposerMenuProps();
-  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
+  // Upstream owns the uncontrolled state and the hidden-reset; the fork keeps the menu
+  // controllable from outside so the reasoning-picker shortcut can toggle it.
+  const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useComposerMenuState(
+    hidden || disabled,
+  );
+  const isMenuOpen = (open ?? uncontrolledIsMenuOpen) && !hidden && !disabled;
+  const setIsMenuOpen = (nextOpen: boolean) => {
+    onOpenChange?.(nextOpen);
+    if (open === undefined) {
+      setUncontrolledIsMenuOpen(nextOpen);
+    }
+  };
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -628,8 +643,8 @@ export const TraitsPicker = memo(function TraitsPicker({
   return (
     <Menu
       open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open && !disabled);
+      onOpenChange={(nextOpen) => {
+        setIsMenuOpen(nextOpen && !disabled);
       }}
     >
       <Tooltip>

@@ -42,10 +42,13 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import {
+  reconcileThreadShellRuntimeFromDetail,
   resolveThreadProviderStack,
   threadRuntimeCanArchive,
+  threadRuntimeIsActive,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { deriveThreadRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -63,6 +66,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  ArchiveIcon,
   ArrowRightLeftIcon,
   CheckIcon,
   CircleAlertIcon,
@@ -80,6 +84,7 @@ import {
   ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
+  Trash2Icon,
   Undo2Icon,
   XIcon,
 } from "lucide-react";
@@ -153,6 +158,7 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useProjects,
+  useThreadProjection,
   useThreadShells,
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -179,6 +185,7 @@ import {
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
+  archiveSelectedThreadEntries,
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
@@ -203,6 +210,7 @@ import {
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
+  resolveSidebarReasoningLabel,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
@@ -435,6 +443,7 @@ function SidebarThreadTooltip({
   showInstanceBadge,
   modelInstanceId,
   modelLabel,
+  reasoningLabel,
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
@@ -449,6 +458,7 @@ function SidebarThreadTooltip({
   showInstanceBadge: boolean;
   modelInstanceId: string;
   modelLabel: string;
+  reasoningLabel: string | null;
   branchMismatch: {
     threadBranch: string;
     currentBranch: string;
@@ -457,6 +467,7 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const modelMetadataLabel = reasoningLabel ? `${modelLabel} · ${reasoningLabel}` : modelLabel;
   const previousProviderNames = thread.providerInstanceHistory
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);
@@ -502,26 +513,28 @@ function SidebarThreadTooltip({
             </div>
           </div>
         ) : null}
-        {driverKind ? (
+        {driverKind || modelMetadataLabel ? (
           <div className="flex min-w-0 items-center gap-2">
-            <ProviderInstanceIcon
-              driverKind={driverKind}
-              displayName={
-                providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
-              }
-              accentColor={providerEntry?.accentColor}
-              acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
-              acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
-              // Initials would swallow a size-3 glyph: accent dot, name in label.
-              showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
-              badgeContent="none"
-              badgeClassName="h-2 min-w-2 px-0"
-              iconClassName="size-3 shrink-0 grayscale opacity-60"
-            />
+            {driverKind ? (
+              <ProviderInstanceIcon
+                driverKind={driverKind}
+                displayName={
+                  providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
+                }
+                accentColor={providerEntry?.accentColor}
+                acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+                acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
+                // Initials would swallow a size-3 glyph: accent dot, name in label.
+                showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
+                badgeContent="none"
+                badgeClassName="h-2 min-w-2 px-0"
+                iconClassName="size-3 shrink-0 grayscale opacity-60"
+              />
+            ) : null}
             <div className="min-w-0 truncate text-foreground/75">
               {showInstanceBadge && providerEntry
-                ? `${modelLabel} · ${providerEntry.displayName}`
-                : modelLabel}
+                ? `${modelMetadataLabel} · ${providerEntry.displayName}`
+                : modelMetadataLabel}
             </div>
           </div>
         ) : null}
@@ -793,6 +806,7 @@ function SidebarSectionHeader(props: {
   // accent while the lifted row is over it.
   dragging?: boolean;
   isDropTarget?: boolean;
+  trailingAction?: ReactNode;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
   const shelf =
@@ -808,16 +822,46 @@ function SidebarSectionHeader(props: {
       data-testid={`sidebar-${props.marker}`}
       className={cn("mx-0.5 h-8", props.className)}
     >
-      <CollapsibleSectionHeader
-        onClick={props.toggle.onToggle}
-        expanded={props.toggle.expanded}
-        tone={
-          props.isDropTarget ? "accent" : props.dragging ? "emphasized" : snoozed ? "info" : "muted"
-        }
-        data-testid={`sidebar-${shelf}-shelf-toggle`}
-      >
-        {props.label}
-      </CollapsibleSectionHeader>
+      {props.trailingAction ? (
+        <div className="flex h-full items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <CollapsibleSectionHeader
+              onClick={props.toggle.onToggle}
+              expanded={props.toggle.expanded}
+              tone={
+                props.isDropTarget
+                  ? "accent"
+                  : props.dragging
+                    ? "emphasized"
+                    : snoozed
+                      ? "info"
+                      : "muted"
+              }
+              data-testid={`sidebar-${shelf}-shelf-toggle`}
+            >
+              {props.label}
+            </CollapsibleSectionHeader>
+          </div>
+          {props.trailingAction}
+        </div>
+      ) : (
+        <CollapsibleSectionHeader
+          onClick={props.toggle.onToggle}
+          expanded={props.toggle.expanded}
+          tone={
+            props.isDropTarget
+              ? "accent"
+              : props.dragging
+                ? "emphasized"
+                : snoozed
+                  ? "info"
+                  : "muted"
+          }
+          data-testid={`sidebar-${shelf}-shelf-toggle`}
+        >
+          {props.label}
+        </CollapsibleSectionHeader>
+      )}
     </SortableSidebarMarker>
   );
 }
@@ -1364,6 +1408,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const reasoningLabel = resolveSidebarReasoningLabel({
+    model: selectedModel ?? null,
+    modelSelection: thread.modelSelection,
+  });
+  const modelMetadataLabel = reasoningLabel ? `${modelLabel} · ${reasoningLabel}` : modelLabel;
 
   // The local environment is "this machine" and needs no marker; every other
   // one gets its machine glyph. With no local environment (the hosted app)
@@ -1383,6 +1432,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
+      reasoningLabel={reasoningLabel}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1792,9 +1842,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
-          // Matches the h-9 row so unrendered rows never shift the list when they paint.
-          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
-          sortable?.isDragging && "relative z-20",
+          // Matches the h-12 row so unrendered rows never shift the list when they paint.
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_48px]",
+          sortable?.isDragging && "relative z-20 opacity-80",
         )}
       >
         <Tooltip disabled={sortable?.isDragging}>
@@ -1808,7 +1858,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                className={cn(rowSurfaceClassName, "flex h-12 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1828,8 +1878,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             >
               {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
             </span>
-            {draftIndicator}
-            {title}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center">{title}</div>
+              <div className="mt-0.5 truncate text-2xs text-secondary-label/80">
+                {modelMetadataLabel}
+              </div>
+            </div>
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -2154,19 +2208,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
-                  working, but it truncated to a half-sentence and dropped the
-                  branch, so the row lost its most stable identifier. */}
+              {/* Keep the model and reasoning choice visible while retaining
+                  the branch as a compact secondary identifier. */}
+              <span className="min-w-0 flex-1 truncate whitespace-nowrap">
+                {modelMetadataLabel}
+              </span>
               {thread.branch ? (
                 <>
+                  <span aria-hidden>·</span>
                   <ThreadWorktreeIndicator thread={thread} />
                   <span className="flex min-w-0 flex-1 text-muted-foreground/40">
                     <MiddleTruncate value={thread.branch} showTitle={false} />
                   </span>
                 </>
-              ) : (
-                <span className="flex-1" />
-              )}
+              ) : null}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
@@ -2274,6 +2329,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const reasoningLabel = resolveSidebarReasoningLabel({
+    model: selectedModel ?? null,
+    modelSelection: thread.modelSelection,
+  });
+  const modelMetadataLabel = reasoningLabel ? `${modelLabel} · ${reasoningLabel}` : modelLabel;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -2336,6 +2396,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
                 {threadTimeLabel(thread)}
               </span>
             </span>
+            <span className="mt-0.5 block min-w-0 truncate text-2xs text-sidebar-muted-foreground/70">
+              {modelMetadataLabel}
+            </span>
             {props.searchMatch ? (
               <ThreadSearchMatchExcerpt
                 match={{
@@ -2358,6 +2421,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
+          reasoningLabel={reasoningLabel}
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
@@ -2485,6 +2549,26 @@ export default function Sidebar() {
   // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
+  // Chat mounts this detail already; reuse it so a lagging shell cannot hide
+  // Working on the open row while the composer still shows a live turn.
+  const routeThreadDetail = useThreadProjection(routeThreadRef);
+  const routeDetailRuntime = useMemo(
+    () => (routeThreadDetail === null ? null : deriveThreadRuntime(routeThreadDetail.projection)),
+    [routeThreadDetail],
+  );
+  const presentedThreads = useMemo(() => {
+    if (routeThreadKey === null || !threadRuntimeIsActive(routeDetailRuntime)) return threads;
+    let changed = false;
+    const next = threads.map((thread) => {
+      if (scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) !== routeThreadKey) {
+        return thread;
+      }
+      const reconciled = reconcileThreadShellRuntimeFromDetail(thread, routeDetailRuntime);
+      if (reconciled !== thread) changed = true;
+      return reconciled;
+    });
+    return changed ? next : threads;
+  }, [routeDetailRuntime, routeThreadKey, threads]);
 
   const environmentLabelById = useMemo(
     () =>
@@ -2525,8 +2609,9 @@ export default function Sidebar() {
     ],
   );
   const projectGroups = useMemo(
-    () => sortSidebarV2ProjectGroups(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    () =>
+      sortSidebarV2ProjectGroups(unsortedProjectGroups, presentedThreads, sidebarProjectSortOrder),
+    [presentedThreads, sidebarProjectSortOrder, unsortedProjectGroups],
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
@@ -2752,8 +2837,8 @@ export default function Sidebar() {
     const preciseNow = new Date().toISOString();
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
-    inboxReturns.observe(workingShelfEnabled ? threads : null);
+    const visible = filterSidebarV2VisibleThreads(presentedThreads, scopedProjectKeys);
+    inboxReturns.observe(workingShelfEnabled ? presentedThreads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const working: EnvironmentThreadShell[] = [];
@@ -2855,10 +2940,10 @@ export default function Sidebar() {
   }, [
     nowMinute,
     optimisticDrop,
+    presentedThreads,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
-    threads,
     workingShelfEnabled,
   ]);
 
@@ -3049,12 +3134,6 @@ export default function Sidebar() {
       ),
     [orderedThreads],
   );
-  // Rows call back into the click handler without carrying the ordered list as
-  // a prop — a fresh array identity per shell update would defeat every row's
-  // memoization. The ref keeps shift-range-select working against the list as
-  // rendered at click time.
-  const orderedThreadKeysRef = useRef(orderedThreadKeys);
-  orderedThreadKeysRef.current = orderedThreadKeys;
   const threadByKey = useMemo(
     () =>
       new Map(
@@ -3065,15 +3144,25 @@ export default function Sidebar() {
       ),
     [orderedThreads],
   );
-  // Handlers read these through refs: depending on per-update Map/Set
-  // identities would give every row a fresh callback prop on each shell
-  // event and defeat row memoization during streaming.
-  const threadByKeyRef = useRef(threadByKey);
+  const jumpLabelByKey = useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const [index, threadKey] of orderedThreadKeys.entries()) {
+      const jumpCommand = threadJumpCommandForIndex(index);
+      if (!jumpCommand) break;
+      const label = shortcutLabelForCommand(keybindings, jumpCommand);
+      if (label) mapping.set(threadKey, label);
+    }
+    return mapping;
+  }, [keybindings, orderedThreadKeys]);
+  // These refs let event handlers use the latest rendered order without
+  // making every row receive a fresh callback when the sidebar updates.
+  const orderedThreadKeysRef = useRef<readonly string[]>([]);
+  const threadByKeyRef = useRef<Map<string, EnvironmentThreadShell>>(new Map());
+  orderedThreadKeysRef.current = orderedThreadKeys;
   threadByKeyRef.current = threadByKey;
-  // handleNewThread is inherently unstable (depends on the projects list);
-  // a ref keeps it out of attemptSettle's dependency array.
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   handleNewThreadRef.current = newThreadContext.handleNewThread;
+
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -3097,16 +3186,6 @@ export default function Sidebar() {
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
 
-  const jumpLabelByKey = useMemo(() => {
-    const mapping = new Map<string, string>();
-    for (const [index, threadKey] of orderedThreadKeys.entries()) {
-      const jumpCommand = threadJumpCommandForIndex(index);
-      if (!jumpCommand) break;
-      const label = shortcutLabelForCommand(keybindings, jumpCommand);
-      if (label) mapping.set(threadKey, label);
-    }
-    return mapping;
-  }, [keybindings, orderedThreadKeys]);
   const { showThreadJumpHints: showJumpHints, updateThreadJumpHintsVisibility } =
     useThreadJumpHintVisibility();
 
@@ -4486,6 +4565,98 @@ export default function Sidebar() {
     ],
   );
 
+  const handleBulkSettledAction = useCallback(
+    async (action: "archive" | "delete") => {
+      const api = readLocalApi();
+      if (!api || settledThreads.length === 0) return;
+
+      const entries = settledThreads.map((thread) => ({
+        threadKey: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        threadRef: scopeThreadRef(thread.environmentId, thread.id),
+      }));
+      const count = entries.length;
+
+      if (action === "archive") {
+        if (confirmThreadArchive) {
+          const confirmed = await settlePromise(() =>
+            api.dialogs.confirm(`Archive ${count} settled thread${count === 1 ? "" : "s"}?`),
+          );
+          if (confirmed._tag === "Failure" || !confirmed.value) return;
+        }
+
+        const outcome = await archiveSelectedThreadEntries({
+          entries,
+          archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+        });
+        removeFromSelection(outcome.archivedThreadKeys);
+
+        for (const failure of outcome.followupFailures) {
+          if (isAtomCommandInterrupted(failure)) continue;
+          const error = squashAtomCommandFailure(failure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Threads archived, but navigation failed",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        if (outcome.mutationFailure && !isAtomCommandInterrupted(outcome.mutationFailure)) {
+          const error = squashAtomCommandFailure(outcome.mutationFailure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to archive settled threads",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+
+      if (confirmThreadDelete) {
+        const confirmed = await settlePromise(() =>
+          api.dialogs.confirm(
+            [
+              `Delete ${count} settled thread${count === 1 ? "" : "s"}?`,
+              "This permanently clears conversation history for these threads.",
+            ].join("\n"),
+            { variant: "destructive" },
+          ),
+        );
+        if (confirmed._tag === "Failure" || !confirmed.value) return;
+      }
+
+      const deletedThreadKeys = new Set<string>();
+      for (const { threadKey, threadRef } of entries) {
+        const result = await deleteThread(threadRef, { deletedThreadKeys });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to delete settled threads",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          break;
+        }
+        deletedThreadKeys.add(threadKey);
+      }
+      removeFromSelection([...deletedThreadKeys]);
+    },
+    [
+      archiveThread,
+      confirmThreadArchive,
+      confirmThreadDelete,
+      deleteThread,
+      removeFromSelection,
+      settledThreads,
+    ],
+  );
+
   const handleDraftContextMenu = useCallback(
     (draftId: DraftId, position: { x: number; y: number }) => {
       void (async () => {
@@ -5470,6 +5641,42 @@ export default function Sidebar() {
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
+                                trailingAction={
+                                  <Menu>
+                                    <MenuTrigger
+                                      render={
+                                        <Button
+                                          type="button"
+                                          size="micro"
+                                          variant="ghost-muted"
+                                          aria-label="Settled thread actions"
+                                          data-testid="sidebar-settled-actions"
+                                          title="Settled thread actions"
+                                          className="shrink-0"
+                                        />
+                                      }
+                                    >
+                                      Actions
+                                    </MenuTrigger>
+                                    <MenuPopup align="end">
+                                      <MenuItem
+                                        data-testid="sidebar-settled-archive-all"
+                                        onClick={() => void handleBulkSettledAction("archive")}
+                                      >
+                                        <ArchiveIcon />
+                                        Archive all ({settledThreads.length})
+                                      </MenuItem>
+                                      <MenuItem
+                                        variant="destructive"
+                                        data-testid="sidebar-settled-delete-all"
+                                        onClick={() => void handleBulkSettledAction("delete")}
+                                      >
+                                        <Trash2Icon />
+                                        Delete all ({settledThreads.length})
+                                      </MenuItem>
+                                    </MenuPopup>
+                                  </Menu>
+                                }
                                 toggle={{
                                   expanded: settledShelfExpanded,
                                   onToggle: toggleSettledShelf,

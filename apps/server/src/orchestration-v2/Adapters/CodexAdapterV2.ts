@@ -6558,10 +6558,18 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
                     continue;
                   }
-                  yield* client.request("turn/interrupt", {
-                    threadId: yield* getNativeThreadId(context.providerThread),
-                    turnId: context.nativeTurnId,
-                  });
+                  // A hung interrupt RPC would otherwise block Stop indefinitely.
+                  const acknowledged = yield* client
+                    .request("turn/interrupt", {
+                      threadId: yield* getNativeThreadId(context.providerThread),
+                      turnId: context.nativeTurnId,
+                    })
+                    .pipe(Effect.timeoutOption("3 seconds"));
+                  if (Option.isNone(acknowledged)) {
+                    return yield* toProtocolError(
+                      "Codex did not acknowledge the turn interrupt within 3 seconds; Stop could not be delivered.",
+                    );
+                  }
                 }
                 const containedTerminalKeys = new Set<string>();
                 const attemptedTerminalKeys = new Set<string>();

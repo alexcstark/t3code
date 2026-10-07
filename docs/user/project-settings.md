@@ -174,6 +174,18 @@ In Source Control, enable **Automatically pull** to keep the default-branch chec
 with its configured upstream. Choose an environment to set the default or a project to override it.
 On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
 
-T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
-or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
-local work, resolve it yourself before automatic pulls can resume.
+The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
+Pull failures do not prevent the server from starting.
+
+## Defaults for new threads
+
+Open **Settings** → **Projects**, select a project, and use **New threads** to set:
+
+- **Model**: the provider and model used by new threads in the project.
+- **Workspace**: whether new threads use the current checkout or a new worktree.
+- **Location**: which connected environment (such as a remote machine) receives new threads when
+  the project has checkouts on multiple environments.
+
+The location preference is stored locally in the T3 Code client. **Default** uses the checkout you
+opened or selected. Explicitly choosing a branch, worktree, or workspace in the composer overrides
+the project location default.

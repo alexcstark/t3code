@@ -101,11 +101,23 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
+    const parsedThreadSettle = yield* decode(KeybindingRule, {
+      key: "mod+w",
+      command: "thread.settle",
+    });
+    assert.strictEqual(parsedThreadSettle.command, "thread.settle");
+
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "modelPicker.toggle",
     });
     assert.strictEqual(parsedModelPickerToggle.command, "modelPicker.toggle");
+
+    const parsedReasoningPickerToggle = yield* decode(KeybindingRule, {
+      key: "mod+shift+l",
+      command: "reasoningPicker.toggle",
+    });
+    assert.strictEqual(parsedReasoningPickerToggle.command, "reasoningPicker.toggle");
 
     const parsedModelPickerJump = yield* decode(KeybindingRule, {
       key: "mod+1",
@@ -119,12 +131,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
 
-    const parsedThreadSettle = yield* decode(KeybindingRule, {
+    const parsedThreadSettleWithCondition = yield* decode(KeybindingRule, {
       key: "mod+shift+s",
       command: "thread.settle",
       when: "!terminalFocus",
     });
-    assert.strictEqual(parsedThreadSettle.command, "thread.settle");
+    assert.strictEqual(parsedThreadSettleWithCondition.command, "thread.settle");
 
     const parsedThreadCopyReference = yield* decode(KeybindingRule, {
       key: "mod+shift+c",

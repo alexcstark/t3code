@@ -31,6 +31,17 @@ export function filePreviewReadErrorMessage(error: ProjectReadFileError): string
   }
 }
 
+/** A sibling-repo read returns an absolute host path; use that for display and read-only. */
+export function resolvedFilePreviewPath(
+  requestedPath: string | null,
+  loadedRelativePath: string | undefined,
+): string | null {
+  if (loadedRelativePath !== undefined && isAbsolutePath(loadedRelativePath)) {
+    return loadedRelativePath;
+  }
+  return requestedPath;
+}
+
 export function shouldShowFileExplorer(input: {
   readonly relativePath: string | null;
   readonly explorerOpen: boolean;

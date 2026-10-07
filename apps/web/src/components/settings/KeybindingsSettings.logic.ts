@@ -65,6 +65,7 @@ export type KeybindingCommandOption = KeybindingCommand;
 const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
+  "reasoningPickerOpen",
   "isWeb",
   "isDesktop",
   "true",

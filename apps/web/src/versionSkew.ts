@@ -22,6 +22,8 @@ const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismiss
 // Runtime failures retain their identity until the next attempt. Dismiss only
 // that attempt, across chat remounts, without clearing the error in Settings.
 const dismissedServerUpdateFailures = new WeakSet<ServerUpdateState>();
+const T4_FORK_VERSION_PATTERN =
+  /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)-t4\.[0-9A-Za-z.-]+$/u;
 
 export function isServerUpdateFailureDismissed(state: ServerUpdateState): boolean {
   return state.status === "failed" && dismissedServerUpdateFailures.has(state);
@@ -119,18 +121,25 @@ export function supportsServerUpdateThreadContinuation(
   return serverConfig?.environment.capabilities.serverUpdateThreadContinuation === true;
 }
 
+/** Server updates use the public T3 package even when this client is a T4 fork. */
+export function resolveServerUpdateTargetVersion(targetVersion: string): string {
+  const normalizedTargetVersion = targetVersion.trim();
+  return T4_FORK_VERSION_PATTERN.exec(normalizedTargetVersion)?.[1] ?? normalizedTargetVersion;
+}
+
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(
   targetVersion: string,
   installation?: ServerInstallation,
 ): string {
+  const version = resolveServerUpdateTargetVersion(targetVersion);
   if (installation?.kind === "npm-global") {
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    return `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    return `npm install --global --prefix ${prefix} t3@${version}`;
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  return `${runner} t3@${version}`;
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {

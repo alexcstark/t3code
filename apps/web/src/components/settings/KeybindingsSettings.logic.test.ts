@@ -294,9 +294,10 @@ describe("KeybindingsSettings.logic", () => {
       expect.arrayContaining([
         "terminalFocus",
         "terminalOpen",
+        "modelPickerOpen",
+        "reasoningPickerOpen",
         "isWeb",
         "isDesktop",
-        "modelPickerOpen",
         "true",
         "false",
       ]),

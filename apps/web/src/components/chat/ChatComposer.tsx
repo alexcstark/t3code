@@ -1463,6 +1463,9 @@ export interface ChatComposerHandle {
   /** True when a collapsed caret sits before everything in the draft, including when it is empty. */
   isCaretAtStart: () => boolean;
   compactContext: () => void;
+  openReasoningPicker: () => void;
+  toggleReasoningPicker: () => void;
+  isReasoningPickerOpen: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -2406,6 +2409,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [isComposerReasoningPickerOpen, setIsComposerReasoningPickerOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const {
     isComposerFocused,
@@ -2470,6 +2474,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<string, number>>(new Map());
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const isRevertingCheckpointRef = useRef(isRevertingCheckpoint);
   isRevertingCheckpointRef.current = isRevertingCheckpoint;
 
@@ -2963,6 +2968,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
+    open: isComposerReasoningPickerOpen,
+    onOpenChange: (open) => {
+      setIsComposerReasoningPickerOpen(open);
+      if (open) {
+        setIsComposerModelPickerOpen(false);
+      }
+    },
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
   const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
@@ -2975,6 +2987,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
   } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
+  const hasProviderTraits = providerTraitsMenuContent !== null;
+  useEffect(() => {
+    if (!hasProviderTraits) {
+      setIsComposerReasoningPickerOpen(false);
+    }
+  }, [hasProviderTraits]);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
   const pendingPrimaryAction = useMemo(
     () =>
@@ -5523,7 +5541,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               ),
             }
           : {})}
-        onOpenChange={setIsComposerModelPickerOpen}
+        onOpenChange={(open) => {
+          setIsComposerModelPickerOpen(open);
+          if (open) {
+            setIsComposerReasoningPickerOpen(false);
+          }
+        }}
         getModelDisabledReason={getModelDisabledReason}
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);
@@ -5574,6 +5597,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
             }
+            open={isComposerReasoningPickerOpen}
+            onOpenChange={(open) => {
+              setIsComposerReasoningPickerOpen(open);
+              if (open) {
+                setIsComposerModelPickerOpen(false);
+              }
+            }}
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
           />
@@ -6381,13 +6411,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           "cursor",
           { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
         ),
-      openModelPicker,
+      openModelPicker: () => {
+        setIsComposerReasoningPickerOpen(false);
+        setIsComposerModelPickerOpen(true);
+      },
       toggleModelPicker: () => {
-        if (isComposerModelPickerOpen) {
-          setIsComposerModelPickerOpen(false);
-        } else {
-          openModelPicker();
-        }
+        setIsComposerReasoningPickerOpen(false);
+        setIsComposerModelPickerOpen((open) => !open);
       },
       openControl: (command) => {
         if (composerBlurFrameRef.current !== null) {
@@ -6413,6 +6443,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      openReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen(true);
+      },
+      toggleReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen((open) => !open);
+      },
+      isReasoningPickerOpen: () => isComposerReasoningPickerOpen,
       isCaretAtStart: () => {
         const range = composerEditorRef.current?.readSelectionRange();
         return range !== undefined && range.start === 0 && range.end === 0;
@@ -6537,7 +6578,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
-      openModelPicker,
+      isComposerReasoningPickerOpen,
+      hasProviderTraits,
       readComposerSnapshot,
       resetComposerTrigger,
       setComposerTrigger,
@@ -7509,6 +7551,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isComposerResting && "hidden",
                   )}
                 >
+                  <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    accept="image/gif,image/jpeg,image/png,image/webp"
+                    multiple
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={(event) => {
+                      const files = Array.from(event.currentTarget.files ?? []);
+                      // Clear the input so choosing the same image again still
+                      // emits a change event after it has been removed.
+                      event.currentTarget.value = "";
+                      if (files.length === 0) return;
+                      void addComposerAttachments(files);
+                      focusComposer();
+                    }}
+                  />
+                  <ComposerControl
+                    type="button"
+                    aria-label="Attach images"
+                    title="Attach images"
+                    data-chat-composer-attach="true"
+                    disabled={
+                      isConnecting ||
+                      isComposerApprovalState ||
+                      projectSelectionRequired ||
+                      pendingUserInputs.length > 0
+                    }
+                    onClick={() => imageFileInputRef.current?.click()}
+                  >
+                    <ComposerControlIcon icon={PaperclipIcon} />
+                    <span>Attach</span>
+                  </ComposerControl>
                   {composerControlsCollapsed ? null : composerControls}
                 </div>
 
