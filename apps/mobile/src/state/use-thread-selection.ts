@@ -96,7 +96,12 @@ function threadDetailToShell(
     pendingRuntimeRequest:
       pendingRequest === null
         ? null
-        : { id: pendingRequest.id, kind: pendingRequest.kind, createdAt: pendingRequest.createdAt },
+        : {
+            id: pendingRequest.id,
+            kind: pendingRequest.kind,
+            createdAt: pendingRequest.createdAt,
+            responseCapabilityType: pendingRequest.responseCapability.type,
+          },
     latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessageAt(projection),
     hasActionableProposedPlan: false,

@@ -698,6 +698,7 @@ type ThreadStatusInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "pendingUserInputResponseCapability"
   | "interactionMode"
   | "latestRun"
   | "runtime"
@@ -1023,15 +1024,14 @@ export function shouldRecedeSidebarThread(input: {
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
+  "hasPendingApprovals" | "hasPendingUserInput" | "pendingUserInputResponseCapability" | "runtime"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
     return "approval";
   }
-  // Async questions stay pending while the agent works; only a blocked turn
-  // should own Input (#15258). Interruptible runtimes fall through to Working.
+  // Live questions block the provider even when its run is still running.
   if (threadHasBlockingPendingUserInput(thread)) {
     return "input";
   }
@@ -1223,8 +1223,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  // Same rule as resolveSidebarThreadStatus: async questions do not steal the
-  // Working pill while the run is still interruptible (#15258).
+  // Message-mode questions keep Working while the agent can continue.
   if (threadHasBlockingPendingUserInput(thread)) {
     return {
       label: "Awaiting Input",

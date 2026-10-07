@@ -67,6 +67,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  RuntimeRequestId,
   RunId,
   type ServerProviderModel,
   ThreadId,
@@ -992,6 +993,43 @@ describe("resolveSidebarThreadStatus", () => {
         runtime,
       }),
     ).toBe("approval");
+  });
+
+  it("shows Input for a blocking question while the turn remains running", () => {
+    const fixture = makeThreadFixture();
+    const shell = {
+      ...fixture.source,
+      status: "running" as const,
+      latestRunId: RunId.make("run:controls"),
+      activeRunId: RunId.make("run:controls"),
+      activityRunStatus: "running" as const,
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question:controls"),
+        kind: "user_input" as const,
+        createdAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
+        responseCapabilityType: "live" as const,
+      },
+    };
+    const thread = presentThreadShell(localEnvironmentId, shell);
+    expect(thread.runtime?.status).toBe("running");
+    expect(resolveSidebarThreadStatus(thread)).toBe("input");
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: "Awaiting Input" });
+    expect(isSidebarThreadWorking(thread)).toBe(false);
+    expect(resolveSidebarThreadStatus({ ...thread, hasPendingApprovals: true })).toBe("approval");
+
+    const asyncThread = presentThreadShell(localEnvironmentId, {
+      ...shell,
+      pendingRuntimeRequest: { ...shell.pendingRuntimeRequest, responseCapabilityType: "message" },
+    });
+    expect(resolveSidebarThreadStatus(asyncThread)).toBe("working");
+    expect(resolveThreadStatusPill({ thread: asyncThread })).toMatchObject({ label: "Working" });
+    expect(isSidebarThreadWorking(asyncThread)).toBe(true);
+
+    const answeredThread = presentThreadShell(localEnvironmentId, {
+      ...shell,
+      pendingRuntimeRequest: null,
+    });
+    expect(resolveSidebarThreadStatus(answeredThread)).toBe("working");
   });
 
   it("shows Input when a pending question blocks a settled or waiting turn", () => {

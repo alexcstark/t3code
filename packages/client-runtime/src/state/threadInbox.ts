@@ -13,6 +13,7 @@ type WorkingThreadInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "pendingUserInputResponseCapability"
   | "interactionMode"
   | "latestRun"
   | "runtime"
