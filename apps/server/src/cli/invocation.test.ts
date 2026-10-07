@@ -9,6 +9,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
+
+vi.mock("../../package.json", () => ({ default: { version: "0.0.31" } }));
 
 import {
   formatCliCommand,
