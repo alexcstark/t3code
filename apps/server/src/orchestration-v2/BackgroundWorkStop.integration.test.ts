@@ -15,6 +15,7 @@ import {
   TurnItemId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -44,11 +45,13 @@ const modelSelection = { instanceId, model: "test-model" };
 // including when it selects an older resumed run on the other provider thread.
 const stopEarlierBackgroundWork = ({
   failedStart = false,
+  pendingRoster = false,
   stopWithQueue,
   olderStart = false,
   stalledRun,
 }: {
   readonly failedStart?: boolean;
+  readonly pendingRoster?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly stalledRun?:
@@ -594,7 +597,18 @@ const stopEarlierBackgroundWork = ({
                 ...codexProviderThread,
                 id: otherProviderThreadId,
                 firstRunOrdinal: 4,
-                lastRunOrdinal: 4,
+                lastRunOrdinal: pendingRoster && failedStart ? 5 : 4,
+                ...(pendingRoster
+                  ? {
+                      pendingBackgroundTasks: [
+                        {
+                          taskId: "check-columns",
+                          description: "Check column redundancy",
+                          kind: "command" as const,
+                        },
+                      ],
+                    }
+                  : {}),
               },
             },
             ...latestRun.events,
@@ -752,6 +766,91 @@ const stopEarlierBackgroundWork = ({
             ? ["interrupted", "interrupted"]
             : ["interrupted", "interrupted", "interrupted"],
         );
+        if (pendingRoster) {
+          const stoppedThread = after.providerThreads.find(
+            (thread) => thread.id === otherProviderThreadId,
+          )!;
+          assert.deepEqual(stoppedThread.pendingBackgroundTasks, []);
+          assert.equal(stoppedThread.status, "idle");
+          assert.isEmpty(
+            derivePendingBackgroundWork({
+              latestRun: after.runs.at(-1),
+              activeProviderThreadId: otherProviderThreadId,
+              providerThreads: after.providerThreads,
+              turnItems: after.turnItems,
+              runs: after.runs,
+            }),
+          );
+
+          // A delayed Stop follow-up must preserve a later turn's roster,
+          // even after that turn has settled, while still ending older items.
+          const newerItemId = TurnItemId.make("newer-command");
+          const newerRun = settledRun({
+            ordinal: 6,
+            providerThreadId: otherProviderThreadId,
+            runningItem: { id: newerItemId, kind: "command" },
+          });
+          const newerTasks = [
+            { taskId: "new-build", description: "New background build", kind: "command" as const },
+          ];
+          const oldItemId = TurnItemId.make("late-old-command");
+          const command = after.turnItems.find((item) => item.id === devServerId)!;
+          assert.ok(command.type === "command_execution");
+          yield* sink.write({
+            events: [
+              ...newerRun.events,
+              {
+                id: EventId.make("late-old-command"),
+                type: "turn-item.updated",
+                threadId,
+                runId: latestRun.runId,
+                occurredAt: now,
+                payload: {
+                  ...command,
+                  id: oldItemId,
+                  runId: latestRun.runId,
+                  nodeId: after.runs.find((run) => run.id === latestRun.runId)!.rootNodeId,
+                  providerThreadId: otherProviderThreadId,
+                  providerTurnId: latestRun.providerTurnId,
+                  status: "running",
+                  completedAt: null,
+                },
+              },
+              {
+                id: EventId.make("newer-roster"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...stoppedThread,
+                  lastRunOrdinal: 6,
+                  pendingBackgroundTasks: newerTasks,
+                },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.background-work.settle",
+            commandId: CommandId.make("late-roster-settle"),
+            threadId,
+            providerThreadId: otherProviderThreadId,
+            providerTurnId: latestRun.providerTurnId,
+          });
+          const afterLateStop = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            afterLateStop.providerThreads.find((thread) => thread.id === otherProviderThreadId)
+              ?.pendingBackgroundTasks,
+            newerTasks,
+          );
+          assert.equal(
+            afterLateStop.turnItems.find((item) => item.id === oldItemId)?.status,
+            "interrupted",
+          );
+          assert.equal(
+            afterLateStop.turnItems.find((item) => item.id === newerItemId)?.status,
+            "running",
+          );
+        }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -771,6 +870,11 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
 it.effect(
   "Stop reaches earlier background work after the newest run fails before provider start",
   () => stopEarlierBackgroundWork({ failedStart: true }),
+);
+
+it.effect(
+  "Stop clears a live roster after a failed start and preserves later background work",
+  () => stopEarlierBackgroundWork({ failedStart: true, pendingRoster: true }),
 );
 
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
