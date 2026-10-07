@@ -10,7 +10,6 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
@@ -232,7 +231,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         runStatementValues(statement, params),
       );
 
-    return identity<Connection>({
+    const connection = identity<Connection>({
       execute(sql, params, rowTransform) {
         return rowTransform ? Effect.map(run(sql, params), rowTransform) : run(sql, params);
       },
@@ -248,34 +247,40 @@ const make = Effect.fn("makeWithDatabase")(function* (
         );
       },
       executeUnprepared(sql, params, rowTransform) {
-        const effect = prepare(sql).pipe(
-          Effect.flatMap((statement) => runStatement(statement, params ?? [], false)),
-        );
+        const effect = Effect.suspend(() => {
+          // Transaction-control cleanup is idempotent: SQLITE_FULL can roll
+          // back the entire transaction, including its savepoints. Preserve
+          // that original failure when cleanup finds no transaction left.
+          if (
+            !db.isTransaction &&
+            (sql === "ROLLBACK" || sql.startsWith("ROLLBACK TO SAVEPOINT "))
+          ) {
+            return Effect.succeed([]);
+          }
+          return prepare(sql).pipe(
+            Effect.flatMap((statement) => runStatement(statement, params ?? [], false)),
+          );
+        });
         return rowTransform ? Effect.map(effect, rowTransform) : effect;
       },
       executeStream(_sql, _params) {
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
+    return { connection, isTransaction: () => db.isTransaction };
   });
 
   const semaphore = yield* Semaphore.make(1);
-  const connection = yield* makeConnection;
-
-  const acquirer = semaphore.withPermits(1)(Effect.succeed(connection));
-  const transactionAcquirer = Effect.uninterruptibleMask((restore) => {
-    const fiber = Fiber.getCurrent()!;
-    const scope = Context.getUnsafe(fiber.context, Scope.Scope);
-    return Effect.as(
-      Effect.tap(restore(semaphore.take(1)), () => Scope.addFinalizer(scope, semaphore.release(1))),
-      connection,
-    );
+  const { connection, isTransaction } = yield* makeConnection;
+  const acquirers = Client.makeSqliteAcquirers({
+    connection: Effect.succeed(connection),
+    semaphore,
+    isTransaction,
   });
 
   return yield* Client.make({
-    acquirer,
+    ...acquirers,
     compiler,
-    transactionAcquirer,
     // A deferred BEGIN only takes the write lock at the first write. If another
     // process commits after this transaction's first read, that write fails at
     // once with SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot wait out. Taking
