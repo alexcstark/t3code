@@ -12,6 +12,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeNet from "node:net";
 
 import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
+import { remoteStateKey } from "./command.ts";
 
 const Started = Schema.Struct({
   pid: Schema.Number,
@@ -183,26 +184,32 @@ server.listen(0, "127.0.0.1", () => {
             port: `${started.port}\n`,
             managed: mode === "external" ? "external\n" : "managed\n",
           };
-          for (const [name, contents] of Object.entries(savedState)) {
-            yield* fs.writeFileString(path.join(fixture, name), contents);
-          }
-          const script = buildRemoteStopScript({
+          const target = {
             alias: "fixture",
             hostname: "fixture",
             username: null,
             port: null,
-          });
-          // Redirect only the state directory. Never use the developer's SSH state.
-          const isolatedScript = script.replace(
-            /^STATE_DIR=.*$/mu,
-            'STATE_DIR="$T3_TEST_STATE_DIR"',
-          );
-          assert.notEqual(isolatedScript, script);
+          };
+          const stateRoot = path.join(fixture, "ssh-state");
+          const legacyStateDir = path.join(stateRoot, remoteStateKey(target));
+          yield* fs.makeDirectory(legacyStateDir, { recursive: true });
+          for (const [name, contents] of Object.entries(savedState)) {
+            yield* fs.writeFileString(path.join(legacyStateDir, name), contents);
+          }
+          const script = buildRemoteStopScript(target);
+          // Exercise legacy ownership in the fixture without a host CLI or home.
+          const isolatedScript = script
+            .replace(/^STATE_ROOT=.*$/mu, 'STATE_ROOT="$T3_TEST_STATE_ROOT"')
+            .replace(/^DEFAULT_SERVER_HOME=.*$/mu, 'DEFAULT_SERVER_HOME="$T3_TEST_STATE_ROOT/home"')
+            .replace(/^PATH_T3=.*$/mu, 'PATH_T3=""');
+          assert.include(isolatedScript, 'STATE_ROOT="$T3_TEST_STATE_ROOT"');
+          assert.include(isolatedScript, 'DEFAULT_SERVER_HOME="$T3_TEST_STATE_ROOT/home"');
+          assert.include(isolatedScript, 'PATH_T3=""');
           const runStop = Effect.fn("test.remoteStop")(function* () {
             const stop = yield* spawner.spawn(
               ChildProcess.make("/bin/sh", ["-s"], {
                 cwd: fixture,
-                env: { T3_TEST_STATE_DIR: fixture },
+                env: { T3_TEST_STATE_ROOT: stateRoot },
                 stdin: Stream.make(new TextEncoder().encode(isolatedScript)),
               }),
             );
@@ -226,11 +233,11 @@ server.listen(0, "127.0.0.1", () => {
               return Effect.sync(() => connection.destroy());
             });
           }
-          assert.equal(result.exitCode, 0);
+          assert.equal(result.exitCode, 0, result.stderr);
           assert.equal(result.stdout, '{"stopped":true}\n');
           assert.equal(result.stderr, "");
           for (const name of Object.keys(savedState)) {
-            assert.isFalse(yield* fs.exists(path.join(fixture, name)));
+            assert.isFalse(yield* fs.exists(path.join(legacyStateDir, name)));
           }
           if (mode === "external") {
             assert.isFalse(yield* fs.exists(signalPath));
