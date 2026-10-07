@@ -12,15 +12,20 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
@@ -32,6 +37,31 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+
+const isStorageFullError = (error: unknown): boolean => {
+  const seen = new Set<unknown>();
+  while (!seen.has(error)) {
+    seen.add(error);
+    if (SqlError.isSqlError(error)) {
+      const native = error.reason.cause;
+      // node:sqlite reports SQLITE_FULL as result code 13.
+      return Predicate.hasProperty(native, "errcode") && native.errcode === 13;
+    }
+    if (!Predicate.hasProperty(error, "cause")) return false;
+    error = error.cause;
+  }
+  return false;
+};
+
+const isStorageFullCause = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.length > 0 &&
+  cause.reasons.every((reason) =>
+    Cause.isFailReason(reason)
+      ? isStorageFullError(reason.error)
+      : Cause.isDieReason(reason)
+        ? isStorageFullError(reason.defect)
+        : false,
+  );
 
 /**
  * ERRORS
@@ -243,6 +273,11 @@ const layerBase: Layer.Layer<
     ) =>
       Effect.suspend(() => {
         let holdsLane = false;
+        const releaseLane = Effect.suspend(() => {
+          if (!holdsLane) return Effect.void;
+          holdsLane = false;
+          return publishLane.release(1);
+        });
         const takeLane = publishLane.take(1).pipe(
           Effect.andThen(
             Effect.sync(() => {
@@ -251,14 +286,29 @@ const layerBase: Layer.Layer<
           ),
           Effect.uninterruptible,
         );
-        return sql
-          .withTransaction(Effect.tap(transaction, () => takeLane))
-          .pipe(
-            Effect.tap(publish),
-            Effect.ensuring(
-              Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void)),
+        return sql.withTransaction(Effect.tap(transaction, () => takeLane)).pipe(
+          // A full disk must pause the current event, not end its consumer.
+          // Retry only the rolled-back transaction; publishing happens once.
+          Effect.onError(() => releaseLane),
+          // COMMIT errors are defects; retry must inspect the entire cause.
+          Effect.catchCause(Effect.fail),
+          Effect.tapError((cause) =>
+            isStorageFullCause(cause)
+              ? Effect.logWarning("orchestration-v2.event-write-storage-full", { cause })
+              : Effect.void,
+          ),
+          Effect.retry({
+            while: isStorageFullCause,
+            schedule: Schedule.exponential("1 second").pipe(
+              Schedule.modifyDelay(({ duration }) =>
+                Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+              ),
             ),
-          );
+          }),
+          Effect.catch(Effect.failCause),
+          Effect.tap(publish),
+          Effect.ensuring(releaseLane),
+        );
       });
 
     // A user can answer after terminal normalization reads the pending request.

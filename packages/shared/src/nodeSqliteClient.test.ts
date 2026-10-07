@@ -11,6 +11,60 @@ import * as SqliteClient from "./nodeSqliteClient.ts";
 
 const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
 
+it.effect.each([false, true])(
+  "preserves SQLITE_FULL after an automatic rollback (nested=%s)",
+  (nested) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE entries(value BLOB)`;
+      const [pageCount] = yield* sql<{
+        page_count: number;
+      }>`PRAGMA page_count`;
+      assert(pageCount);
+      yield* sql.unsafe(`PRAGMA max_page_count = ${pageCount.page_count}`);
+      const insert = sql`INSERT INTO entries VALUES (zeroblob(1000000))`;
+      const exit = yield* Effect.exit(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO entries VALUES ('rolled back')`;
+            yield* nested ? sql.withTransaction(insert) : insert;
+          }),
+        ),
+      );
+      assert(exit._tag === "Failure");
+      assert.equal(exit.cause.reasons.length, 1);
+      const reason = exit.cause.reasons[0];
+      assert(reason?._tag === "Fail");
+      const error = reason.error;
+      assert.equal(error._tag, "SqlError");
+      assert.propertyVal(error.reason.cause, "errcode", 13);
+      assert.deepEqual(yield* sql`SELECT value FROM entries`, []);
+
+      yield* sql`PRAGMA max_page_count = 1000`;
+      yield* sql.withTransaction(sql`INSERT INTO entries VALUES ('recovered')`);
+      assert.deepEqual(yield* sql`SELECT value FROM entries`, [{ value: "recovered" }]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("rolls back a failed commit before releasing the connection", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`PRAGMA foreign_keys = ON`;
+    yield* sql`CREATE TABLE parents(id INTEGER PRIMARY KEY)`;
+    yield* sql`CREATE TABLE children(parent_id INTEGER REFERENCES parents(id) DEFERRABLE INITIALLY DEFERRED)`;
+    const failed = yield* Effect.exit(sql.withTransaction(sql`INSERT INTO children VALUES (1)`));
+    assert.equal(failed._tag, "Failure");
+    assert.deepEqual(yield* sql`SELECT parent_id FROM children`, []);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO parents VALUES (1)`;
+        yield* sql`INSERT INTO children VALUES (1)`;
+      }),
+    );
+    assert.deepEqual(yield* sql`SELECT parent_id FROM children`, [{ parent_id: 1 }]);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
 layer("NodeSqliteClient", (it) => {
   it.effect("retries preparing a query after the missing schema becomes available", () =>
     Effect.gen(function* () {
