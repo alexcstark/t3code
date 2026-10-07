@@ -8,7 +8,13 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  ModelSelection,
+  ServerProviderModel,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -22,6 +28,7 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
+import { getProviderOptionDescriptors, getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
@@ -106,6 +113,42 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   }
   if (value !== null) return value;
   return key !== null && retained?.key === key ? retained.value : null;
+}
+
+const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+
+function isReasoningOptionId(id: string): boolean {
+  return REASONING_OPTION_IDS.has(id) || id.toLowerCase() === "reasoninglevel";
+}
+
+function formatReasoningFallback(value: string): string {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function resolveSidebarReasoningLabel(input: {
+  modelSelection: ModelSelection;
+  model: ServerProviderModel | null;
+}): string | null {
+  const descriptors = input.model?.capabilities
+    ? getProviderOptionDescriptors({
+        caps: input.model.capabilities,
+        selections: input.modelSelection.options,
+      })
+    : [];
+  const reasoningDescriptor = descriptors.find(
+    (descriptor) =>
+      descriptor.label.trim().toLowerCase() === "reasoning" || isReasoningOptionId(descriptor.id),
+  );
+  const descriptorLabel = getProviderOptionCurrentLabel(reasoningDescriptor);
+  if (descriptorLabel) return descriptorLabel;
+
+  const rawSelection = input.modelSelection.options?.find(({ id }) => isReasoningOptionId(id));
+  return typeof rawSelection?.value === "string"
+    ? formatReasoningFallback(rawSelection.value)
+    : null;
 }
 
 // Sidebar.motion handles ordinary section changes. Sortable transforms own

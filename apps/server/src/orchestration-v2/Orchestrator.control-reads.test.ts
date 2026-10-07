@@ -1231,3 +1231,18 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("accepts deleting or settling a thread the server never stored", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:never-created");
+    for (const type of ["thread.delete", "thread.settle"] as const) {
+      const result = yield* orchestrator.dispatch({
+        type,
+        commandId: CommandId.make(`${type}-absent`),
+        threadId,
+      });
+      assert.deepEqual(result.storedEvents, []);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -9,7 +9,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadProviderStack,
+  threadHasBlockingPendingUserInput,
+} from "@t3tools/client-runtime/state/models";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   createInboxReturnTracker,
@@ -164,7 +167,9 @@ export function resolveThreadListV2Status(
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
   }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+  // Async questions stay pending while the agent works; only a blocked turn
+  // should own Input (#15258). Interruptible runtimes fall through to Working.
+  if (threadHasBlockingPendingUserInput(thread) || thread.pendingSubagentRequest === "user_input") {
     return "input";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {

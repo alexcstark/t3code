@@ -67,7 +67,12 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import {
+  reconcileThreadShellRuntimeFromDetail,
+  threadRuntimeCanArchive,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
+import { deriveThreadRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -90,6 +95,7 @@ import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   readThreadShell,
   useProjects,
+  useThreadProjection,
   useThreadShells,
   useThreadShellsForProjectRefs,
   waitForProjectRemoval,
@@ -192,6 +198,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSidebarReasoningLabel,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -445,6 +452,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       lastVisitedAt,
     },
   });
+  const reasoningLabel = resolveSidebarReasoningLabel({
+    model: null,
+    modelSelection: thread.modelSelection,
+  });
+  const modelMetadataLabel = reasoningLabel
+    ? `${thread.modelSelection.model} · ${reasoningLabel}`
+    : thread.modelSelection.model;
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
@@ -751,6 +765,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <TooltipPopup side="top">{thread.title}</TooltipPopup>
             </Tooltip>
           )}
+          <span className="max-w-[35%] shrink-0 truncate text-2xs text-secondary-label/80">
+            {modelMetadataLabel}
+          </span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {canOperatePreview && discoveredPorts.length > 0 && (
@@ -3146,7 +3163,24 @@ function useLegacySidebarThreads(input: {
     sidebarThreadPreviewCount,
     expandedThreadListsByProject,
   } = input;
-  const sidebarThreads = useThreadShells();
+  const routeThreadRef = routeThreadKey === null ? null : parseScopedThreadKey(routeThreadKey);
+  const shellThreads = useThreadShells();
+  const routeThreadDetail = useThreadProjection(routeThreadRef);
+  const routeDetailRuntime =
+    routeThreadDetail === null ? null : deriveThreadRuntime(routeThreadDetail.projection);
+  const sidebarThreads = (() => {
+    if (routeThreadKey === null || !threadRuntimeIsActive(routeDetailRuntime)) return shellThreads;
+    let changed = false;
+    const next = shellThreads.map((thread) => {
+      if (scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) !== routeThreadKey) {
+        return thread;
+      }
+      const reconciled = reconcileThreadShellRuntimeFromDetail(thread, routeDetailRuntime);
+      if (reconciled !== thread) changed = true;
+      return reconciled;
+    });
+    return changed ? next : shellThreads;
+  })();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const sidebarThreadByKey = new Map(
     sidebarThreads.map(

@@ -155,6 +155,7 @@ import { Atom } from "effect/reactivity";
 import {
   Fragment,
   type SetStateAction,
+  useDeferredValue,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -187,6 +188,7 @@ import {
 } from "../composer-logic";
 import {
   derivePhase,
+  deriveIsWorking,
   selectHandoffImageResources,
   deriveActivePlanState,
   selectComposerTasksPlan,
@@ -373,6 +375,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { threadEnvironment } from "../state/threads";
+import { TerminalShellStatus, terminalShellRootProps } from "../addons/terminal-shell";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -1603,6 +1606,7 @@ export default function ChatView(props: ChatViewProps) {
           threadId: parentSubagentThreadRef.threadId,
           title: parentSubagentThread?.title ?? "Parent thread",
         };
+  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
@@ -2629,12 +2633,15 @@ export default function ChatView(props: ChatViewProps) {
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
     (compactionRunning || (compactRequestIsActive && !compactionSettled));
-  const isWorking =
-    phase === "running" ||
-    isSendBusy ||
-    isConnecting ||
-    isCompacting ||
-    runlessWorkStartedAt !== null;
+  const isWorking = deriveIsWorking({
+    phase,
+    runtimeStatus: activeRuntime?.status,
+    isSendBusy,
+    isConnecting,
+    isCompacting,
+    runlessWorkStartedAt,
+  });
+  const workingStepLabel = activeComposerTasksProgress?.step ?? null;
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
@@ -2903,8 +2910,14 @@ export default function ChatView(props: ChatViewProps) {
           { ...codexFeedbackMessage(submission, "assistant"), runId: null },
         ],
   );
+  const timelineTurnItemsSource = { threadKey: activeThreadKey, items: serverVisibleTurnItems };
+  const deferredTimelineTurnItemsSource = useDeferredValue(timelineTurnItemsSource);
+  const timelineVisibleTurnItems =
+    timelineLiveFollowEnabled || deferredTimelineTurnItemsSource.threadKey !== activeThreadKey
+      ? serverVisibleTurnItems
+      : deferredTimelineTurnItemsSource.items;
   const serverTimelineEntries = useIncrementalTimelineEntries(activeThreadKey, {
-    visibleTurnItems: serverVisibleTurnItems,
+    visibleTurnItems: timelineVisibleTurnItems,
     optimisticMessages: optimisticUserMessages,
     anchoredMessages: anchoredTimelineMessages,
     attachmentUrlById: timelineAttachmentUrlById,
@@ -3792,6 +3805,10 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "files");
   };
   const addFilesSurfaceStable = useStableCallback(addFilesSurface);
+  const addPlanSurface = () => {
+    if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "plan");
+  };
+  const addPlanSurfaceStable = useStableCallback(addPlanSurface);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -4165,7 +4182,6 @@ export default function ChatView(props: ChatViewProps) {
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
-  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -5741,6 +5757,7 @@ export default function ChatView(props: ChatViewProps) {
     previewOpen: previewPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
     modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+    reasoningPickerOpen: composerRef.current?.isReasoningPickerOpen() ?? false,
     composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
     draftThreadRoute: routeKind === "draft",
     turnRunning: phase === "running",
@@ -5783,12 +5800,14 @@ export default function ChatView(props: ChatViewProps) {
     scriptKeybindings,
     getShortcutContext: getShortcutContextStable,
     threadFindActive: isThreadFindActive,
+    interrupt: canInterruptRunningThread ? onInterruptStable : undefined,
     typeIntoComposer: (key) => composerRef.current?.insertTextAtEnd(key) === true,
     closeThreadFind: () => {
       closeThreadFindStable();
       focusComposerStable();
     },
     commands: {
+      "reasoningPicker.toggle": () => composerRef.current?.toggleReasoningPicker(),
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReferenceStable();
       },
@@ -7975,6 +7994,12 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelContent = activeThreadRef ? (
     <RightPanelSurfaceContent
       surface={renderedRightPanelSurface}
+      plan={{
+        activePlan,
+        proposedPlan: activeProposedPlan,
+        cwd: activeWorkspaceRoot,
+        threadRef: activeThreadRef,
+      }}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
       environmentId={activeThread.environmentId}
@@ -8092,10 +8117,7 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   const content = (
-    <div
-      ref={setWorkspaceLayoutElement}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
-    >
+    <div ref={setWorkspaceLayoutElement} {...terminalShellRootProps}>
       <DeviceSetupDialogHost
         threadKey={activeThreadKey}
         threadRef={activeThreadRef}
@@ -8325,6 +8347,7 @@ export default function ChatView(props: ChatViewProps) {
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEndStable}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
+                onResponseClick={focusComposerStable}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 emptyPlaceholderInset={composerReservedHeight}
@@ -8372,6 +8395,13 @@ export default function ChatView(props: ChatViewProps) {
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
                 >
+                  {!isDraftHeroState ? (
+                    <TerminalShellStatus
+                      activeTerminalCount={terminalUiState.terminalIds.length}
+                      isWorking={isWorking}
+                      workingStepLabel={workingStepLabel}
+                    />
+                  ) : null}
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full">
                       <div
@@ -8827,6 +8857,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
+          onAddPlan={addPlanSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
@@ -8836,6 +8867,7 @@ export default function ChatView(props: ChatViewProps) {
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
+          planAvailable={activeThreadRef !== null}
           deviceAvailable={activeThreadRef !== null}
         >
           {rightPanelContent}
@@ -8882,6 +8914,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddTerminal={addTerminalSurfaceStable}
             onAddDiff={addDiffSurfaceStable}
             onAddFiles={addFilesSurfaceStable}
+            onAddPlan={addPlanSurfaceStable}
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
             onAddDevice={addDeviceSurfaceStable}
@@ -8891,6 +8924,7 @@ export default function ChatView(props: ChatViewProps) {
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
+            planAvailable={activeThreadRef !== null}
             deviceAvailable={activeThreadRef !== null}
           >
             {rightPanelContent}

@@ -155,6 +155,11 @@ const DEFAULT_BINDINGS = compile([
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("l", { shiftKey: true }),
+    command: "reasoningPicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -488,6 +493,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "modelPicker.toggle", "Linux"),
       "Ctrl+Shift+M",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "reasoningPicker.toggle", "MacIntel"),
+      "⇧⌘L",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
@@ -850,6 +859,23 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("matches reasoningPicker.toggle outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "l", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "reasoningPicker.toggle",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(event({ key: "l", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "reasoningPicker.toggle",
+    );
+  });
+
   it("matches diff.toggle shortcut outside terminal focus", () => {
     assert.isTrue(
       isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
@@ -1061,6 +1087,23 @@ describe("resolveShortcutCommand", () => {
         context: { previewFocus: true },
       }),
       "thread.stop",
+    );
+  });
+
+  it("resolves Cmd/Ctrl+W to settle outside the terminal and close inside it", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.settle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.close",
     );
   });
 
@@ -1447,7 +1490,7 @@ describe("composer and pull request shortcuts", () => {
     ["a", "composer.mode"],
     ["x", "composer.workspace"],
     ["g", "composer.branch"],
-    ["l", "composer.previousWorktree"],
+    ["l", "reasoningPicker.toggle"],
     ["c", "thread.copyReference"],
     ["k", "pullRequest.copyNumber"],
     ["Enter", "thread.steerQueuedMessage"],

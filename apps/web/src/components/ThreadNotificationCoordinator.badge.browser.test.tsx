@@ -118,7 +118,9 @@ function toV2ThreadShell(input: typeof thread) {
         ? "completed"
         : latestTurn.state === "error" || input.session?.status === "error"
           ? "failed"
-          : "running",
+          : latestTurn.state === "waiting"
+            ? "waiting"
+            : "running",
     pendingRuntimeRequest: input.hasPendingUserInput
       ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
       : input.hasPendingApprovals

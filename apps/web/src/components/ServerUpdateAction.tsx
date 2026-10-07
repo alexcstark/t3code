@@ -26,7 +26,7 @@ import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment, updateOutdatedServer } from "~/state/server";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { manualServerUpdateCommand } from "~/versionSkew";
+import { manualServerUpdateCommand, resolveServerUpdateTargetVersion } from "~/versionSkew";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -219,6 +219,9 @@ export function ServerUpdateAction({
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
   const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
+  const serverTargetVersion = isDesktopAppUpdate
+    ? targetVersion
+    : resolveServerUpdateTargetVersion(targetVersion);
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
@@ -269,7 +272,7 @@ export function ServerUpdateAction({
       selfUpdate,
       desktopAppUpdate,
       threadContinuation,
-      targetVersion,
+      targetVersion: serverTargetVersion,
       continueThreadsAfterServerUpdate,
     });
   };

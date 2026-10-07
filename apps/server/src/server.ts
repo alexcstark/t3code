@@ -41,6 +41,8 @@ import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import { SERVICE_LAUNCHER_CONTEXT_ENV } from "./cloud/serviceProtocol.ts";
+import { acquireServerSingletonLock, releaseServerSingletonLock } from "./serverSingletonLock.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
@@ -744,6 +746,25 @@ const layerMakeServer = Layer.unwrap(
     const layerLauncher = ServiceLauncherClient.layer;
 
     yield* fixPath({ shellEnvironmentPrepared: config.shellEnvironmentPrepared });
+
+    // Guard the home before any layer (migrations included) touches it. The
+    // acquireRelease scope here closes when the server shuts down.
+    const singletonLockPath = `${config.stateDir}/server.lock`;
+    yield* Effect.acquireRelease(
+      acquireServerSingletonLock({
+        lockPath: singletonLockPath,
+        launcherManaged: SERVICE_LAUNCHER_CONTEXT_ENV in process.env,
+      }),
+      () =>
+        releaseServerSingletonLock(singletonLockPath).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to release server singleton lock", {
+              cause,
+              lockPath: singletonLockPath,
+            }),
+          ),
+        ),
+    );
 
     const layerHttpListening = Layer.effectDiscard(
       Effect.gen(function* () {

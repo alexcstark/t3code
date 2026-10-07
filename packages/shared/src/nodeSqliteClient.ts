@@ -1052,9 +1052,18 @@ const make = Effect.fn("makeWithDatabase")(function* (
         );
       },
       executeUnprepared(sql, params, rowTransform) {
-        const effect = prepare(sql).pipe(
-          Effect.flatMap((statement) => runStatement(statement, params ?? [])),
-        );
+        const effect = Effect.suspend(() => {
+          // SQLITE_FULL can roll back the transaction and all its savepoints.
+          if (
+            !db.isTransaction &&
+            (sql === "ROLLBACK" || sql.startsWith("ROLLBACK TO SAVEPOINT "))
+          ) {
+            return Effect.succeed([]);
+          }
+          return prepare(sql).pipe(
+            Effect.flatMap((statement) => runStatement(statement, params ?? [])),
+          );
+        });
         return rowTransform ? Effect.map(effect, rowTransform) : effect;
       },
       executeStream(_sql, _params) {

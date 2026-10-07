@@ -25,6 +25,8 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -181,6 +183,9 @@ function ProjectDetail({
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
+  const projectDefaultEnvironmentIds = useClientSettings(
+    (clientSettings) => clientSettings.projectDefaultEnvironmentIds,
+  );
   const threads = useThreadShells();
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
@@ -233,6 +238,17 @@ function ProjectDetail({
     return result;
   };
 
+  const [projectTitle, setProjectTitle] = useState(group.displayName);
+  const [isSavingProjectTitle, setIsSavingProjectTitle] = useState(false);
+  const projectTitleSaveInFlightRef = useRef(false);
+
+  // Keep the field in sync with changes from another client, but do not let a
+  // shell update replace the text while this field's save is in flight.
+  useEffect(() => {
+    if (projectTitleSaveInFlightRef.current) return;
+    setProjectTitle(group.displayName);
+  }, [group.displayName]);
+
   const updateAllMembers = async (
     input: Partial<{
       title: string;
@@ -282,6 +298,7 @@ function ProjectDetail({
     const title = nextTitle.trim();
     if (!title) {
       toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+      setProjectTitle(group.displayName);
       return;
     }
     if (
@@ -293,8 +310,45 @@ function ProjectDetail({
     ) {
       return;
     }
-    await updateAllMembers({ title }, "Failed to rename project");
+    // onBlur can be followed by another focus/blur cycle while the remote
+    // command is still settling. Serialize the group rename so a stale
+    // second blur cannot overwrite the first value.
+    if (projectTitleSaveInFlightRef.current) return;
+    projectTitleSaveInFlightRef.current = true;
+    setIsSavingProjectTitle(true);
+    try {
+      const result = await updateAllMembers({ title }, "Failed to rename project");
+      if (result._tag === "Success") {
+        setProjectTitle(title);
+      } else {
+        setProjectTitle(group.displayName);
+      }
+    } finally {
+      projectTitleSaveInFlightRef.current = false;
+      setIsSavingProjectTitle(false);
+    }
   };
+
+  const storedDefaultEnvironmentId = projectDefaultEnvironmentIds[group.projectKey] ?? null;
+  const defaultEnvironmentId = group.memberProjects.some(
+    (member) => member.environmentId === storedDefaultEnvironmentId,
+  )
+    ? storedDefaultEnvironmentId
+    : null;
+  const setDefaultEnvironmentId = (environmentId: string | null) => {
+    const next = { ...projectDefaultEnvironmentIds };
+    if (environmentId === null) {
+      delete next[group.projectKey];
+    } else {
+      next[group.projectKey] = environmentId as (typeof next)[string];
+    }
+    updateClientSettings({ projectDefaultEnvironmentIds: next });
+  };
+  const environmentLabel = (environmentId: string) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    group.memberProjects.find((member) => member.environmentId === environmentId)
+      ?.environmentLabel ??
+    environmentId;
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
@@ -510,10 +564,11 @@ function ProjectDetail({
                 size="sm"
                 className="w-full sm:w-64"
                 aria-label="Project name"
-                disabled={!canEditGroup}
-                defaultValue={group.displayName}
-                onChange={() => {
+                value={projectTitle}
+                disabled={!canEditGroup || isSavingProjectTitle}
+                onChange={(event) => {
                   projectNameEditedRef.current = true;
+                  setProjectTitle(event.currentTarget.value);
                 }}
                 onBlur={(event) => {
                   const wasEdited = projectNameEditedRef.current;
@@ -521,7 +576,10 @@ function ProjectDetail({
                   void renameGroup(event.currentTarget.value, wasEdited);
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }
                 }}
               />
             }
@@ -572,6 +630,44 @@ function ProjectDetail({
                   Choose file
                 </Button>
               </div>
+            }
+          />
+          <SettingsRow
+            title="Location"
+            description="Where new threads in this project run when it has checkouts on multiple connected environments."
+            resetAction={
+              storedDefaultEnvironmentId !== null ? (
+                <SettingResetButton
+                  label="project default location"
+                  onClick={() => setDefaultEnvironmentId(null)}
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={defaultEnvironmentId ?? "inherit"}
+                onValueChange={(value) => {
+                  setDefaultEnvironmentId(value === "inherit" ? null : String(value));
+                }}
+              >
+                <SelectTrigger aria-label="New-thread location">
+                  <SelectValue>
+                    {defaultEnvironmentId === null
+                      ? group.memberProjects.length > 1
+                        ? "Default (current checkout)"
+                        : environmentLabel(group.memberProjects[0]!.environmentId)
+                      : environmentLabel(defaultEnvironmentId)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="inherit">Default (current checkout)</SelectItem>
+                  {group.memberProjects.map((member) => (
+                    <SelectItem key={member.environmentId} value={member.environmentId}>
+                      {environmentLabel(member.environmentId)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             }
           />
         </SettingsSection>

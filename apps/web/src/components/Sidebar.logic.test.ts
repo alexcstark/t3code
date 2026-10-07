@@ -31,6 +31,7 @@ import {
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
+  resolveSidebarReasoningLabel,
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
@@ -61,7 +62,14 @@ import {
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  type ServerProviderModel,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -354,6 +362,66 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("resolveSidebarReasoningLabel", () => {
+  const model = {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    },
+  } satisfies ServerProviderModel;
+
+  it("uses the selected model capability label", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: model.slug,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      }),
+    ).toBe("Extra High");
+  });
+
+  it("falls back to a readable raw option when model capabilities are unavailable", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "max" }],
+        },
+      }),
+    ).toBe("Max");
+  });
+
+  it("does not treat unrelated provider options as reasoning", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+          options: [{ id: "agent", value: "build" }],
+        },
+      }),
+    ).toBeNull();
   });
 });
 

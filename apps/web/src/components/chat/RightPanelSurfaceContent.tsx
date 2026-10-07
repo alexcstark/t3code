@@ -9,7 +9,8 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ComponentProps } from "react";
+import { PlanPanel } from "../PlanPanel";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
@@ -77,6 +78,7 @@ export function RightPanelSurfaceContent(props: {
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
+  readonly plan?: ComponentProps<typeof PlanPanel>;
 }) {
   const { surface, threadRef, visible } = props;
   if (surface === null) return null;
@@ -167,6 +169,8 @@ export function RightPanelSurfaceContent(props: {
     }
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "plan":
+      return props.plan ? <PlanPanel {...props.plan} /> : null;
     case "device":
       return (
         <Suspense fallback={null}>

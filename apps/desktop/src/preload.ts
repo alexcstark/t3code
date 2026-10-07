@@ -299,6 +299,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  onPowerResume: (listener) => {
+    const wrappedListener = () => {
+      listener();
+    };
+    ipcRenderer.on(IpcChannels.POWER_RESUME_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.POWER_RESUME_CHANNEL, wrappedListener);
+    };
+  },
   appActivation: {
     setReady: (ready) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),

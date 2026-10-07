@@ -1140,6 +1140,16 @@ export interface DesktopBridge {
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
   };
+  /**
+   * OS sleep/wake. Optional: older desktop builds never emit it; the renderer
+   * then keeps probing on visibility alone.
+   */
+  onPowerResume?: (listener: () => void) => () => void;
+  /** Present when the desktop shell accepts `t3 app` activation requests. */
+  /**
+   * Web links the OS opens with T3 Code as the default browser (macOS). The
+   * renderer reports when it listens; links queue in the main process until then.
+   */
   webLinks?: {
     setReady: (ready: boolean) => Promise<void>;
     onOpen: (listener: (url: string) => void) => () => void;
