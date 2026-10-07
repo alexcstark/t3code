@@ -11,8 +11,8 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeNet from "node:net";
 
-import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
 import { remoteStateKey } from "./command.ts";
+import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
 
 const Started = Schema.Struct({
   pid: Schema.Number,
@@ -191,12 +191,13 @@ server.listen(0, "127.0.0.1", () => {
             port: null,
           };
           const stateRoot = path.join(fixture, "ssh-state");
-          const legacyStateDir = path.join(stateRoot, remoteStateKey(target));
+          const stateKey = yield* remoteStateKey(target);
+          const legacyStateDir = path.join(stateRoot, stateKey);
           yield* fs.makeDirectory(legacyStateDir, { recursive: true });
           for (const [name, contents] of Object.entries(savedState)) {
             yield* fs.writeFileString(path.join(legacyStateDir, name), contents);
           }
-          const script = buildRemoteStopScript(target);
+          const script = buildRemoteStopScript(stateKey);
           // Exercise legacy ownership in the fixture without a host CLI or home.
           const isolatedScript = script
             .replace(/^STATE_ROOT=.*$/mu, 'STATE_ROOT="$T3_TEST_STATE_ROOT"')

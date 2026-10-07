@@ -9,8 +9,15 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
-import { formatCliCommand, resolveServerInstallation } from "./invocation.ts";
+vi.mock("../../package.json", () => ({ default: { version: "0.0.31" } }));
+
+import {
+  formatCliCommand,
+  resolveRootCliCommand,
+  resolveServerInstallation,
+} from "./invocation.ts";
 
 it("formats package runner commands from their cache entry paths", () => {
   for (const [entryPath, expected] of [
@@ -98,6 +105,29 @@ it("formats serve suggestions to match the launching command", () => {
   );
 });
 
+it.effect("keeps a user-installed Node reachable when the command runs under sudo", () =>
+  Effect.gen(function* () {
+    const command = (node: string, entry: string) =>
+      resolveRootCliCommand("browser setup").pipe(
+        Effect.provideService(HostProcessExecutablePath, node),
+        Effect.provideService(HostProcessArguments, [node, entry]),
+      );
+    const npx = "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs";
+    // sudo's secure_path already has a system Node.
+    expect(yield* command("/usr/bin/node", npx)).toBe("sudo npx t3 browser setup");
+    // nvm, fnm, and tarball installs are dropped by sudo's PATH reset.
+    expect(yield* command("/home/theo/.nvm/versions/node/v24/bin/node", npx)).toBe(
+      'sudo env "PATH=$PATH" npx t3 browser setup',
+    );
+    expect(
+      yield* command(
+        "/home/theo/.local/node/bin/node",
+        "/home/theo/.local/lib/node_modules/t3/dist/bin.mjs",
+      ),
+    ).toBe('sudo env "PATH=$PATH" t3 browser setup');
+  }),
+);
+
 it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
   it.effect("recognizes runner caches for both script and executable packages", () =>
     Effect.gen(function* () {
@@ -128,7 +158,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped();
-      const prefix = path.join(root, "bunx-tools");
+      const prefix = path.join(yield* fs.realPath(root), "bunx-tools");
       const packageRoot = path.join(prefix, "lib/node_modules/t3");
       const entry = path.join(packageRoot, "dist/bin.mjs");
       const globalBin = path.join(prefix, "bin/t3");
@@ -159,7 +189,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped();
-      const prefix = path.join(root, "bunx-tools");
+      const prefix = path.join(yield* fs.realPath(root), "bunx-tools");
       const packageRoot = path.join(prefix, "lib/node_modules/t3");
       const launcher = path.join(packageRoot, "bin/t3.js");
       const entry = path.join(packageRoot, "node_modules/@t3code/t3-linux-x64/t3");

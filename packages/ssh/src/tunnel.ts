@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
@@ -14,7 +12,9 @@ import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -107,6 +107,7 @@ interface SshTunnelEntry {
 
 type SshEnvironmentEffectContext =
   | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -706,18 +707,20 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function remoteRunnerDescriptor(input?: RemoteT3RunnerOptions): {
-  readonly script: string;
-  readonly runnerId: string;
-  readonly expectedVersion: string;
-} {
+const remoteRunnerDescriptor = Effect.fn("ssh/tunnel.remoteRunnerDescriptor")(function* (
+  input?: RemoteT3RunnerOptions,
+) {
   const script = buildRemoteT3RunnerScript(input);
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto
+    .digest("SHA-256", new TextEncoder().encode(script))
+    .pipe(Effect.orDie);
   return {
     script,
-    runnerId: NodeCrypto.createHash("sha256").update(script).digest("hex"),
+    runnerId: Hex.encode(digest),
     expectedVersion: input?.archiveVersion?.trim() || "",
   };
-}
+});
 
 export function buildRemoteProbeScript(): string {
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_PROBE_SCRIPT, {
@@ -726,29 +729,28 @@ export function buildRemoteProbeScript(): string {
 }
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
-  const runner = remoteRunnerDescriptor(input);
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_LAUNCH_SCRIPT, {
     T3_LIFECYCLE_CONTROLLER_SCRIPT: REMOTE_LIFECYCLE_CONTROLLER_SCRIPT,
-    T3_RUNNER_SCRIPT: stripTrailingNewlines(runner.script),
+    T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
 
 export function buildRemotePairingScript(runner: RemoteT3RunnerOptions | undefined): string {
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_PAIRING_SCRIPT, {
-    T3_RUNNER_SCRIPT: remoteRunnerDescriptor(runner).script,
+    T3_RUNNER_SCRIPT: buildRemoteT3RunnerScript(runner),
   });
 }
 
-export function buildRemoteStopScript(target: DesktopSshEnvironmentTarget): string {
+export function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_STOP_SCRIPT, {
     T3_LIFECYCLE_CONTROLLER_SCRIPT: REMOTE_LIFECYCLE_CONTROLLER_SCRIPT,
-    T3_STATE_KEY: remoteStateKey(target),
+    T3_STATE_KEY: stateKey,
   });
 }
 
-function buildRemoteLogTailScript(target: DesktopSshEnvironmentTarget): string {
+function buildRemoteLogTailScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_LOG_TAIL_SCRIPT, {
-    T3_STATE_KEY: remoteStateKey(target),
+    T3_STATE_KEY: stateKey,
   });
 }
 
@@ -766,20 +768,21 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       readonly serverVersion: string | null;
     },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
-    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   > {
+    const stateKey = yield* remoteStateKey(target);
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
       ...sshTargetLogFields(target),
       ...sshRunnerLogFields(runner),
-      stateKey: remoteStateKey(target),
+      stateKey,
     });
-    const descriptor = remoteRunnerDescriptor(runner);
+    const descriptor = yield* remoteRunnerDescriptor(runner);
     const remoteCommandArgs = [
       "sh",
       "-l",
       "-s",
       "--",
-      remoteStateKey(target),
+      stateKey,
       descriptor.expectedVersion || REMOTE_NO_EXPECTED_VERSION,
       descriptor.runnerId,
     ];
@@ -812,7 +815,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         lifecycleDecision: probe.decision ?? null,
         remotePid: probe.remotePid ?? null,
         serverVersion: probe.serverVersion ?? null,
-        stateKey: remoteStateKey(target),
+        stateKey,
         phase: "warm",
       });
       return {
@@ -860,7 +863,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       lifecycleDecision: parsed.decision ?? null,
       remotePid: parsed.remotePid ?? null,
       serverVersion: parsed.serverVersion ?? null,
-      stateKey: remoteStateKey(target),
+      stateKey,
       phase: "cold",
     });
     return {
@@ -882,11 +885,12 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     readonly credential: string;
   },
   SshCommandError | SshInvalidTargetError | SshPairingError,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
+  const stateKey = yield* remoteStateKey(target);
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
     ...sshTargetLogFields(target),
-    stateKey: remoteStateKey(target),
+    stateKey,
   });
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
@@ -921,7 +925,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   }
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.created", {
     ...sshTargetLogFields(target),
-    stateKey: remoteStateKey(target),
+    stateKey,
   });
   return {
     credential: parsed.credential,
@@ -934,15 +938,16 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
+  const stateKey = yield* remoteStateKey(target);
   yield* Effect.logInfo("ssh.remoteServer.stop.start", {
     ...sshTargetLogFields(target),
-    stateKey: remoteStateKey(target),
+    stateKey,
   });
   yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-l", "-s"],
-    stdin: buildRemoteStopScript(target),
+    stdin: buildRemoteStopScript(stateKey),
     timeoutMs: REMOTE_STOP_TIMEOUT_MS,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
@@ -950,7 +955,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   });
   yield* Effect.logInfo("ssh.remoteServer.stop.succeeded", {
     ...sshTargetLogFields(target),
-    stateKey: remoteStateKey(target),
+    stateKey,
   });
 });
 
@@ -960,11 +965,11 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
 ): Effect.fn.Return<
   string,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemoteLogTailScript(target),
+    stdin: buildRemoteLogTailScript(yield* remoteStateKey(target)),
     timeoutMs: 10_000,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
@@ -1063,6 +1068,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   SshTunnelEntry,
   SshCommandError | SshInvalidTargetError | SshReadinessError,
   | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -1687,7 +1693,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 });
 
 /**
- * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ * @effect-expect-leaking ChildProcessSpawner | Crypto | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
  */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,

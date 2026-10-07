@@ -242,12 +242,7 @@ describe("ssh tunnel scripts", () => {
 
   it("delegates current stop policy and retains legacy stop escalation", () => {
     const launch = SshTunnel.buildRemoteLaunchScript(ARCHIVE);
-    const stop = SshTunnel.buildRemoteStopScript({
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    });
+    const stop = SshTunnel.buildRemoteStopScript("711bc738002d72fd");
 
     assert.include(launch, '"$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server');
     assert.notInclude(launch, "kill -9");
@@ -272,12 +267,7 @@ describe("ssh tunnel scripts", () => {
   });
 
   it("uses one global runner and lifecycle state for probe, launch, pairing, and stop", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
+    const stateKey = "711bc738002d72fd";
     const launch = SshTunnel.buildRemoteLaunchScript(ARCHIVE);
     const devLaunch = SshTunnel.buildRemoteLaunchScript({
       ...NODE_SCRIPT,
@@ -286,7 +276,7 @@ describe("ssh tunnel scripts", () => {
 
     const probe = SshTunnel.buildRemoteProbeScript();
     const pairing = SshTunnel.buildRemotePairingScript(ARCHIVE);
-    const stop = SshTunnel.buildRemoteStopScript(target);
+    const stop = SshTunnel.buildRemoteStopScript(stateKey);
 
     assert.include(probe, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
     assert.include(probe, 'if [ -x "$RUNNER_FILE" ]; then');
@@ -436,12 +426,7 @@ describe("ssh tunnel scripts", () => {
       const stop = NodeChildProcess.spawnSync("sh", ["-s"], {
         encoding: "utf8",
         env: environment,
-        input: SshTunnel.buildRemoteStopScript({
-          alias: "devbox",
-          hostname: "devbox.example.com",
-          username: "julius",
-          port: 2222,
-        }),
+        input: SshTunnel.buildRemoteStopScript("711bc738002d72fd"),
       });
       assert.equal(stop.status, 0, stop.stderr);
       assert.include(stop.stdout, '"stopped":true');
@@ -480,12 +465,7 @@ describe("ssh tunnel scripts", () => {
       const stop = NodeChildProcess.spawnSync("sh", ["-s"], {
         encoding: "utf8",
         env: environment,
-        input: SshTunnel.buildRemoteStopScript({
-          alias: "devbox",
-          hostname: "devbox.example.com",
-          username: "julius",
-          port: 2222,
-        }),
+        input: SshTunnel.buildRemoteStopScript("711bc738002d72fd"),
       });
       assert.equal(stop.status, 1);
       assert.include(stop.stderr, "no installed t3 CLI can manage it");
