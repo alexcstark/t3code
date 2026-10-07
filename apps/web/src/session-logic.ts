@@ -1044,6 +1044,26 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
 }
 
 /**
+ * Whether chat should present live agent work (Working timer, Thinking filler,
+ * terminal Working). `waiting` still maps to phase "running" for Stop, but the
+ * model is not generating then (checkpoint or blocked wait), so a shimmering
+ * Thinking row would lie.
+ */
+export function deriveIsWorking(input: {
+  readonly phase: SessionPhase;
+  readonly runtimeStatus: ThreadRuntimeSummary["status"] | null | undefined;
+  readonly isSendBusy: boolean;
+  readonly isConnecting: boolean;
+  readonly isCompacting: boolean;
+  readonly runlessWorkStartedAt: string | null;
+}): boolean {
+  if (input.isSendBusy || input.isConnecting || input.isCompacting) return true;
+  if (input.runlessWorkStartedAt !== null) return true;
+  if (input.phase !== "running") return false;
+  return input.runtimeStatus !== "waiting";
+}
+
+/**
  * Whether web and desktop offer Stop for the active thread. The server settles
  * a preparing or starting run on `run.interrupt` (Orchestrator.dispatchRunInterrupt),
  * so Stop must not wait for the phase to reach "running". A queued thread offers

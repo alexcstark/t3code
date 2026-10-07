@@ -1252,6 +1252,25 @@ describe("buildThreadFeed", () => {
     );
   });
 
+  it("does not show Thinking while the latest run is only waiting", () => {
+    const runId = RunId.make("run-waiting");
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    expect(
+      deriveThreadFeedPresentation(
+        [],
+        {
+          runId,
+          status: "waiting",
+          startedAt,
+          completedAt: null,
+        },
+        new Set(),
+        new Set(),
+        startedAt,
+      ),
+    ).toEqual([]);
+  });
+
   it("keeps expanded work in one group with stable row identities", () => {
     const activity = (
       id: string,

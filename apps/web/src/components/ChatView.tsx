@@ -183,6 +183,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
+  deriveIsWorking,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   selectHandoffImageResources,
   type TimelineEntriesProjection,
@@ -3551,13 +3552,16 @@ export default function ChatView(props: ChatViewProps) {
     compactRequestIsActive &&
     !compactionSettled;
   // A rewind is not agent work: the composer shows "Rewinding conversation"
-  // instead of the timeline growing a Thinking row.
-  const isWorking =
-    phase === "running" ||
-    isSendBusy ||
-    isConnecting ||
-    isCompacting ||
-    runlessWorkStartedAt !== null;
+  // instead of the timeline growing a Thinking row. `waiting` stays interruptible
+  // via derivePhase but must not paint Thinking / Working as if the model is live.
+  const isWorking = deriveIsWorking({
+    phase,
+    runtimeStatus: activeRuntime?.status,
+    isSendBusy,
+    isConnecting,
+    isCompacting,
+    runlessWorkStartedAt,
+  });
   const activeContextWindow = useMemo(
     () =>
       deriveLatestContextWindowSnapshot(
