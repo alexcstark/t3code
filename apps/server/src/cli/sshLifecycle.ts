@@ -263,7 +263,7 @@ function readDarwinProcessIdentity(pid: number): ProcessIdentity | undefined {
   }
 }
 
-export function readProcessIdentity(pid: number): ProcessIdentity | undefined {
+function readProcessIdentity(pid: number): ProcessIdentity | undefined {
   if (!Number.isInteger(pid) || pid <= 0 || !processExists(pid)) return undefined;
   const platform = HostProcessPlatform.defaultValue();
   if (platform === "linux") return readLinuxProcessIdentity(pid);

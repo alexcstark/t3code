@@ -421,6 +421,8 @@ function buildProps() {
 }
 
 it("mounts the empty timeline without throwing from layout effects", async () => {
+  vi.unstubAllGlobals();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
   const root = createRoot(container);
 
