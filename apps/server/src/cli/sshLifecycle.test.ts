@@ -71,7 +71,21 @@ const server = http.createServer((request, response) => {
     respond();
   }
 });
-server.listen(port, "127.0.0.1", () => {
+server.listen(port, "127.0.0.1", async () => {
+  if (process.env.FAKE_WAIT_FOR_RUNTIME === "1") {
+    const publish = new Promise((resolve) => process.once("message", resolve));
+    process.send?.({ type: "runtime-pending" });
+    await publish;
+  }
+  const serviceStatePath = path.join(baseDir, "runtime", "service-state.json");
+  if (process.env.FAKE_SERVICE_MANAGED === "1" && fs.existsSync(serviceStatePath)) {
+    const state = JSON.parse(fs.readFileSync(serviceStatePath, "utf8"));
+    if (state.update?.status === "pending" && state.update.targetVersion === version) {
+      fs.writeFileSync(serviceStatePath, JSON.stringify({
+        ...state, activeVersion: version, update: { ...state.update, status: "committed" }
+      }));
+    }
+  }
   fs.writeFileSync(runtimePath, JSON.stringify({
     version: 1,
     pid: process.pid,
@@ -80,6 +94,7 @@ server.listen(port, "127.0.0.1", () => {
     startedAt,
     ...(process.env.FAKE_SERVICE_MANAGED === "1" ? { serviceManaged: true } : {})
   }) + "\\n");
+  process.send?.({ type: "ready" });
 });
 const shutdown = () => server.close(() => {
   try {
@@ -167,14 +182,19 @@ function spawnFakeServer(
   runnerPath: string,
   port: number,
   serviceManaged = false,
+  waitForRuntime = false,
 ): NodeChildProcess.ChildProcess {
   return NodeChildProcess.spawn(
     runnerPath,
     ["serve", "--host", "127.0.0.1", "--port", String(port), "--base-dir", harness.baseDir],
     {
       detached: true,
-      env: { ...process.env, ...(serviceManaged ? { FAKE_SERVICE_MANAGED: "1" } : {}) },
-      stdio: "ignore",
+      env: {
+        ...process.env,
+        ...(serviceManaged ? { FAKE_SERVICE_MANAGED: "1" } : {}),
+        ...(waitForRuntime ? { FAKE_WAIT_FOR_RUNTIME: "1" } : {}),
+      },
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
     },
   );
 }
@@ -250,6 +270,157 @@ it("reuses the same legacy-managed server without signaling it", async () => {
     assert.isFalse(processExists(providerPid));
   } finally {
     await stopTestProcess(child);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
+it.each([false, true])(
+  "waits for a service update instead of launching a competing server (previous server live: %s)",
+  async (previousLive) => {
+    const harness = makeHarness();
+    const oldRunner = writeRunner(harness, "previous.sh", "1.2.3");
+    const candidate = writeRunner(harness, "candidate.sh", "1.2.3");
+    const replacementRunner = writeRunner(harness, "service.sh", "1.2.4");
+    const port = await reservePort();
+    const previous = previousLive ? spawnFakeServer(harness, oldRunner, port, true) : undefined;
+    let replacement: NodeChildProcess.ChildProcess | undefined;
+    try {
+      if (previous !== undefined) {
+        await NodeEvents.EventEmitter.once(previous, "message");
+        stopTestProvider(harness);
+      }
+      const serviceStatePath = NodePath.join(harness.baseDir, "runtime", "service-state.json");
+      NodeFS.mkdirSync(NodePath.dirname(serviceStatePath), { recursive: true });
+      NodeFS.writeFileSync(
+        serviceStatePath,
+        JSON.stringify({
+          protocol: 3,
+          activeVersion: "1.2.3",
+          update: {
+            id: "test-update",
+            fromVersion: "1.2.3",
+            targetVersion: "1.2.4",
+            dbPath: NodePath.join(harness.baseDir, "userdata", "statev2.sqlite"),
+            status: "pending",
+          },
+        }),
+      );
+      assert.deepEqual(
+        await probeSshServer({
+          stateRoot: harness.stateRoot,
+          ownerKey: OWNER_KEY,
+          expectedVersion: "1.2.3",
+          runnerId: "older-client",
+          baseDir: harness.baseDir,
+        }),
+        { status: "needs-ensure" },
+      );
+      const ensuring = ensureSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        expectedVersion: "1.2.3",
+        runnerId: "older-client",
+        candidateRunnerPath: candidate,
+        stableRunnerPath: harness.stableRunnerPath,
+        baseDir: harness.baseDir,
+        defaultPort: port,
+      });
+      // Attach the rejection handler before starting the service's replacement.
+      const result = Promise.allSettled([ensuring]);
+      replacement = spawnFakeServer(harness, replacementRunner, await reservePort(), true);
+      await NodeEvents.EventEmitter.once(replacement, "message");
+      const [outcome] = await result;
+      if (outcome.status === "rejected") throw outcome.reason;
+      const ensured = outcome.value;
+      const replacementPid = replacement.pid;
+      if (replacementPid === undefined) throw new Error("Service replacement has no PID.");
+      assert.deepInclude(ensured, {
+        decision: "reuse-external",
+        serverKind: "external",
+        remotePid: replacementPid,
+        serverVersion: "1.2.4",
+      });
+      assert.isTrue(processExists(replacementPid));
+      assert.deepEqual(
+        await stopSshServer({
+          stateRoot: harness.stateRoot,
+          ownerKey: OWNER_KEY,
+          baseDir: harness.baseDir,
+        }),
+        { stopped: false },
+      );
+    } finally {
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        baseDir: harness.baseDir,
+      });
+      if (previous !== undefined) await stopTestProcess(previous);
+      if (replacement !== undefined) await stopTestProcess(replacement);
+      stopTestProvider(harness);
+      NodeFS.rmSync(harness.root, { recursive: true, force: true });
+    }
+  },
+  20_000,
+);
+
+it("waits for a committed service child to publish its runtime", async () => {
+  const harness = makeHarness();
+  const runner = writeRunner(harness, "candidate.sh", "1.2.3");
+  const serviceRunner = writeRunner(harness, "service.sh", "1.2.4");
+  const child = spawnFakeServer(harness, serviceRunner, await reservePort(), true, true);
+  const runtimePending = NodeEvents.EventEmitter.once(child, "message");
+  try {
+    const childPid = child.pid;
+    if (childPid === undefined) throw new Error("Service replacement has no PID.");
+    const runtimeDir = NodePath.join(harness.baseDir, "runtime");
+    NodeFS.mkdirSync(runtimeDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(runtimeDir, "service-state.json"),
+      JSON.stringify({
+        protocol: 3,
+        activeVersion: "1.2.4",
+      }),
+    );
+    const stateDir = NodePath.join(harness.baseDir, "userdata");
+    NodeFS.mkdirSync(stateDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(stateDir, "server.lock"),
+      JSON.stringify({
+        version: 1,
+        pid: childPid,
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    await runtimePending;
+    const ready = NodeEvents.EventEmitter.once(child, "message");
+    const ensuring = ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "older-client",
+      candidateRunnerPath: runner,
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+    });
+    const result = Promise.allSettled([ensuring]);
+    child.send({ type: "publish-runtime" });
+    await ready;
+    const [outcome] = await result;
+    if (outcome.status === "rejected") throw outcome.reason;
+    assert.deepInclude(outcome.value, {
+      remotePid: childPid,
+      serverVersion: "1.2.4",
+      decision: "reuse-external",
+    });
+  } finally {
+    await stopSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      baseDir: harness.baseDir,
+    });
+    await stopTestProcess(child);
+    stopTestProvider(harness);
     NodeFS.rmSync(harness.root, { recursive: true, force: true });
   }
 }, 20_000);

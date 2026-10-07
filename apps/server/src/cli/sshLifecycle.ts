@@ -14,8 +14,15 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
+  SERVICE_STATE_FILE,
+  serviceStateActiveVersion,
+  serviceStateHasPendingUpdate,
+} from "../cloud/serviceProtocol.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { ServerSingletonLockState } from "../serverSingletonLock.ts";
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -80,6 +87,7 @@ const decodeRuntimeState = Schema.decodeUnknownOption(
   Schema.fromJsonString(PersistedServerRuntimeState),
 );
 const decodeEnvironmentDescriptor = Schema.decodeUnknownOption(ExecutionEnvironmentDescriptor);
+const decodeHomeOwner = Schema.decodeUnknownOption(Schema.fromJsonString(ServerSingletonLockState));
 
 export type SshLifecycleDecision =
   | "reuse-managed"
@@ -568,6 +576,60 @@ async function inspectRunningServer(
   }
 }
 
+function readServiceState(baseDir: string): string | undefined {
+  try {
+    return NodeFS.readFileSync(NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** Waits for the native service to finish handing its home to the replacement. */
+async function waitForServiceUpdate(
+  baseDir: string,
+  runtimePath: string,
+): Promise<RunningServer | undefined> {
+  const state = readServiceState(baseDir);
+  if (state === undefined || !serviceStateHasPendingUpdate(state)) {
+    const server = await inspectRunningServer(runtimePath);
+    if (server !== undefined || state === undefined) return server;
+    // Commit precedes runtime publication. The trial already owns the home
+    // in that interval, even though the durable update is no longer pending.
+    let holderPid: number | undefined;
+    try {
+      const owner = Option.getOrUndefined(
+        decodeHomeOwner(
+          NodeFS.readFileSync(NodePath.join(baseDir, "userdata", "server.lock"), "utf8"),
+        ),
+      );
+      holderPid = owner?.pid;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    const holder = holderPid === undefined ? undefined : readProcessIdentity(holderPid);
+    if (holder === undefined || holder.zombie) return undefined;
+  }
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = readServiceState(baseDir);
+    const server = await inspectRunningServer(runtimePath);
+    if (
+      current !== undefined &&
+      !serviceStateHasPendingUpdate(current) &&
+      server?.status === "live" &&
+      server.runtime.serviceManaged === true &&
+      server.descriptor.serverVersion === serviceStateActiveVersion(current)
+    ) {
+      return server;
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error(
+    "The background service has not finished its update; refusing to start a competing SSH server. Check `t3 service status` on the host.",
+  );
+}
+
 function stateMatchesRunningServer(state: SshServerState, server: RunningServer): boolean {
   return (
     state.pid === server.runtime.pid &&
@@ -993,6 +1055,10 @@ async function spawnManagedServer(input: {
 export async function probeSshServer(input: ProbeSshServerInput): Promise<SshLifecycleProbeResult> {
   validateOwnerKey(input.ownerKey);
   const paths = lifecyclePaths(input.stateRoot, input.baseDir);
+  const serviceState = readServiceState(input.baseDir);
+  if (serviceState !== undefined && serviceStateHasPendingUpdate(serviceState)) {
+    return { status: "needs-ensure" };
+  }
   const [state, server] = await Promise.all([
     Promise.resolve(readServerState(paths.statePath)),
     inspectRunningServer(paths.runtimePath),
@@ -1019,7 +1085,7 @@ export async function ensureSshServer(
   validateOwnerKey(input.ownerKey);
   const paths = lifecyclePaths(input.stateRoot, input.baseDir);
   return withLifecycleLock(paths, async () => {
-    let server = await inspectRunningServer(paths.runtimePath);
+    let server = await waitForServiceUpdate(input.baseDir, paths.runtimePath);
     let live = server?.status === "live" ? server : undefined;
     let state = readServerState(paths.statePath);
     let adoptedLegacyState: ManagedServerState | undefined;
