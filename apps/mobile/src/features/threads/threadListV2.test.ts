@@ -162,6 +162,7 @@ describe("resolveThreadListV2Status", () => {
       id: ThreadId.make("t"),
       title: "t",
       hasPendingUserInput: true,
+      pendingUserInputResponseCapability: "message",
       runtime: {
         status: "running",
         activeRunId: RunId.make("run-t"),
@@ -172,6 +173,9 @@ describe("resolveThreadListV2Status", () => {
       },
     });
     expect(resolveThreadListV2Status(thread)).toBe("working");
+    expect(
+      resolveThreadListV2Status({ ...thread, pendingUserInputResponseCapability: "live" }),
+    ).toBe("input");
     expect(
       resolveThreadListV2Status({
         ...thread,

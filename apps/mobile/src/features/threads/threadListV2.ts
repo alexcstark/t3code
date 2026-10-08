@@ -186,13 +186,15 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "pendingUserInputResponseCapability" | "runtime"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
   }
-  // Async questions stay pending while the agent works; only a blocked turn
-  // should own Input (#15258). Interruptible runtimes fall through to Working.
+  // Live questions block the provider even when its run is still running.
   if (threadHasBlockingPendingUserInput(thread)) {
     return "input";
   }
