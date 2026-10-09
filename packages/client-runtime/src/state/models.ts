@@ -65,26 +65,6 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
-/**
- * A live request needs an answer even while its run remains running. Message-mode
- * questions let the agent continue, but need attention once it stops. Older shell
- * summaries omit the response capability, so their runtime remains the fallback.
- */
-export function threadHasBlockingPendingUserInput(thread: {
-  readonly hasPendingUserInput: boolean;
-  readonly pendingUserInputResponseCapability?: EnvironmentThreadShell["pendingUserInputResponseCapability"];
-  readonly runtime: Pick<ThreadRuntimeSummary, "status"> | null | undefined;
-}): boolean {
-  if (!thread.hasPendingUserInput) return false;
-  if (thread.pendingUserInputResponseCapability === "live") {
-    return true;
-  }
-  const status = thread.runtime?.status;
-  return (
-    status !== "preparing" && status !== "queued" && status !== "starting" && status !== "running"
-  );
-}
-
 /** Archiving may discard queued work, but it must not detach a provider that
  * is preparing, starting, or running a turn. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
@@ -127,9 +107,6 @@ export interface EnvironmentThreadShell {
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
-  readonly pendingUserInputResponseCapability?: NonNullable<
-    OrchestrationV2ThreadShell["pendingRuntimeRequest"]
-  >["responseCapabilityType"];
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
@@ -280,10 +257,6 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
-    pendingUserInputResponseCapability:
-      thread.pendingRuntimeRequest?.kind === "user_input"
-        ? thread.pendingRuntimeRequest.responseCapabilityType
-        : undefined,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],

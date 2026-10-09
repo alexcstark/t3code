@@ -9,10 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import {
-  resolveThreadProviderStack,
-  threadHasBlockingPendingUserInput,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   createInboxReturnTracker,
@@ -186,16 +183,13 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<
-    EnvironmentThreadShell,
-    "hasPendingApprovals" | "hasPendingUserInput" | "pendingUserInputResponseCapability" | "runtime"
-  >,
+  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
   }
-  // Live questions block the provider even when its run is still running.
-  if (threadHasBlockingPendingUserInput(thread)) {
+  // An unanswered question outranks Working, even when the agent continues.
+  if (thread.hasPendingUserInput) {
     return "input";
   }
   if (

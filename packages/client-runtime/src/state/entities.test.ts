@@ -24,7 +24,6 @@ import {
   reconcileThreadShellRuntimeFromDetail,
   resolveThreadProviderStack,
   resolveThreadWorkingStartedAt,
-  threadHasBlockingPendingUserInput,
 } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
@@ -312,32 +311,6 @@ describe("V2 client presentation", () => {
       status: "running",
       activeRunId,
     });
-  });
-
-  it("treats async pending user input as non-blocking while the run is interruptible", () => {
-    const running = {
-      status: "running" as const,
-      activeRunId: RunId.make("run-1"),
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      providerName: "Codex",
-      lastError: null,
-      updatedAt: "2026-06-20T01:00:00.000Z",
-    };
-    expect(threadHasBlockingPendingUserInput({ hasPendingUserInput: true, runtime: running })).toBe(
-      false,
-    );
-    expect(
-      threadHasBlockingPendingUserInput({
-        hasPendingUserInput: true,
-        runtime: { ...running, status: "waiting" },
-      }),
-    ).toBe(true);
-    expect(threadHasBlockingPendingUserInput({ hasPendingUserInput: true, runtime: null })).toBe(
-      true,
-    );
-    expect(
-      threadHasBlockingPendingUserInput({ hasPendingUserInput: false, runtime: running }),
-    ).toBe(false);
   });
 
   it("promotes an idle shell to Working when detail still has a live run", () => {

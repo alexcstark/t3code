@@ -1,7 +1,4 @@
-import {
-  resolveThreadWorkingStartedAt,
-  threadHasBlockingPendingUserInput,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -698,7 +695,6 @@ type ThreadStatusInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
-  | "pendingUserInputResponseCapability"
   | "interactionMode"
   | "latestRun"
   | "runtime"
@@ -1024,15 +1020,15 @@ export function shouldRecedeSidebarThread(input: {
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "pendingUserInputResponseCapability" | "runtime"
+  "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
     return "approval";
   }
-  // Live questions block the provider even when its run is still running.
-  if (threadHasBlockingPendingUserInput(thread)) {
+  // An unanswered question outranks Working, even when the agent continues.
+  if (thread.hasPendingUserInput) {
     return "input";
   }
   if (
@@ -1223,8 +1219,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  // Message-mode questions keep Working while the agent can continue.
-  if (threadHasBlockingPendingUserInput(thread)) {
+  if (thread.hasPendingUserInput) {
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",

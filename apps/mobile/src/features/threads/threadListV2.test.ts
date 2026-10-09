@@ -157,12 +157,11 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(thread)).toBe("approval");
   });
 
-  it("keeps Working when an async question is pending during a live run (#15258)", () => {
+  it("shows Input when a question is pending during a live run", () => {
     const thread = makeThread({
       id: ThreadId.make("t"),
       title: "t",
       hasPendingUserInput: true,
-      pendingUserInputResponseCapability: "message",
       runtime: {
         status: "running",
         activeRunId: RunId.make("run-t"),
@@ -172,10 +171,7 @@ describe("resolveThreadListV2Status", () => {
         updatedAt: NOW,
       },
     });
-    expect(resolveThreadListV2Status(thread)).toBe("working");
-    expect(
-      resolveThreadListV2Status({ ...thread, pendingUserInputResponseCapability: "live" }),
-    ).toBe("input");
+    expect(resolveThreadListV2Status(thread)).toBe("input");
     expect(
       resolveThreadListV2Status({
         ...thread,
