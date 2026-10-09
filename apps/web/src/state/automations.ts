@@ -23,7 +23,7 @@ export interface EnvironmentAutomations {
   readonly tasks: readonly ScheduledTask[] | null;
 }
 
-export const environmentAutomationsAtom = Atom.make((get): readonly EnvironmentAutomations[] => {
+const environmentAutomationsAtom = Atom.make((get): readonly EnvironmentAutomations[] => {
   const presentations = get(environmentPresentations.presentationsAtom);
   const environments: EnvironmentAutomations[] = [];
   for (const [environmentId, presentation] of presentations) {
