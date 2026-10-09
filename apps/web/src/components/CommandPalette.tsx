@@ -553,6 +553,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         dispatch({ _tag: "OpenChangeTheme" });
         return;
       }
+      if (command === "project.switch") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        dispatch({ _tag: "OpenSwitchProject" });
+        return;
+      }
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -1876,6 +1883,22 @@ function OpenCommandPaletteDialog(props: {
     });
   }, [clearOpenIntent, browseNavigation, openIntent, projectThreadItems, pushPaletteView]);
 
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "switch-project" || projectSearchItems.length === 0) {
+      return;
+    }
+    clearOpenIntent();
+    browseNavigation.invalidate();
+    setAddProjectCloneFlow(null);
+    setNewProjectFlow(null);
+    setViewStack([]);
+    setQuery("");
+    pushPaletteView({
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
+    });
+  }, [clearOpenIntent, browseNavigation, openIntent, projectSearchItems, pushPaletteView]);
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1914,6 +1937,17 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    });
+
+    actionItems.push({
+      kind: "submenu",
+      value: "action:switch-project",
+      searchTerms: ["switch project", "open project", "go to project", "jump"],
+      title: "Switch project...",
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      shortcutCommand: "project.switch",
+      groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
     });
   }
 
