@@ -562,6 +562,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         dispatch({ _tag: "OpenChangeTheme" });
         return;
       }
+      if (command === "project.switch") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        dispatch({ _tag: "OpenSwitchProject" });
+        return;
+      }
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -1622,6 +1629,17 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
+
+    actionItems.push({
+      kind: "submenu",
+      value: "action:switch-project",
+      searchTerms: ["switch project", "open project", "go to project", "jump"],
+      title: "Switch project...",
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      shortcutCommand: "project.switch",
+      groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
+    });
   }
 
   if (scratchTargetEnvironmentId !== null) {
@@ -1948,6 +1966,7 @@ function OpenCommandPaletteDialog(props: {
   // The parent pushes an intent into this mounted dialog; applying it clears the
   // parent's intent and may navigate, so it runs after commit but before paint.
   const projectThreadItemCount = projectThreadItems.length;
+  const projectSearchItemCount = projectSearchItems.length;
   const applyOpenIntent = useEffectEvent((intent: CommandPaletteOpenIntent) => {
     clearOpenIntent();
     browseNavigation.invalidate();
@@ -1970,6 +1989,12 @@ function OpenCommandPaletteDialog(props: {
           groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
         });
         return;
+      case "switch-project":
+        pushPaletteView({
+          addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+          groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
+        });
+        return;
       case "change-theme":
         pushPaletteView({
           addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
@@ -1982,9 +2007,10 @@ function OpenCommandPaletteDialog(props: {
     if (openIntent === null) return;
     // A new-thread-in intent waits until the project items exist.
     if (openIntent.kind === "new-thread-in" && projectThreadItemCount === 0) return;
+    if (openIntent.kind === "switch-project" && projectSearchItemCount === 0) return;
     // oxlint-disable-next-line react/set-state-in-effect -- applying the intent dispatches to the parent reducer and can navigate, neither of which may run during render.
     applyOpenIntent(openIntent);
-  }, [openIntent, projectThreadItemCount]);
+  }, [openIntent, projectThreadItemCount, projectSearchItemCount]);
 
   actionItems.push({
     kind: "action",
