@@ -382,6 +382,149 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 });
 
 describe("orchestration v2 provider switching", () => {
+  it.live.each(["completed", "failed", "with-attachment"] as const)(
+    "budgets retry history after %s compaction without context telemetry",
+    (compaction) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`retry-compaction-${compaction}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const failStartOnce = yield* Ref.make(false);
+          const registry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              failStartOnce,
+              getModelContextWindow: () => 32_000,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const dispatch = (ordinal: number, text: string, attachments: ChatAttachment[] = []) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`retry-compaction:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`retry-compaction:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments,
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+            const wait = (ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+                Effect.andThen(worker.drain()),
+              );
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("retry-compaction:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Retry after compaction",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* dispatch(1, "Original large conversation " + "x".repeat(30_000));
+            yield* wait(1);
+            yield* Ref.set(failStartOnce, true);
+            yield* dispatch(2, "Preserve this missed request " + "m".repeat(10_000));
+            yield* wait(2);
+            if (compaction === "failed") yield* Ref.set(failStartOnce, true);
+            yield* dispatch(
+              3,
+              " /COMPACT ",
+              compaction === "with-attachment"
+                ? [
+                    {
+                      type: "image",
+                      id: "screenshot",
+                      name: "screenshot.png",
+                      mimeType: "image/png",
+                      sizeBytes: 100_000,
+                    },
+                  ]
+                : [],
+            );
+            yield* wait(3);
+            yield* dispatch(4, "Continue after compaction");
+            yield* wait(4);
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(projection.runs[0]?.status, "completed");
+            assert.equal(projection.runs[1]?.status, "failed");
+            assert.equal(
+              projection.runs[2]?.status,
+              compaction === "completed" ? "completed" : "failed",
+            );
+            assert.equal(
+              projection.runs[3]?.status,
+              compaction === "completed" ? "completed" : "failed",
+            );
+            if (compaction === "completed") {
+              const text = (yield* Ref.get(capturedTurns)).at(-1)?.text;
+              assert.isDefined(text);
+              assert.include(text, "Preserve this missed request");
+              assert.include(text, "Continue after compaction");
+              assert.notInclude(text, "x".repeat(30_000));
+              assert.equal(projection.contextHandoffs.at(-1)?.delivery?.status, "inline");
+              // The recovered request now occupies native context, even though
+              // its original run predates compaction. Later retries must budget it.
+              yield* Ref.set(failStartOnce, true);
+              yield* dispatch(5, "Another missed request " + "p".repeat(8_000));
+              yield* wait(5);
+              yield* dispatch(6, "Continue with bounded history");
+              yield* wait(6);
+              const retried = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(retried.runs.at(-1)?.status, "completed");
+              const latestText = (yield* Ref.get(capturedTurns)).at(-1)?.text;
+              assert.isDefined(latestText);
+              assert.include(latestText, "Continue with bounded history");
+              assert.notInclude(latestText, "p".repeat(8_000));
+              const omittedRequest = retried.turnItems.find(
+                (item) => item.type === "user_message" && item.text.includes("p".repeat(8_000)),
+              );
+              assert.isDefined(omittedRequest);
+              assert.include(
+                retried.contextHandoffs.at(-1)?.delivery?.omittedItemIds ?? [],
+                omittedRequest.id,
+              );
+            }
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: `retry-compaction-${compaction}`,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                registry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
   it.live.each([
     "compact-native",
     "compact-fallback",

@@ -956,18 +956,19 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      const compactionMessageIds = new Set(
+        projection.messages
+          .filter(
+            (candidate) =>
+              candidate.attachments.length === 0 &&
+              candidate.text.trim().toLowerCase() === "/compact",
+          )
+          .map((candidate) => candidate.id),
+      );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: new Set(
-          projection.messages
-            .filter(
-              (candidate) =>
-                candidate.attachments.length === 0 &&
-                candidate.text.trim().toLowerCase() === "/compact",
-            )
-            .map((candidate) => candidate.id),
-        ),
+        compactionMessageIds,
         run,
         attempts: projection.attempts,
       });
@@ -1027,14 +1028,41 @@ export const layer: Layer.Layer<
           )
           .map((source) => source.id),
       );
+      const nativeCompaction = projection.runs.findLast(
+        (source) =>
+          source.status === "completed" &&
+          nativeInputRunIds.has(source.id) &&
+          compactionMessageIds.has(source.userMessageId),
+      );
+      const compactedRunIds = new Set(
+        projection.runs
+          .filter((source) => source.ordinal < (nativeCompaction?.ordinal ?? 0))
+          .map((source) => source.id),
+      );
+      const deliveredAfterCompactionItemIds = new Set(
+        settledHandoffs
+          .filter(
+            (handoff) =>
+              nativeCompaction?.completedAt !== null &&
+              nativeCompaction?.completedAt !== undefined &&
+              DateTime.toEpochMillis(handoff.updatedAt) >=
+                DateTime.toEpochMillis(nativeCompaction.completedAt),
+          )
+          .flatMap((handoff) => handoff.delivery?.itemIds ?? []),
+      );
       // Use saved text and actual native attachments when telemetry is absent.
       // Legacy attempts lack native identity; exclude their explicitly recovered
       // history, whose attachments were not replayed into the replacement thread.
+      // Successful native compaction discards earlier runs. Count its summary and
+      // subsequent activity, including older items delivered after compaction.
       const nativeContextEstimate = Effect.gen(function* () {
         return sameNativeThread
           ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
               if (
                 item.runId === run.id ||
+                (nativeCompaction !== undefined &&
+                  (item.runId === null || compactedRunIds.has(item.runId)) &&
+                  !deliveredAfterCompactionItemIds.has(item.id)) ||
                 (item.runId !== null &&
                   missedRunIds.has(item.runId) &&
                   !deliveredItemIds.has(item.id)) ||

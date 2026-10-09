@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ListRunsOptions } from "@cursor/sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ const cursorSdkMock = vi.hoisted(() => {
   const runOperations: Array<string> = [];
   let agentCloseFailure: unknown;
   let staleRunActive = false;
+  let completedRuns = 0;
   const runWait = vi.fn(async () => ({
     id: "run-cursor-agent-sdk-test",
     requestId: "request-cursor-agent-sdk-test",
@@ -61,10 +63,20 @@ const cursorSdkMock = vi.hoisted(() => {
     send,
     close: agentClose,
   }));
-  const listRuns = vi.fn(async () => {
+  const listRuns = vi.fn(async (_agentId: string, options: ListRunsOptions) => {
     runOperations.push("agent.listRuns");
+    const runs = [
+      ...Array.from({ length: completedRuns }, (_, index) => ({
+        id: `run-completed-${index}`,
+        status: "finished",
+      })),
+      ...(staleRunActive ? [{ id: "run-stale", status: "running" }] : []),
+    ];
+    const offset = Number(options.cursor ?? 0);
+    const nextOffset = offset + (options.limit ?? 50);
     return {
-      items: staleRunActive ? [{ id: "run-stale", status: "running" }] : [],
+      items: runs.slice(offset, nextOffset),
+      ...(nextOffset < runs.length ? { nextCursor: String(nextOffset) } : {}),
     };
   });
   const cancelRun = vi.fn(async () => {
@@ -88,6 +100,10 @@ const cursorSdkMock = vi.hoisted(() => {
     },
     setStaleRunActive: (active: boolean) => {
       staleRunActive = active;
+      completedRuns = 0;
+    },
+    setCompletedRuns: (count: number) => {
+      completedRuns = count;
     },
   };
 });
@@ -150,45 +166,48 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("retries a resumed send after cancelling its abandoned local run", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.runOperations.length = 0;
-      cursorSdkMock.listRuns.mockClear();
-      cursorSdkMock.cancelRun.mockClear();
-      cursorSdkMock.setStaleRunActive(true);
+  it.effect.each([0, 120])(
+    "retries a resumed send after %s completed runs and an abandoned local run",
+    (completedRuns) =>
+      Effect.gen(function* () {
+        cursorSdkMock.runOperations.length = 0;
+        cursorSdkMock.listRuns.mockClear();
+        cursorSdkMock.cancelRun.mockClear();
+        cursorSdkMock.setStaleRunActive(true);
+        cursorSdkMock.setCompletedRuns(completedRuns);
 
-      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const session = yield* runner.open({
-        operation: "resume",
-        agentId: "agent-cursor-agent-sdk-test",
-        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
-        threadId: ThreadId.make("thread-cursor-agent-sdk-stale-run-test"),
-        providerSessionId: ProviderSessionId.make(
-          "provider-session-cursor-agent-sdk-stale-run-test",
-        ),
-      });
-      assert.deepStrictEqual(cursorSdkMock.runOperations, []);
-      const run = yield* session.send({ message: "continue" });
-      yield* run.wait;
+        const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+        const session = yield* runner.open({
+          operation: "resume",
+          agentId: "agent-cursor-agent-sdk-test",
+          options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+          threadId: ThreadId.make("thread-cursor-agent-sdk-stale-run-test"),
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-cursor-agent-sdk-stale-run-test",
+          ),
+        });
+        assert.deepStrictEqual(cursorSdkMock.runOperations, []);
+        const run = yield* session.send({ message: "continue" });
+        yield* run.wait;
 
-      assert.deepStrictEqual(cursorSdkMock.runOperations, [
-        "run.start",
-        "agent.listRuns",
-        "agent.cancelRun",
-        "run.start",
-      ]);
-      assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
-        "agent-cursor-agent-sdk-test",
-        { runtime: "local", cwd: process.cwd(), limit: 1 },
-      ]);
-      assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
-        "run-stale",
-        {
-          runtime: "local",
-          cwd: process.cwd(),
-        },
-      ]);
-    }).pipe(Effect.provide(layerTest)),
+        assert.deepStrictEqual(cursorSdkMock.runOperations, [
+          "run.start",
+          ...Array.from({ length: completedRuns === 0 ? 1 : 2 }, () => "agent.listRuns"),
+          "agent.cancelRun",
+          "run.start",
+        ]);
+        assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
+          "agent-cursor-agent-sdk-test",
+          { runtime: "local", cwd: process.cwd(), limit: 100 },
+        ]);
+        assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
+          "run-stale",
+          {
+            runtime: "local",
+            cwd: process.cwd(),
+          },
+        ]);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("logs agent.close before invoking the Cursor SDK", () =>
