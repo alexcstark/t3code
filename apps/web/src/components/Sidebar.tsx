@@ -163,6 +163,7 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import { useAutomatedThreadKeys } from "../state/automations";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
@@ -2436,6 +2437,7 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const automatedThreadKeys = useAutomatedThreadKeys();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2850,8 +2852,11 @@ export default function Sidebar() {
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
     // Subagent child threads live in the parent's Agents surface, not the
-    // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(presentedThreads, scopedProjectKeys);
+    // sidebar roster (v2 models them as real threads with lineage). Automated
+    // threads live on the Automations page.
+    const visible = filterSidebarV2VisibleThreads(presentedThreads, scopedProjectKeys).filter(
+      (thread) => !automatedThreadKeys.has(`${thread.environmentId}:${thread.id}`),
+    );
     inboxReturns.observe(workingShelfEnabled ? presentedThreads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2952,6 +2957,7 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
+    automatedThreadKeys,
     nowMinute,
     optimisticDrop,
     presentedThreads,

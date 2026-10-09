@@ -65,6 +65,15 @@ Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
 
+## Automated threads
+
+A task set to run in an existing thread turns that thread into a long-running
+agent: every run adds to the same conversation. These threads leave the sidebar
+thread list and appear on the **Automations** page, opened from the sidebar
+footer. Open one to watch it work or to talk to it, and pause, resume, run, or
+edit its task from the same card. Delete the task to return the thread to the
+sidebar.
+
 ## Webhook automations
 
 In **Settings → Scheduled tasks**, choose **On webhook**
