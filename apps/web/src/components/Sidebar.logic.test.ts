@@ -974,28 +974,7 @@ describe("resolveSidebarThreadStatus", () => {
     );
   });
 
-  it("keeps Working when an async question is pending during a live run (#15258)", () => {
-    expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, runtime })).toBe(
-      "working",
-    );
-    expect(
-      resolveSidebarThreadStatus({
-        ...idle,
-        hasPendingUserInput: true,
-        runtime: { ...runtime, status: "starting" as const },
-      }),
-    ).toBe("working");
-    expect(
-      resolveSidebarThreadStatus({
-        ...idle,
-        hasPendingApprovals: true,
-        hasPendingUserInput: true,
-        runtime,
-      }),
-    ).toBe("approval");
-  });
-
-  it("shows Input for a blocking question while the turn remains running", () => {
+  it("shows Input for a pending question while the turn remains running", () => {
     const fixture = makeThreadFixture();
     const shell = {
       ...fixture.source,
@@ -1007,7 +986,6 @@ describe("resolveSidebarThreadStatus", () => {
         id: RuntimeRequestId.make("question:controls"),
         kind: "user_input" as const,
         createdAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
-        responseCapabilityType: "live" as const,
       },
     };
     const thread = presentThreadShell(localEnvironmentId, shell);
@@ -1016,14 +994,6 @@ describe("resolveSidebarThreadStatus", () => {
     expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: "Awaiting Input" });
     expect(isSidebarThreadWorking(thread)).toBe(false);
     expect(resolveSidebarThreadStatus({ ...thread, hasPendingApprovals: true })).toBe("approval");
-
-    const asyncThread = presentThreadShell(localEnvironmentId, {
-      ...shell,
-      pendingRuntimeRequest: { ...shell.pendingRuntimeRequest, responseCapabilityType: "message" },
-    });
-    expect(resolveSidebarThreadStatus(asyncThread)).toBe("working");
-    expect(resolveThreadStatusPill({ thread: asyncThread })).toMatchObject({ label: "Working" });
-    expect(isSidebarThreadWorking(asyncThread)).toBe(true);
 
     const answeredThread = presentThreadShell(localEnvironmentId, {
       ...shell,
@@ -1377,7 +1347,7 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Pending Approval", pulse: false });
   });
 
-  it("keeps Working when an async question is pending during a live run (#15258)", () => {
+  it("shows awaiting input when a question is pending during a live run", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -1385,7 +1355,7 @@ describe("resolveThreadStatusPill", () => {
           hasPendingUserInput: true,
         },
       }),
-    ).toMatchObject({ label: "Working", pulse: true });
+    ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
 
   it("shows awaiting input when a pending question blocks a waiting turn", () => {
@@ -2291,8 +2261,7 @@ describe("Working shelf (beta)", () => {
     expect(isSidebarThreadWorking(waiting)).toBe(true);
     expect(isSidebarThreadWorking(idle)).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingApprovals: true })).toBe(false);
-    // Async questions leave the agent working (#15258); blocking ones do not.
-    expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(true);
+    expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(false);
     expect(isSidebarThreadWorking({ ...waiting, hasPendingUserInput: true })).toBe(false);
     expect(
       isSidebarThreadWorking({
