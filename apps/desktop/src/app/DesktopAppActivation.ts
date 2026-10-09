@@ -394,8 +394,8 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(Effect.sync(() => broker.close())),
         ),
     ).pipe(Effect.asVoid),
-    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(
-      function* (ready, webContents) {
+    setRendererReady: (ready, webContents) =>
+      Effect.sync(() => {
         if (!ready || webContents.isDestroyed()) {
           removeRenderer(webContents);
           return;
@@ -415,8 +415,7 @@ export const make = Effect.gen(function* () {
           });
         }
         registerReadyRenderers();
-      },
-    ),
+      }).pipe(Effect.withSpan("DesktopAppActivation.setRendererReady")),
     complete: (response) => Effect.sync(() => broker.complete(response)),
   });
 });
