@@ -302,7 +302,10 @@ export class DesktopAppActivation extends Context.Service<
   DesktopAppActivation,
   {
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
-    readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
+    readonly setRendererReady: (
+      ready: boolean,
+      webContents: Electron.WebContents,
+    ) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
@@ -316,7 +319,9 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
   const userId = yield* HostProcessUserId;
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const context = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const address = resolveDesktopAppControlAddress({
     stateDir: path.resolve(desktopEnvironment.stateDir),
     platform: desktopEnvironment.platform,
@@ -324,8 +329,9 @@ export const make = Effect.gen(function* () {
     userId,
     joinPath: path.join,
   });
-  let registeredWebContents: Electron.WebContents | null = null;
-  let detachRendererListeners: (() => void) | null = null;
+  // Every window's renderer can open projects; requests go to the main
+  // (most recently focused) window when its renderer is ready.
+  const readyRenderers = new Map<Electron.WebContents, () => void>();
 
   const broker = new DesktopAppActivationBroker({
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
@@ -338,11 +344,30 @@ export const make = Effect.gen(function* () {
     },
   });
 
-  const clearRegisteredRenderer = () => {
-    detachRendererListeners?.();
-    detachRendererListeners = null;
-    registeredWebContents = null;
+  const pickRenderer = (): Electron.WebContents | null => {
+    const main = runSync(electronWindow.main);
+    if (Option.isSome(main) && readyRenderers.has(main.value.webContents)) {
+      return main.value.webContents;
+    }
+    return readyRenderers.keys().next().value ?? null;
+  };
+
+  const registerReadyRenderers = () => {
+    if (readyRenderers.size === 0) return;
+    broker.registerRenderer((request) => {
+      const webContents = pickRenderer();
+      if (webContents === null) throw new Error("No desktop renderer is ready.");
+      webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
+    });
+  };
+
+  const removeRenderer = (webContents: Electron.WebContents) => {
+    const detach = readyRenderers.get(webContents);
+    if (detach === undefined) return;
+    detach();
+    readyRenderers.delete(webContents);
     broker.clearRenderer();
+    registerReadyRenderers();
   };
 
   return DesktopAppActivation.of({
@@ -369,37 +394,29 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(Effect.sync(() => broker.close())),
         ),
     ).pipe(Effect.asVoid),
-    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(function* (ready) {
-      if (!ready) {
-        clearRegisteredRenderer();
-        return;
-      }
-      const main = yield* electronWindow.main;
-      if (Option.isNone(main)) return;
-      const webContents = main.value.webContents;
-      if (webContents.isDestroyed()) return;
-
-      if (registeredWebContents !== webContents) {
-        clearRegisteredRenderer();
-        registeredWebContents = webContents;
-        const onUnavailable = () => clearRegisteredRenderer();
-        const onNavigation = (
-          event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-        ) => {
-          if (event.isMainFrame && !event.isSameDocument) clearRegisteredRenderer();
-        };
-        webContents.on("did-start-navigation", onNavigation);
-        webContents.once("destroyed", onUnavailable);
-        detachRendererListeners = () => {
-          webContents.removeListener("did-start-navigation", onNavigation);
-          webContents.removeListener("destroyed", onUnavailable);
-        };
-      }
-
-      broker.registerRenderer((request) => {
-        webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
-      });
-    }),
+    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(
+      function* (ready, webContents) {
+        if (!ready || webContents.isDestroyed()) {
+          removeRenderer(webContents);
+          return;
+        }
+        if (!readyRenderers.has(webContents)) {
+          const onUnavailable = () => removeRenderer(webContents);
+          const onNavigation = (
+            event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+          ) => {
+            if (event.isMainFrame && !event.isSameDocument) removeRenderer(webContents);
+          };
+          webContents.on("did-start-navigation", onNavigation);
+          webContents.once("destroyed", onUnavailable);
+          readyRenderers.set(webContents, () => {
+            webContents.removeListener("did-start-navigation", onNavigation);
+            webContents.removeListener("destroyed", onUnavailable);
+          });
+        }
+        registerReadyRenderers();
+      },
+    ),
     complete: (response) => Effect.sync(() => broker.complete(response)),
   });
 });

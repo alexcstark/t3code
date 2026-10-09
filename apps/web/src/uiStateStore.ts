@@ -438,8 +438,29 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
+// A desktop window opened for one project carries `?projectScope=<key>`. It
+// wins over the persisted scope, then leaves the URL so a reload keeps
+// whatever the user picks afterwards.
+function consumeWindowProjectScope(): string | null {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  const projectScopeKey = sanitizeOptionalKey(url.searchParams.get("projectScope"));
+  if (projectScopeKey === null) return null;
+  url.searchParams.delete("projectScope");
+  window.history.replaceState(window.history.state, "", url);
+  return projectScopeKey;
+}
+
+function readInitialState(): UiState {
+  const state = readPersistedState();
+  const windowProjectScopeKey = consumeWindowProjectScope();
+  return windowProjectScopeKey === null
+    ? state
+    : setSidebarProjectScopeKey(state, windowProjectScopeKey);
+}
+
 export const useUiStateStore = create<UiStateStore>((set) => ({
-  ...readPersistedState(),
+  ...readInitialState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

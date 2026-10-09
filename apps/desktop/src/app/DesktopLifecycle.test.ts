@@ -88,6 +88,7 @@ function layerDesktopWindow(
     revealOrCreateMain: Effect.die("unexpected window creation"),
     activate: input.activate ?? Effect.void,
     createMainIfBackendReady: Effect.void,
+    openWindow: () => Effect.die("unexpected window open"),
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
