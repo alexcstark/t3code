@@ -174,6 +174,7 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { useAutomatedThreadKeys } from "../state/automations";
 import { environmentProjects } from "../state/projects";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -464,6 +465,7 @@ function useSidebarThreads(input: {
   const { projectScopeKey, scopedProjectKeys, serverConfigs, optimisticDrop, routeThreadRef } =
     input;
   const shellThreads = useThreadShells();
+  const automatedThreadKeys = useAutomatedThreadKeys();
   const routeThreadDetail = useThreadProjection(routeThreadRef);
   const routeDetailRuntime =
     routeThreadDetail === null ? null : deriveThreadRuntime(routeThreadDetail.projection);
@@ -525,7 +527,9 @@ function useSidebarThreads(input: {
     settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
 
   const partition = partitionSidebarThreads({
-    threads,
+    threads: threads.filter(
+      (thread) => !automatedThreadKeys.has(`${thread.environmentId}:${thread.id}`),
+    ),
     scopedProjectKeys,
     serverConfigs,
     optimisticDrop,
