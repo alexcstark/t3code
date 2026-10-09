@@ -1013,6 +1013,25 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("approval");
   });
 
+  it("shows Input for an async question while the provider keeps running", () => {
+    const fixture = makeThreadFixture();
+    const thread = presentThreadShell(localEnvironmentId, {
+      ...fixture.source,
+      status: "running",
+      latestRunId: RunId.make("run:async-input"),
+      activeRunId: RunId.make("run:async-input"),
+      activityRunStatus: "running",
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question:async-input"),
+        kind: "user_input",
+        createdAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
+        blocking: false,
+      },
+    });
+    expect(resolveSidebarThreadStatus(thread)).toBe("input");
+    expect(isSidebarThreadWorking(thread)).toBe(false);
+  });
+
   it("prioritizes awaiting input over a running runtime, below approval", () => {
     expect(
       resolveSidebarThreadStatus({
@@ -2314,6 +2333,7 @@ describe("Working shelf (beta)", () => {
     expect(isSidebarThreadWorking(idle)).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingApprovals: true })).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(false);
+    expect(isSidebarThreadWorking({ ...waiting, hasPendingUserInput: true })).toBe(false);
     expect(
       isSidebarThreadWorking({
         ...waiting,

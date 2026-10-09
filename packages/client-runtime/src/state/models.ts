@@ -68,23 +68,6 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
-/**
- * Async `user_input` questions (message-mode) stay pending while the agent keeps
- * working. List badges must not treat those as blocked Input (#15258); only a
- * turn that is no longer interruptibly live should own that label. Approvals
- * still outrank everything.
- */
-export function threadHasBlockingPendingUserInput(thread: {
-  readonly hasPendingUserInput: boolean;
-  readonly runtime: Pick<ThreadRuntimeSummary, "status"> | null | undefined;
-}): boolean {
-  if (!thread.hasPendingUserInput) return false;
-  const status = thread.runtime?.status;
-  return (
-    status !== "preparing" && status !== "queued" && status !== "starting" && status !== "running"
-  );
-}
-
 /** Archiving may discard queued work, but it must not detach a provider that
  * is preparing, starting, or running a turn. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
@@ -277,9 +260,7 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
-    hasPendingUserInput:
-      thread.pendingRuntimeRequest?.kind === "user_input" &&
-      (thread.pendingRuntimeRequest.blocking !== false || !runtimeIsWorking),
+    hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     pendingSubagentRequest,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
