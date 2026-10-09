@@ -189,6 +189,14 @@ and copying a thread reference. A copied reference uses the thread's pull reques
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
 for custom configuration.
 
+## Work in separate windows
+
+On desktop, each project can have its own window. Open the project filter at the
+top of the sidebar and click the window icon next to a project. The new window
+shows only that project's threads, and you can change its filter at any time.
+**File → New Window** (`Cmd/Ctrl+Alt+Shift+N`) opens a window showing all
+projects.
+
 ## Inspect agent work
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation
