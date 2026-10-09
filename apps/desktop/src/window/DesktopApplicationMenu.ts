@@ -64,6 +64,11 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
+const openNewWindow = Effect.gen(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.openWindow({});
+}).pipe(Effect.withSpan("desktop.menu.openNewWindow"));
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -155,6 +160,9 @@ export const make = Effect.gen(function* () {
       if (event.triggeredByAccelerator === true) return;
       runMenuEffect("paste-as-text", dispatchMenuAction("paste-as-text"));
     };
+    const newWindowClick = () => {
+      runMenuEffect("new-window", openNewWindow);
+    };
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
       runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
     };
@@ -194,6 +202,13 @@ export const make = Effect.gen(function* () {
       {
         label: "File",
         submenu: [
+          {
+            label: "New Window",
+            // The shorter Shift and Alt chords are new-thread shortcuts.
+            accelerator: "CmdOrCtrl+Alt+Shift+N",
+            click: newWindowClick,
+          },
+          { type: "separator" },
           ...(environment.platform === "darwin"
             ? []
             : [

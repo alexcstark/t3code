@@ -338,7 +338,7 @@ function layerTest(input: {
         }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
-          setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
+          addHostWindow: input.setPreviewMainWindow ?? (() => Effect.void),
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
@@ -448,7 +448,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
-            setMainWindow: () => Effect.void,
+            addHostWindow: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
@@ -615,6 +615,20 @@ describe("DesktopWindow", () => {
       DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, [displays[0]!]),
       DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
     );
+  });
+
+  it("cascades an additional window over the current one while it stays on screen", () => {
+    const display = { x: 0, y: 0, width: 1920, height: 1080 };
+    const current = { x: 100, y: 80, width: 1200, height: 800 };
+
+    assert.deepEqual(DesktopWindow.resolveCascadedWindowBounds(current, [display]), {
+      x: 128,
+      y: 108,
+      width: 1200,
+      height: 800,
+    });
+    const atEdge = { x: 720, y: 280, width: 1200, height: 800 };
+    assert.deepEqual(DesktopWindow.resolveCascadedWindowBounds(atEdge, [display]), atEdge);
   });
 
   it("recognizes only same-origin renderer navigations", () => {

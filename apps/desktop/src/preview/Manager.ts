@@ -565,7 +565,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const annotationSendEnabled = new Map<string, boolean>();
-  const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
+  // Every app window can host preview webviews.
+  const hostWindows = new Set<BrowserWindow>();
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
@@ -596,7 +597,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
-  let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -693,9 +693,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
   const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
-    const mainWindow = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(mainWindow)) return;
-    yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
+    for (const window of hostWindows) {
+      yield* setWindowBackgroundThrottling(window, enabled);
+    }
   });
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
@@ -1655,7 +1655,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* install().pipe(Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)));
   });
 
-  const setMainWindow = Effect.fn("PreviewManager.setMainWindow")(function* (
+  const addHostWindow = Effect.fn("PreviewManager.addHostWindow")(function* (
     window: BrowserWindow,
   ) {
     if (mainWindowCleanupFiber) {
@@ -1669,12 +1669,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (sessions.size > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
-        yield* Ref.set(mainWindowRef, Option.some(window));
-        currentMainWindow = window;
+        hostWindows.add(window);
         frameCaptureWindowOpen = true;
         window.once("closed", () => {
-          if (currentMainWindow !== window) return;
-          currentMainWindow = undefined;
+          hostWindows.delete(window);
+          if (hostWindows.size > 0) {
+            // Other windows still host previews; release only the tabs whose
+            // guest went down with this one.
+            runFork(releaseOrphanedTabs().pipe(Effect.ignore));
+            return;
+          }
           frameCaptureWindowOpen = false;
           mainWindowCleanupFiber = runFork(
             Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
@@ -1826,12 +1830,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const wc = webContents.fromId(webContentsId);
-    const mainWindow = yield* Ref.get(mainWindowRef);
     if (
       !wc ||
       wc.isDestroyed() ||
       wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (hostWindows.size > 0 &&
+        ![...hostWindows].some((window) => wc.hostWebContents === window.webContents))
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
@@ -2840,6 +2844,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
+  // A closing window destroys the guests it hosted; their picture-in-picture
+  // and recordings must not outlive them while other windows stay open.
+  const releaseOrphanedTabs = Effect.fn("PreviewManager.releaseOrphanedTabs")(function* () {
+    const tabs = yield* SynchronizedRef.get(tabsRef);
+    const orphanedTabIds = [...tabs.values()]
+      .filter((tab) => {
+        if (tab.webContentsId == null) return false;
+        const wc = webContents.fromId(tab.webContentsId);
+        return !wc || wc.isDestroyed();
+      })
+      .map((tab) => tab.tabId);
+    yield* Effect.forEach(
+      orphanedTabIds,
+      (tabId) =>
+        Effect.all([closePictureInPicture(tabId), stopFrameCapture(tabId, "recording")], {
+          concurrency: 2,
+          discard: true,
+        }).pipe(Effect.ignore),
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+
   const openPictureInPicture = Effect.fn("PreviewManager.openPictureInPicture")(function* (
     tabId: string,
   ) {
@@ -3417,7 +3443,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationSendEnabled,
     setAudioMuted,
     setColorScheme,
-    setMainWindow,
+    addHostWindow,
     setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) =>
       Effect.sync(() => {
         forwardedShortcuts = shortcuts;
@@ -3582,7 +3608,7 @@ export type PreviewManagerError = typeof PreviewManagerError.Type;
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
-    readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
+    readonly addHostWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
     readonly setForwardedShortcuts: (
       shortcuts: ReadonlyArray<PreviewForwardedShortcut>,
     ) => Effect.Effect<void>;
@@ -3733,7 +3759,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   );
 
   return PreviewManager.of({
-    setMainWindow: operations.setMainWindow,
+    addHostWindow: operations.addHostWindow,
     setForwardedShortcuts: operations.setForwardedShortcuts,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
       function* (scope, persistent, namespace) {

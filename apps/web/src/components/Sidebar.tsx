@@ -73,6 +73,7 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArchiveIcon,
+  AppWindowIcon,
   ArrowRightLeftIcon,
   CheckIcon,
   CircleAlertIcon,
@@ -3059,6 +3060,17 @@ export default function Sidebar() {
     },
   );
 
+  const openDesktopWindow = isElectron ? window.desktopBridge?.openWindow : undefined;
+  const handleOpenProjectWindow = (
+    event: ReactMouseEvent<HTMLElement>,
+    projectGroup: SidebarProjectSnapshot,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressNextScopeChangeRef.current = true;
+    dispatchProjectScopeMenu({ type: "open-changed", open: false });
+    void openDesktopWindow?.({ projectScopeKey: projectGroup.projectKey });
+  };
   const {
     threads,
     workingShelfEnabled,
@@ -4818,6 +4830,20 @@ export default function Sidebar() {
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
+                            {project && openDesktopWindow ? (
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                tabIndex={-1}
+                                aria-hidden="true"
+                                title={`Open ${project.displayName} in a new window`}
+                                className="ml-auto"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => handleOpenProjectWindow(event, project)}
+                              >
+                                <AppWindowIcon className="size-3.5" />
+                              </Button>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
@@ -4825,7 +4851,7 @@ export default function Sidebar() {
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
+                                className={openDesktopWindow ? undefined : "ml-auto"}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);

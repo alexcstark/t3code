@@ -1122,6 +1122,11 @@ export interface DesktopBridge {
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
   pasteAsText?: () => Promise<void>;
+  /**
+   * Open another app window, optionally with its sidebar scoped to one
+   * project. Optional: older desktop builds have a single window.
+   */
+  openWindow?: (options: { readonly projectScopeKey?: string }) => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;

@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -169,6 +170,27 @@ describe("ElectronWindow", () => {
       assert.equal(error.message, 'Failed to create Electron BrowserWindow "T3 Code" (1100x780).');
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(browserWindowMock.mock.calls, [[options]]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("treats the most recently focused open window as main", () =>
+    Effect.gen(function* () {
+      const first = makeBrowserWindow({ id: 1, destroyed: false });
+      const second = makeBrowserWindow({ id: 2, destroyed: false });
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+
+      yield* electronWindow.setMain(first);
+      yield* electronWindow.setMain(second);
+      assert.strictEqual((yield* electronWindow.main).pipe(Option.getOrNull), second);
+
+      yield* electronWindow.setMain(first);
+      assert.strictEqual((yield* electronWindow.main).pipe(Option.getOrNull), first);
+
+      yield* electronWindow.clearMain(Option.some(first));
+      assert.strictEqual((yield* electronWindow.main).pipe(Option.getOrNull), second);
+
+      yield* electronWindow.clearMain(Option.some(second));
+      assert.isTrue(Option.isNone(yield* electronWindow.main));
     }).pipe(Effect.provide(layerTest)),
   );
 
