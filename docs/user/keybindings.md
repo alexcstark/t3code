@@ -109,6 +109,8 @@ the same jumps in a browser.
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
+`project.switch` opens a list of your projects and defaults to `mod+alt+p`. Picking one opens its
+most recent thread, or starts a new thread if it has none.
 `themeEditor.toggle` opens or closes the floating theme editor and defaults to
 `mod+alt+shift+t`. Select a color label to show how many elements use it. The swatch and hex field
 keep that color selected while you edit it.
