@@ -19,6 +19,11 @@ const layerSetup = Layer.effectDiscard(
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // node:sqlite runs on the event loop, so FULL's fsync on every commit froze the
+    // server for seconds whenever the disk was busy. NORMAL fsyncs only at
+    // checkpoints; WAL stays corruption-safe, and only an OS crash can drop the
+    // last few commits.
+    yield* sql`PRAGMA synchronous = NORMAL;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
