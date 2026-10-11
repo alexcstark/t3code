@@ -1,0 +1,17 @@
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index b3e4deaa75124184262437280a97bad2b9e07c9d..d4da1c05d0b3011d9e2840e8f869169a7dfc597f 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -170,6 +170,12 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+             // Create a sink to write to for input file descriptors
+             let sink = Sink.drain;
+             if (nodeStream && "write" in nodeStream) {
++              // Extra fds are duplex sockets that Node also reads. On Linux a
++              // child exiting with unread input resets them ("read
++              // ECONNRESET"), and the sink only listens while writing, so an
++              // idle fd would throw an unhandled error and kill the process.
++              // Write failures still reach the sink's own listener.
++              nodeStream.on("error", () => {});
+               sink = NodeSink.fromWritable({
+                 evaluate: () => nodeStream,
+                 onError: error => toPlatformError(`fromWritable(fd${fd})`, toError(error), command)
