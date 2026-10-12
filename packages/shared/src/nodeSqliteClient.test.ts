@@ -2,6 +2,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -193,6 +194,24 @@ it.effect("reports a transaction blocked by another writer as a lock timeout", (
 
       yield* Effect.sync(() => other.exec("COMMIT"));
       assert.deepEqual(yield* read, [[0]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps the event loop free while a query waits for another writer", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 2000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* Effect.forkChild(sql`UPDATE counters SET value = 5 WHERE id = 1`);
+      yield* Effect.yieldNow;
+      // Runs only if the waiting query left this thread free. A query that
+      // blocked the event loop would hold it until its busy timeout expired.
+      yield* Effect.sync(() => other.exec("ROLLBACK"));
+      yield* Fiber.join(write);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`.values, [[5]]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename })));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

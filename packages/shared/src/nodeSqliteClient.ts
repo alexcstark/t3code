@@ -4,12 +4,9 @@
  *
  * @module SqliteClient
  */
-import * as NodeSqlite from "node:sqlite";
+import * as NodeWorkerThreads from "node:worker_threads";
 
-import * as Cache from "effect/Cache";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
@@ -31,7 +28,6 @@ export interface SqliteClientConfig {
   readonly readonly?: boolean | undefined;
   readonly allowExtension?: boolean | undefined;
   readonly prepareCacheSize?: number | undefined;
-  readonly prepareCacheTTL?: Duration.Input | undefined;
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
@@ -98,6 +94,134 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
   return classifySqliteError(cause, { message, operation });
 };
 
+// Runs in a worker thread so that disk waits (fsync, cold page reads, busy
+// timeouts) block only this thread, never the server's event loop. Plain
+// CommonJS with Node built-ins only: it is passed to `new Worker` as source, so
+// it needs no bundle entry and works the same in the executable and in tests.
+const WORKER_SOURCE = `
+const { parentPort, workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+const toError = (cause) => ({
+  message: cause && cause.message !== undefined ? String(cause.message) : String(cause),
+  errcode: cause ? cause.errcode : undefined,
+  errstr: cause ? cause.errstr : undefined,
+  code: cause ? cause.code : undefined,
+});
+let db;
+try {
+  db = new DatabaseSync(workerData.filename, {
+    readOnly: workerData.readOnly,
+    allowExtension: workerData.allowExtension,
+  });
+  parentPort.postMessage({ id: 0, ok: true, rows: [], inTransaction: false });
+} catch (cause) {
+  parentPort.postMessage({ id: 0, ok: false, operation: "open", error: toError(cause), inTransaction: false });
+}
+const statements = new Map();
+const prepare = (sql, cached) => {
+  if (!cached) return db.prepare(sql);
+  let statement = statements.get(sql);
+  if (statement !== undefined) {
+    statements.delete(sql);
+  } else {
+    statement = db.prepare(sql);
+    if (statements.size >= workerData.prepareCacheSize) statements.delete(statements.keys().next().value);
+  }
+  statements.set(sql, statement);
+  return statement;
+};
+parentPort.on("message", (request) => {
+  const { id } = request;
+  if (request.close) {
+    try { db.close(); } catch {}
+    parentPort.postMessage({ id, ok: true, rows: [], inTransaction: false });
+    return;
+  }
+  let statement;
+  try {
+    // Transaction-control cleanup is idempotent: SQLITE_FULL can roll back the
+    // entire transaction, including its savepoints. Preserve that original
+    // failure when cleanup finds no transaction left.
+    if (request.rollback && !db.isTransaction) {
+      parentPort.postMessage({ id, ok: true, rows: [], inTransaction: false });
+      return;
+    }
+    statement = prepare(request.sql, request.cached);
+  } catch (cause) {
+    parentPort.postMessage({ id, ok: false, operation: "prepare", error: toError(cause), inTransaction: db.isTransaction });
+    return;
+  }
+  try {
+    const hasRows = statement.columns().length > 0;
+    let rows;
+    if (request.mode === "values") {
+      if (hasRows) {
+        statement.setReturnArrays(true);
+        try { rows = statement.all(...request.params); } finally { statement.setReturnArrays(false); }
+      } else {
+        statement.run(...request.params);
+        rows = [];
+      }
+    } else {
+      statement.setReadBigInts(request.safeIntegers);
+      if (hasRows) rows = statement.all(...request.params);
+      else {
+        const result = statement.run(...request.params);
+        rows = request.mode === "raw" ? result : [];
+      }
+    }
+    parentPort.postMessage({ id, ok: true, rows, inTransaction: db.isTransaction });
+  } catch (cause) {
+    parentPort.postMessage({ id, ok: false, operation: "execute", error: toError(cause), inTransaction: db.isTransaction });
+  }
+});
+`;
+
+type WorkerRequest =
+  | {
+      readonly sql: string;
+      readonly params: ReadonlyArray<unknown>;
+      readonly mode: "rows" | "raw" | "values";
+      readonly cached: boolean;
+      readonly safeIntegers?: boolean;
+      readonly rollback?: boolean;
+    }
+  | { readonly close: true };
+
+type WorkerReply =
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly rows: unknown;
+      readonly inTransaction: boolean;
+    }
+  | {
+      readonly id: number;
+      readonly ok: false;
+      readonly operation: "open" | "prepare" | "execute";
+      readonly error: {
+        readonly message: string;
+        readonly errcode?: number;
+        readonly errstr?: string;
+        readonly code?: string;
+      };
+      readonly inTransaction: boolean;
+    };
+
+const OPERATION_MESSAGES = {
+  open: "Failed to open database",
+  prepare: "Failed to prepare statement",
+  execute: "Failed to execute statement",
+} as const;
+
+const replyError = (reply: Extract<WorkerReply, { ok: false }>) => {
+  const { message, ...details } = reply.error;
+  const cause = Object.assign(new Error(message), details);
+  return new SqlError({
+    reason: classifyError(cause, OPERATION_MESSAGES[reply.operation], reply.operation),
+  });
+};
+
 const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
 ): Effect.fn.Return<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
@@ -109,165 +233,143 @@ const make = Effect.fn("makeWithDatabase")(function* (
     : undefined;
 
   const makeConnection = Effect.gen(function* () {
-    const scope = yield* Effect.scope;
-    const db = yield* Effect.try({
-      try: () =>
-        new NodeSqlite.DatabaseSync(options.filename, {
-          readOnly: options.readonly ?? false,
-          allowExtension: options.allowExtension ?? false,
-        }),
-      catch: (cause) =>
-        new SqlError({
-          reason: classifyError(cause, "Failed to open database", "open"),
-        }),
-    });
-    yield* Scope.addFinalizer(
-      scope,
-      Effect.try({
-        try: () => db.close(),
-        catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to close database", "close"),
-          }),
-      }).pipe(Effect.orDie),
-    );
+    const pending = new Map<number, (reply: WorkerReply) => void>();
+    let nextId = 1;
+    let inTransaction = false;
+    let crashed: Error | undefined;
 
-    const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
-    const hasRows = (statement: NodeSqlite.StatementSync): boolean => {
-      const cached = statementReaderCache.get(statement);
-      if (cached !== undefined) {
-        return cached;
-      }
-      const value = statement.columns().length > 0;
-      statementReaderCache.set(statement, value);
-      return value;
+    const worker = new NodeWorkerThreads.Worker(WORKER_SOURCE, {
+      eval: true,
+      workerData: {
+        filename: options.filename,
+        readOnly: options.readonly ?? false,
+        allowExtension: options.allowExtension ?? false,
+        prepareCacheSize: options.prepareCacheSize ?? 200,
+      },
+    });
+    // The worker posts the open result as message 0 before reading requests.
+    const openReply = new Promise<WorkerReply>((resolve) => worker.once("message", resolve));
+    const settle = (reply: WorkerReply) => {
+      const resolve = pending.get(reply.id);
+      if (resolve === undefined) return;
+      pending.delete(reply.id);
+      if (pending.size === 0) worker.unref();
+      inTransaction = reply.inTransaction;
+      resolve(reply);
     };
+    const fail = (cause: Error) => {
+      crashed = cause;
+      for (const id of [...pending.keys()]) {
+        settle({
+          id,
+          ok: false,
+          operation: "execute",
+          error: { message: `SQLite worker stopped: ${cause.message}` },
+          inTransaction: false,
+        });
+      }
+    };
+    worker.on("message", settle);
+    worker.on("error", fail);
+    worker.on("exit", (code) => fail(new Error(`exited with code ${code}`)));
 
-    const prepare = (sql: string) =>
-      Effect.try({
-        try: () => db.prepare(sql),
-        catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to prepare statement", "prepare"),
-          }),
-      });
-
-    const prepareCache = yield* Cache.makeWith(prepare, {
-      capacity: options.prepareCacheSize ?? 200,
-      // A transient prepare failure must not outlive the lock or missing schema.
-      timeToLive: (exit) =>
-        Exit.isSuccess(exit) ? (options.prepareCacheTTL ?? Duration.minutes(10)) : Duration.zero,
-    });
-
-    const runStatement = (
-      statement: NodeSqlite.StatementSync,
-      params: ReadonlyArray<unknown>,
-      raw: boolean,
-    ) =>
-      Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-        try {
-          statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
-          if (hasRows(statement)) {
-            return Effect.succeed(statement.all(...(params as any)));
-          }
-          const result = statement.run(...(params as any));
-          return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
-        } catch (cause) {
-          return Effect.fail(
-            new SqlError({
-              reason: classifyError(cause, "Failed to execute statement", "execute"),
+    const send = (request: WorkerRequest) =>
+      Effect.callback<WorkerReply>((resume) => {
+        const id = nextId++;
+        if (crashed !== undefined) {
+          resume(
+            Effect.succeed({
+              id,
+              ok: false,
+              operation: "execute",
+              error: { message: `SQLite worker stopped: ${crashed.message}` },
+              inTransaction: false,
             }),
           );
+          return;
         }
+        if (pending.size === 0) worker.ref();
+        pending.set(id, (reply) => resume(Effect.succeed(reply)));
+        worker.postMessage({ ...request, id });
       });
 
-    const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
+    const query = (request: Extract<WorkerRequest, { sql: string }>) =>
+      Effect.flatMap(send(request), (reply) =>
+        reply.ok
+          ? Effect.succeed(reply.rows as ReadonlyArray<any>)
+          : Effect.fail(replyError(reply)),
+      );
 
-    const runStatementValues = (
-      statement: NodeSqlite.StatementSync,
+    const opened = yield* Effect.promise(() => openReply);
+    // Holds the process open only while a query is in flight.
+    worker.unref();
+    if (!opened.ok) {
+      yield* Effect.promise(() => worker.terminate());
+      return yield* replyError(opened);
+    }
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        if (crashed === undefined) yield* send({ close: true });
+        yield* Effect.promise(() => worker.terminate());
+      }),
+    );
+
+    const run = (
+      sql: string,
       params: ReadonlyArray<unknown>,
+      mode: "rows" | "raw",
+      cached = true,
     ) =>
-      Effect.acquireUseRelease(
-        Effect.succeed(statement),
-        (statement) =>
-          Effect.try({
-            try: () => {
-              if (hasRows(statement)) {
-                statement.setReturnArrays(true);
-                // Safe to cast to array after we've setReturnArrays(true)
-                return statement.all(...(params as any)) as unknown as ReadonlyArray<
-                  ReadonlyArray<unknown>
-                >;
-              }
-              statement.run(...(params as any));
-              return [];
-            },
-            catch: (cause) =>
-              new SqlError({
-                reason: classifyError(cause, "Failed to execute statement", "execute"),
-              }),
-          }),
-        (statement) =>
-          Effect.try({
-            try: () => {
-              if (hasRows(statement)) {
-                statement.setReturnArrays(false);
-              }
-            },
-            catch: (cause) =>
-              new SqlError({
-                reason: classifyError(
-                  cause,
-                  "Failed to reset statement result mode",
-                  "resetResultMode",
-                ),
-              }),
-          }).pipe(Effect.orDie),
+      Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) =>
+        query({
+          sql,
+          params,
+          mode,
+          cached,
+          safeIntegers: Boolean(Context.get(fiber.context, Client.SafeIntegers)),
+        }),
       );
 
-    const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (statement) =>
-        runStatementValues(statement, params),
-      );
+    const runValues = (sql: string, params: ReadonlyArray<unknown>, cached: boolean) =>
+      query({ sql, params, mode: "values", cached }) as Effect.Effect<
+        ReadonlyArray<ReadonlyArray<unknown>>,
+        SqlError
+      >;
 
     const connection = identity<Connection>({
       execute(sql, params, rowTransform) {
-        return rowTransform ? Effect.map(run(sql, params), rowTransform) : run(sql, params);
+        return rowTransform
+          ? Effect.map(run(sql, params, "rows"), rowTransform)
+          : run(sql, params, "rows");
       },
       executeRaw(sql, params) {
-        return run(sql, params, true);
+        return run(sql, params, "raw");
       },
       executeValues(sql, params) {
-        return runValues(sql, params);
+        return runValues(sql, params, true);
       },
       executeValuesUnprepared(sql, params) {
-        return Effect.flatMap(prepare(sql), (statement) =>
-          runStatementValues(statement, params ?? []),
-        );
+        return runValues(sql, params ?? [], false);
       },
       executeUnprepared(sql, params, rowTransform) {
-        const effect = Effect.suspend(() => {
-          // Transaction-control cleanup is idempotent: SQLITE_FULL can roll
-          // back the entire transaction, including its savepoints. Preserve
-          // that original failure when cleanup finds no transaction left.
-          if (
-            !db.isTransaction &&
-            (sql === "ROLLBACK" || sql.startsWith("ROLLBACK TO SAVEPOINT "))
-          ) {
-            return Effect.succeed([]);
-          }
-          return prepare(sql).pipe(
-            Effect.flatMap((statement) => runStatement(statement, params ?? [], false)),
-          );
-        });
+        const rollback = sql === "ROLLBACK" || sql.startsWith("ROLLBACK TO SAVEPOINT ");
+        const effect = Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) =>
+          query({
+            sql,
+            params: params ?? [],
+            mode: "rows",
+            cached: false,
+            rollback,
+            safeIntegers: Boolean(Context.get(fiber.context, Client.SafeIntegers)),
+          }),
+        );
         return rowTransform ? Effect.map(effect, rowTransform) : effect;
       },
       executeStream(_sql, _params) {
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
-    return { connection, isTransaction: () => db.isTransaction };
+    return { connection, isTransaction: () => inTransaction };
   });
 
   const semaphore = yield* Semaphore.make(1);
