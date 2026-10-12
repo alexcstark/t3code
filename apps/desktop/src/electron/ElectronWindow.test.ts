@@ -63,10 +63,15 @@ const layerTestFor = (platform: NodeJS.Platform) =>
 
 const layerTest = layerTestFor("linux");
 
-function makeBrowserWindow(input: { readonly id: number; readonly destroyed: boolean }) {
+function makeBrowserWindow(input: {
+  readonly id: number;
+  readonly destroyed: boolean;
+  readonly webContentsId?: number;
+}) {
   return {
     id: input.id,
     isDestroyed: vi.fn(() => input.destroyed),
+    webContents: { id: input.webContentsId ?? input.id },
   } as unknown as Electron.BrowserWindow;
 }
 
@@ -191,6 +196,30 @@ describe("ElectronWindow", () => {
 
       yield* electronWindow.clearMain(Option.some(second));
       assert.isTrue(Option.isNone(yield* electronWindow.main));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("resolves any registered app window by webContents id", () =>
+    Effect.gen(function* () {
+      const first = makeBrowserWindow({ id: 1, destroyed: false, webContentsId: 11 });
+      const second = makeBrowserWindow({ id: 2, destroyed: false, webContentsId: 22 });
+      const destroyed = makeBrowserWindow({ id: 3, destroyed: true, webContentsId: 33 });
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+
+      yield* electronWindow.setMain(first);
+      yield* electronWindow.setMain(second);
+      yield* electronWindow.setMain(destroyed);
+
+      assert.strictEqual(
+        (yield* electronWindow.forWebContentsId(11)).pipe(Option.getOrNull),
+        first,
+      );
+      assert.strictEqual(
+        (yield* electronWindow.forWebContentsId(22)).pipe(Option.getOrNull),
+        second,
+      );
+      assert.isTrue(Option.isNone(yield* electronWindow.forWebContentsId(33)));
+      assert.isTrue(Option.isNone(yield* electronWindow.forWebContentsId(99)));
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -67,6 +67,7 @@ function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
     main: Effect.die("unexpected main window read"),
     currentMainOrFirst: Effect.die("unexpected current window read"),
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
+    forWebContentsId: () => Effect.die("unexpected webContents lookup"),
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),

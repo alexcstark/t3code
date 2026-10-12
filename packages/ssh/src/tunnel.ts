@@ -526,6 +526,9 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 
 const REMOTE_PATH_T3_SCRIPT = `PATH_T3="$(command -v t3 2>/dev/null || true)"`;
 
+// Fork desktops pin an upstream archive in run-t3.sh (no published -t4 tarball).
+// That upstream CLI can lag the boot-service install, which already has
+// probe-server. Prefer the pinned runner / PATH, then the active runtime.
 const REMOTE_LIFECYCLE_CONTROLLER_SCRIPT = `find_lifecycle_controller() {
   for T3_CONTROLLER_CANDIDATE in "$@"; do
     [ -n "$T3_CONTROLLER_CANDIDATE" ] || continue
@@ -537,6 +540,19 @@ const REMOTE_LIFECYCLE_CONTROLLER_SCRIPT = `find_lifecycle_controller() {
   done
   return 1
 }
+active_runtime_t3() {
+  SERVER_HOME="$1"
+  STATE_FILE="$SERVER_HOME/runtime/service-state.json"
+  [ -f "$STATE_FILE" ] || return 1
+  ACTIVE_VERSION="$(sed -n 's/.*"activeVersion"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "$STATE_FILE" | head -n 1)"
+  [ -n "$ACTIVE_VERSION" ] || return 1
+  case "$ACTIVE_VERSION" in
+    *..*|*/*|*\\\\*) return 1 ;;
+  esac
+  CANDIDATE="$SERVER_HOME/runtime/versions/$ACTIVE_VERSION/t3"
+  [ -x "$CANDIDATE" ] || return 1
+  printf '%s\\n' "$CANDIDATE"
+}
 ${REMOTE_PATH_T3_SCRIPT}`;
 
 const REMOTE_LIFECYCLE_PROBE_SCRIPT = `set -eu
@@ -547,21 +563,20 @@ RUNNER_ID="$3"
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_ROOT/run-t3.sh"
-@@T3_PATH_T3_SCRIPT@@
-if [ -x "$RUNNER_FILE" ]; then
-  for LIFECYCLE_CONTROLLER in "$RUNNER_FILE" "$PATH_T3"; do
-    [ -n "$LIFECYCLE_CONTROLLER" ] || continue
-    [ -x "$LIFECYCLE_CONTROLLER" ] || continue
-    if PROBE_OUTPUT="$("$LIFECYCLE_CONTROLLER" __ssh-helper probe-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$DEFAULT_SERVER_HOME" 2>/dev/null)"; then
-      case "$PROBE_OUTPUT" in
-        *'"status":"ready"'* | *'"status":"needs-ensure"'*)
-          printf '%s\\n' "$PROBE_OUTPUT"
-          exit 0
-          ;;
-      esac
-    fi
-  done
-fi
+@@T3_LIFECYCLE_CONTROLLER_SCRIPT@@
+ACTIVE_T3="$(active_runtime_t3 "$DEFAULT_SERVER_HOME" || true)"
+for LIFECYCLE_CONTROLLER in "$RUNNER_FILE" "$PATH_T3" "$ACTIVE_T3"; do
+  [ -n "$LIFECYCLE_CONTROLLER" ] || continue
+  [ -x "$LIFECYCLE_CONTROLLER" ] || continue
+  if PROBE_OUTPUT="$("$LIFECYCLE_CONTROLLER" __ssh-helper probe-server "$STATE_ROOT" "$STATE_KEY" "$EXPECTED_VERSION" "$RUNNER_ID" "$DEFAULT_SERVER_HOME" 2>/dev/null)"; then
+    case "$PROBE_OUTPUT" in
+      *'"status":"ready"'* | *'"status":"needs-ensure"'*)
+        printf '%s\\n' "$PROBE_OUTPUT"
+        exit 0
+        ;;
+    esac
+  fi
+done
 printf '{"status":"needs-ensure"}\\n'
 `;
 
@@ -587,7 +602,8 @@ chmod 700 "$RUNNER_NEXT"
 # Archive mode may download and verify the release here. Warm reconnects use
 # the probe script and never enter this cold preparation path.
 "$RUNNER_NEXT" --version >/dev/null
-LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3")" || {
+ACTIVE_T3="$(active_runtime_t3 "$DEFAULT_SERVER_HOME" || true)"
+LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3" "$ACTIVE_T3")" || {
   printf 'The remote t3 runtime does not support the SSH lifecycle protocol. Install the current t3 CLI on the remote host.\\n' >&2
   exit 1
 }
@@ -618,7 +634,8 @@ STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_ROOT/run-t3.sh"
 @@T3_LIFECYCLE_CONTROLLER_SCRIPT@@
-if LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_FILE" "$PATH_T3")"; then
+ACTIVE_T3="$(active_runtime_t3 "$DEFAULT_SERVER_HOME" || true)"
+if LIFECYCLE_CONTROLLER="$(find_lifecycle_controller "$RUNNER_FILE" "$PATH_T3" "$ACTIVE_T3")"; then
   "$LIFECYCLE_CONTROLLER" __ssh-helper stop-server "$STATE_ROOT" "$STATE_KEY" "$DEFAULT_SERVER_HOME"
   exit 0
 fi
@@ -757,7 +774,7 @@ const remoteRunnerDescriptor = Effect.fn("ssh/tunnel.remoteRunnerDescriptor")(fu
 
 export function buildRemoteProbeScript(): string {
   return applyScriptPlaceholders(REMOTE_LIFECYCLE_PROBE_SCRIPT, {
-    T3_PATH_T3_SCRIPT: REMOTE_PATH_T3_SCRIPT,
+    T3_LIFECYCLE_CONTROLLER_SCRIPT: REMOTE_LIFECYCLE_CONTROLLER_SCRIPT,
   });
 }
 
