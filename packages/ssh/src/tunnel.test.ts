@@ -285,13 +285,13 @@ describe("ssh tunnel scripts", () => {
     const stop = SshTunnel.buildRemoteStopScript(stateKey);
 
     assert.include(probe, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
-    assert.include(probe, 'if [ -x "$RUNNER_FILE" ]; then');
-    assert.include(probe, 'for LIFECYCLE_CONTROLLER in "$RUNNER_FILE" "$PATH_T3"');
+    assert.include(probe, "active_runtime_t3");
+    assert.include(probe, 'for LIFECYCLE_CONTROLLER in "$RUNNER_FILE" "$PATH_T3" "$ACTIVE_T3"');
     assert.include(probe, '"$LIFECYCLE_CONTROLLER" __ssh-helper probe-server');
     assert.include(probe, '{"status":"needs-ensure"}');
     assert.include(launch, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
     assert.include(launch, 'RUNNER_NEXT="$STATE_ROOT/run-t3.next.$$"');
-    assert.include(launch, 'find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3"');
+    assert.include(launch, 'find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3" "$ACTIVE_T3"');
     assert.include(launch, '"$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server');
     assert.include(devLaunch, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(devLaunch, "does not satisfy required range ");
@@ -376,13 +376,15 @@ describe("ssh tunnel scripts", () => {
       PATH: `${binDir}:${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
     };
     try {
+      // No pinned runner yet: an installed PATH CLI that speaks probe-server is
+      // enough for a warm reconnect (e.g. the boot-service install).
       const freshProbe = NodeChildProcess.spawnSync(
         "sh",
         ["-s", "--", "0123456789abcdef", "0.0.42", "runner-id"],
         { encoding: "utf8", env: environment, input: SshTunnel.buildRemoteProbeScript() },
       );
       assert.equal(freshProbe.status, 0, freshProbe.stderr);
-      assert.equal(freshProbe.stdout.trim(), '{"status":"needs-ensure"}');
+      assert.include(freshProbe.stdout, '"status":"ready"');
 
       NodeFS.writeFileSync(
         NodePath.join(stateRoot, "run-t3.sh"),
@@ -436,6 +438,112 @@ describe("ssh tunnel scripts", () => {
       });
       assert.equal(stop.status, 0, stop.stderr);
       assert.include(stop.stdout, '"stopped":true');
+    } finally {
+      NodeFS.rmSync(temporaryHome, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the active runtime CLI when the pinned upstream runner lacks probe-server", () => {
+    const temporaryHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-active-"));
+    const stateRoot = NodePath.join(temporaryHome, ".t3", "ssh-launch");
+    const runtimeRoot = NodePath.join(temporaryHome, ".t3", "runtime");
+    const activeVersion = "0.0.46-nightly.20261011.2980-t4.0.3";
+    const activeBin = NodePath.join(runtimeRoot, "versions", activeVersion);
+    NodeFS.mkdirSync(stateRoot, { recursive: true });
+    NodeFS.mkdirSync(activeBin, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(runtimeRoot, "service-state.json"),
+      JSON.stringify({ protocol: 3, activeVersion }),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(activeBin, "t3"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "--help" ]; then',
+        "  printf 'probe-server\\nensure-server\\nstop-server\\n'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "probe-server" ]; then',
+        `  printf '${JSON.stringify({
+          status: "ready",
+          remotePort: 3773,
+          serverKind: "external",
+          decision: "reuse-external",
+          remotePid: 99,
+          serverVersion: activeVersion,
+        })}\\n'`,
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "ensure-server" ]; then',
+        '  mv "$7" "$8"',
+        `  printf '${JSON.stringify({
+          status: "ready",
+          remotePort: 3773,
+          serverKind: "external",
+          decision: "reuse-external",
+          remotePid: 99,
+          serverVersion: activeVersion,
+        })}\\n'`,
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    // Stale pinned runner: upstream archive the fork desktop resolved to, without
+    // the SSH lifecycle subcommands the current client needs.
+    NodeFS.writeFileSync(
+      NodePath.join(stateRoot, "run-t3.sh"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "--version" ]; then',
+        '  printf "t3 v0.0.46-nightly.20261011.2980\\n"',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "__ssh-helper" ]; then',
+        "  printf 'pick-port\\nwait-ready\\nruntime-port\\n'",
+        '  printf \'ERROR Unknown subcommand "%s"\\n\' "$2" >&2',
+        "  exit 1",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const oldServer = NodePath.join(temporaryHome, "old-server.mjs");
+    NodeFS.writeFileSync(
+      oldServer,
+      'if (process.argv.includes("--version")) process.stdout.write("t3 v0.0.46\\n"); else process.exitCode = 1;\n',
+    );
+
+    const environment = {
+      ...process.env,
+      HOME: temporaryHome,
+      // No PATH t3: the boot-service install is only reachable via service-state.
+      PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
+    };
+    try {
+      const probe = NodeChildProcess.spawnSync(
+        "sh",
+        ["-s", "--", "0123456789abcdef", "0.0.46-nightly.20261011.2980", "runner-id"],
+        { encoding: "utf8", env: environment, input: SshTunnel.buildRemoteProbeScript() },
+      );
+      assert.equal(probe.status, 0, probe.stderr);
+      assert.include(probe.stdout, '"status":"ready"');
+      assert.include(probe.stdout, activeVersion);
+
+      const launch = NodeChildProcess.spawnSync(
+        "sh",
+        ["-s", "--", "0123456789abcdef", "0.0.46-nightly.20261011.2980", "runner-id"],
+        {
+          encoding: "utf8",
+          env: environment,
+          input: SshTunnel.buildRemoteLaunchScript({ nodeScriptPath: oldServer }),
+        },
+      );
+      assert.equal(launch.status, 0, launch.stderr);
+      assert.include(launch.stdout, '"status":"ready"');
     } finally {
       NodeFS.rmSync(temporaryHome, { recursive: true, force: true });
     }

@@ -115,6 +115,11 @@ export class ElectronWindow extends Context.Service<
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    // Finds a registered app window by renderer id. Preview/splash windows are
+    // never registered, so this is the multi-window trust check for IPC.
+    readonly forWebContentsId: (
+      webContentsId: number,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     // Registers an app window, or promotes it to main when it gains focus.
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     // Forgets one app window (the next most recent becomes main), or all of them.
@@ -244,6 +249,14 @@ export const make = Effect.gen(function* () {
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
+    forWebContentsId: (webContentsId) =>
+      Effect.gen(function* () {
+        for (const window of yield* Ref.get(appWindowsRef)) {
+          if (yield* isWindowDestroyed(window)) continue;
+          if (window.webContents.id === webContentsId) return Option.some(window);
+        }
+        return Option.none<Electron.BrowserWindow>();
+      }),
     setMain: (window) =>
       Ref.update(appWindowsRef, (windows) => [
         window,
