@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { deleteImportedV1Rows } from "../orchestration-v2/legacy/LegacyV1Prune.ts";
+
 // Removes history nothing can read any more: events superseded by a newer
 // copy of the same state, and V1 rows of threads whose transcript was imported
 // into V2. Rows are deleted, not the file shrunk; `t3 db compact` follows this
@@ -10,14 +12,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 const encodeEntityKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.NullOr(Schema.String)])),
 );
-
-const LEGACY_V1_PROJECTION_TABLES = [
-  "projection_thread_activities",
-  "projection_thread_messages",
-  "projection_turns",
-  "projection_thread_proposed_plans",
-] as const;
-const LEGACY_DELETE_BATCH_SIZE = 5_000;
 
 // Thread-state events whose payload is the complete thread: only the
 // newest per thread can influence a replay or an afterSequence catch-up.
@@ -173,27 +167,7 @@ export const compactDatabase = Effect.gen(function* () {
     if (rows.length < COMPACTION_PAGE_SIZE) break;
   }
 
-  // V1 projections are read only to import a thread's transcript, and
-  // `transcript_imported_at` is never reset, so imported threads' rows are dead.
-  // Bounded batches keep each transaction, and the -wal file, small.
-  let deletedLegacyRowCount = 0;
-  for (const table of LEGACY_V1_PROJECTION_TABLES) {
-    while (true) {
-      const deleted = yield* sql.unsafe<{ readonly deleted: number }>(
-        `DELETE FROM ${table} WHERE rowid IN (
-          SELECT rowid FROM ${table}
-          WHERE thread_id IN (
-            SELECT thread_id FROM orchestration_v2_legacy_imports
-            WHERE transcript_imported_at IS NOT NULL
-          )
-          LIMIT ${LEGACY_DELETE_BATCH_SIZE}
-        ) RETURNING 1 AS deleted`,
-      );
-      deletedLegacyRowCount += deleted.length;
-      yield* Effect.yieldNow;
-      if (deleted.length < LEGACY_DELETE_BATCH_SIZE) break;
-    }
-  }
+  const deletedLegacyRowCount = yield* deleteImportedV1Rows;
 
   const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
   const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
