@@ -56,6 +56,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { compactDatabase } from "../persistence/CompactDatabase.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -272,7 +273,6 @@ it.effect("keeps other database work runnable while discovering compaction candi
   Effect.scoped(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       const now = DateTime.formatIso(yield* DateTime.now);
       yield* sql`
         WITH RECURSIVE history(n) AS (
@@ -332,7 +332,7 @@ it.effect("keeps other database work runnable while discovering compaction candi
         }).pipe(Effect.forkScoped),
       );
 
-      const summary = yield* maintenance.compactEventStore.pipe(
+      const summary = yield* compactDatabase.pipe(
         Effect.withTracer(tracer),
         Effect.provideService(Scheduler.MaxOpsBeforeYield, Number.POSITIVE_INFINITY),
         Effect.tap(() =>
@@ -953,6 +953,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ON CONFLICT(thread_id) DO NOTHING
       `;
       yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        )
+        VALUES
+          ('activity:v1:imported', ${importedV1ThreadId}, NULL, 'info', 'tool', 'done', '{}', ${nowIso}),
+          ('activity:v1:pending', ${pendingV1ThreadId}, NULL, 'info', 'tool', 'done', '{}', ${nowIso})
+      `;
+      yield* sql`
         INSERT INTO orchestration_command_receipts (
           command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status, command_type
         )
@@ -962,12 +970,13 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ON CONFLICT(command_id) DO NOTHING
       `;
 
-      const summary = yield* maintenance.compactEventStore;
+      const summary = yield* compactDatabase;
       // Superseded state spans several discovery pages. Both turn-item updates
       // stay, and so do the first message and node events (replay order). The
       // rename stays too: visits are read state and only supersede each other.
       assert.isAtLeast(summary.deletedEventCount, 504);
       assert.isAtLeast(summary.deletedReceiptCount, 1);
+      assert.isAtLeast(summary.deletedLegacyRowCount, 1);
 
       const remaining = yield* sql<{ readonly event_id: string }>`
         SELECT event_id
@@ -1012,6 +1021,17 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["command:foundation-compact:pending"],
       );
 
+      const remainingActivities = yield* sql<{ readonly activity_id: string }>`
+        SELECT activity_id
+        FROM projection_thread_activities
+        WHERE thread_id IN (${importedV1ThreadId}, ${pendingV1ThreadId})
+      `;
+      assert.deepEqual(
+        remainingActivities.map((row) => row.activity_id),
+        ["activity:v1:pending"],
+      );
+
+      // Replay across the deletion gaps must still produce a valid projection.
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
