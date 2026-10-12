@@ -632,34 +632,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   if (claudeAuthStatus(capabilities) === "unauthenticated") {
-    return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
-      enabled: claudeSettings.enabled,
-      checkedAt,
-      models,
-      slashCommands: dedupedSlashCommands,
-      skills,
-      probe: {
-        installed: true,
-        version: parsedVersion,
-        status: "error",
-        auth: { status: "unauthenticated" },
-        message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
-      },
-    });
-  }
-
-  const authMetadata =
-    claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
-    }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
-
-  // The init result is the only place the CLI states its credential state
-  // before a turn runs. Without this the provider reported "ready" while
-  // signed out, so the user only learned the session was gone when their
-  // first message failed mid-turn.
-  if (isClaudeSignedOut(capabilities)) {
     const configDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
       .CLAUDE_CONFIG_DIR;
     const path = yield* Path.Path;
@@ -679,6 +651,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       },
     });
   }
+
+  const authMetadata =
+    claudeAuthMetadata({
+      subscriptionType: capabilities.subscriptionType,
+      authMethod: capabilities.tokenSource,
+    }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
@@ -717,18 +696,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     },
   });
 });
-
-/**
- * `tokenSource: "none"` is the CLI's own statement that it holds no usable
- * first-party credential. Bedrock and other backends authenticate outside the
- * CLI, so their account block says nothing about whether a turn will succeed.
- */
-function isClaudeSignedOut(capabilities: ClaudeCapabilitiesProbe): boolean {
-  if (capabilities.apiProvider !== undefined && capabilities.apiProvider !== "firstParty") {
-    return false;
-  }
-  return capabilities.tokenSource === "none";
-}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
