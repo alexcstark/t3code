@@ -4,26 +4,33 @@ export const terminalShellRootProps = {
 } as const;
 
 export type TerminalShellStatusProps = {
-  readonly isWorking: boolean;
+  readonly activityState: "working" | "waiting" | "ready";
+  readonly canInterrupt: boolean;
   readonly workingStepLabel: string | null;
   readonly activeTerminalCount: number;
 };
 
 export function TerminalShellStatus({
-  isWorking,
+  activityState,
+  canInterrupt,
   workingStepLabel,
   activeTerminalCount,
 }: TerminalShellStatusProps) {
+  const isWorking = activityState === "working";
   return (
     <div
       aria-live="polite"
       className="flex items-center gap-2 px-1 pb-1.5 text-2xs text-muted-foreground"
       data-terminal-shell-status="true"
     >
-      <span data-terminal-shell-status-state={isWorking ? "working" : "ready"}>
-        {isWorking ? (workingStepLabel ?? "Working") : "Ready"}
+      <span data-terminal-shell-status-state={activityState}>
+        {isWorking
+          ? (workingStepLabel ?? "Working")
+          : activityState === "waiting"
+            ? "Waiting for background work"
+            : "Ready"}
       </span>
-      {isWorking ? <span aria-hidden="true">· esc to interrupt</span> : null}
+      {canInterrupt ? <span aria-hidden="true">· esc to interrupt</span> : null}
       {activeTerminalCount > 0 ? (
         <span>
           · {activeTerminalCount} terminal{activeTerminalCount === 1 ? "" : "s"} active

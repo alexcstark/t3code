@@ -189,6 +189,7 @@ import {
 import {
   derivePhase,
   deriveIsWorking,
+  deriveThreadActivityState,
   selectHandoffImageResources,
   deriveActivePlanState,
   selectComposerTasksPlan,
@@ -8398,8 +8399,12 @@ export default function ChatView(props: ChatViewProps) {
                   {!isDraftHeroState ? (
                     <TerminalShellStatus
                       activeTerminalCount={terminalUiState.terminalIds.length}
-                      isWorking={isWorking}
-                      workingStepLabel={workingStepLabel}
+                      activityState={deriveThreadActivityState({
+                        isWorking,
+                        runtime: activeRuntime,
+                      })}
+                      canInterrupt={canInterruptRunningThread}
+                      workingStepLabel={isWorking ? workingStepLabel : null}
                     />
                   ) : null}
                   {isDraftHeroState ? (
