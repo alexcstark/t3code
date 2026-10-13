@@ -14,6 +14,27 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
+  projectScopeKey: null as string | null,
+  projects: [
+    {
+      environmentId: "one",
+      id: "project",
+      title: "Project one",
+      workspaceRoot: "/one",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+    {
+      environmentId: "two",
+      id: "project",
+      title: "Project two",
+      workspaceRoot: "/two",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+  ],
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: (id: string) => state.shells.get(id) }));
 vi.mock("@tanstack/react-router", () => ({
@@ -25,11 +46,29 @@ vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: stri
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
 }));
+vi.mock("../state/entities", () => ({
+  useProjects: () => state.projects,
+}));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (
-    select: (settings: { notificationMode: string; inAppNotificationsEnabled: boolean }) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp }),
+    select: (settings: {
+      notificationMode: string;
+      inAppNotificationsEnabled: boolean;
+      sidebarProjectGroupingMode: string;
+      sidebarProjectGroupingOverrides: Record<string, string>;
+    }) => unknown,
+  ) =>
+    select({
+      notificationMode: state.mode,
+      inAppNotificationsEnabled: state.inApp,
+      sidebarProjectGroupingMode: "separate",
+      sidebarProjectGroupingOverrides: {},
+    }),
   getClientSettings: () => ({ notificationMode: state.mode }),
+}));
+vi.mock("../uiStateStore", () => ({
+  useUiStateStore: (select: (value: { sidebarProjectScopeKey: string | null }) => unknown) =>
+    select({ sidebarProjectScopeKey: state.projectScopeKey }),
 }));
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
@@ -151,6 +190,7 @@ beforeEach(() => {
   state.mode = "notifications";
   state.inApp = false;
   state.environmentIds = ["one", "two"];
+  state.projectScopeKey = null;
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   focused = false;
@@ -228,6 +268,28 @@ it("removes alerts only from environments that leave the client", async () => {
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(0);
   expect(retained!.close).toHaveBeenCalledOnce();
+});
+
+it("only badges threads in this window's project scope", async () => {
+  state.projectScopeKey = "one:/one";
+  await render();
+  complete("one");
+  complete("two");
+  await render();
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(TestNotification.sent[0]?.options.tag).toBe("one:thread");
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  state.projectScopeKey = "two:/two";
+  await render();
+  expect(TestNotification.sent[0]?.close).toHaveBeenCalledOnce();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+
+  complete("two", "2026-09-13T08:01:00Z");
+  await render();
+  expect(TestNotification.sent).toHaveLength(2);
+  expect(TestNotification.sent[1]?.options.tag).toBe("two:thread");
+  expect(state.badge).toHaveBeenLastCalledWith(1);
 });
 
 it("starts a fresh count after another native app window gains focus", async () => {

@@ -1,3 +1,4 @@
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -9,9 +10,11 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { buildProjectGroups, selectProjectGroupingSettings } from "../logicalProject";
+import { useProjects } from "../state/entities";
 import { useEnvironmentIds } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import {
@@ -21,34 +24,55 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import { useUiStateStore } from "../uiStateStore";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
 
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
+  const projects = useProjects();
+  const projectScopeKey = useUiStateStore((state) => state.sidebarProjectScopeKey);
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const mode = useClientSettings((settings) => settings.notificationMode);
   const inAppNotificationsEnabled = useClientSettings(
     (settings) => settings.inAppNotificationsEnabled,
   );
+  const notificationProjectKeys = useMemo(() => {
+    if (projectScopeKey === null) return null;
+    const projectGroup = buildProjectGroups({ projects, settings: projectGroupingSettings }).find(
+      (group) => group.key === projectScopeKey,
+    );
+    return new Set(projectGroup?.memberProjectRefs.map(scopedProjectKey) ?? []);
+  }, [projectGroupingSettings, projectScopeKey, projects]);
   const pending = useRef(
-    new Map<string, { environmentId: EnvironmentId; notification: Notification }>(),
+    new Map<
+      string,
+      { environmentId: EnvironmentId; projectKey: string; notification: Notification }
+    >(),
   );
-  const onNotification = useCallback((environmentId: EnvironmentId, notification: Notification) => {
-    pending.current.get(notification.tag)?.notification.close();
-    pending.current.set(notification.tag, { environmentId, notification });
-    setNotificationBadge(pending.current.size);
-  }, []);
+  const onNotification = useCallback(
+    (environmentId: EnvironmentId, projectKey: string, notification: Notification) => {
+      pending.current.get(notification.tag)?.notification.close();
+      pending.current.set(notification.tag, { environmentId, projectKey, notification });
+      setNotificationBadge(pending.current.size);
+    },
+    [],
+  );
 
   useEffect(() => {
     const activeIds = new Set(environmentIds);
     const count = pending.current.size;
-    for (const [tag, { environmentId, notification }] of pending.current) {
-      if (activeIds.has(environmentId)) continue;
+    for (const [tag, { environmentId, projectKey, notification }] of pending.current) {
+      if (
+        activeIds.has(environmentId) &&
+        (notificationProjectKeys === null || notificationProjectKeys.has(projectKey))
+      )
+        continue;
       notification.close();
       pending.current.delete(tag);
     }
     if (count !== pending.current.size) setNotificationBadge(pending.current.size);
-  }, [environmentIds]);
+  }, [environmentIds, notificationProjectKeys]);
 
   useEffect(() => {
     const clear = () => {
@@ -83,6 +107,7 @@ export function ThreadNotificationCoordinator() {
     <EnvironmentNotifications
       key={environmentId}
       environmentId={environmentId}
+      notificationProjectKeys={notificationProjectKeys}
       onNotification={onNotification}
     />
   ));
@@ -96,10 +121,16 @@ interface NotificationState {
 
 function EnvironmentNotifications({
   environmentId,
+  notificationProjectKeys,
   onNotification,
 }: {
   environmentId: EnvironmentId;
-  onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
+  notificationProjectKeys: ReadonlySet<string> | null;
+  onNotification: (
+    environmentId: EnvironmentId,
+    projectKey: string,
+    notification: Notification,
+  ) => void;
 }) {
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   // The shell reducer keeps the thread list and unchanged thread objects
@@ -146,6 +177,8 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, attention, completion });
+      const projectKey = scopedProjectKey(scopeProjectRef(environmentId, thread.projectId));
+      if (notificationProjectKeys !== null && !notificationProjectKeys.has(projectKey)) continue;
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
@@ -218,7 +251,7 @@ function EnvironmentNotifications({
           tag: `${environmentId}:${thread.id}`,
           silent: true,
         });
-        onNotification(environmentId, notification);
+        onNotification(environmentId, projectKey, notification);
         notification.addEventListener("click", () => {
           notification.close();
           window.focus();
@@ -239,6 +272,7 @@ function EnvironmentNotifications({
     inAppNotificationsEnabled,
     mode,
     navigate,
+    notificationProjectKeys,
     onNotification,
     threads,
   ]);

@@ -21,6 +21,27 @@ const state = vi.hoisted(() => ({
   limited: false,
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
+  projectScopeKey: null as string | null,
+  projects: [
+    {
+      environmentId: "env-1",
+      id: "project-1",
+      title: "Project one",
+      workspaceRoot: "/project-1",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T08:00:00.000Z",
+      updatedAt: "2026-09-13T08:00:00.000Z",
+    },
+    {
+      environmentId: "env-1",
+      id: "project-2",
+      title: "Project two",
+      workspaceRoot: "/project-2",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T08:00:00.000Z",
+      updatedAt: "2026-09-13T08:00:00.000Z",
+    },
+  ],
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -102,16 +123,35 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (
     select: (
-      settings: Pick<ClientSettings, "notificationMode" | "inAppNotificationsEnabled">,
+      settings: Pick<
+        ClientSettings,
+        | "notificationMode"
+        | "inAppNotificationsEnabled"
+        | "sidebarProjectGroupingMode"
+        | "sidebarProjectGroupingOverrides"
+      >,
     ) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp }),
+  ) =>
+    select({
+      notificationMode: state.mode,
+      inAppNotificationsEnabled: state.inApp,
+      sidebarProjectGroupingMode: "separate",
+      sidebarProjectGroupingOverrides: {},
+    }),
   getClientSettings: () => ({ notificationMode: state.mode }),
 }));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => ["env-1"],
 }));
+vi.mock("../state/entities", () => ({
+  useProjects: () => state.projects,
+}));
 vi.mock("../state/shell", () => ({
   environmentShell: { stateValueAtom: vi.fn() },
+}));
+vi.mock("../uiStateStore", () => ({
+  useUiStateStore: (select: (value: { sidebarProjectScopeKey: string | null }) => unknown) =>
+    select({ sidebarProjectScopeKey: state.projectScopeKey }),
 }));
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
@@ -156,6 +196,7 @@ beforeEach(() => {
     limited: false,
     subagent: false,
     background: [],
+    projectScopeKey: null,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -324,5 +365,16 @@ describe("thread notifications", () => {
       tag: "env-1:thread-1",
       silent: true,
     });
+  });
+
+  it("only alerts for threads in the window's project scope", async () => {
+    state.mode = "notifications-and-sound";
+    state.focused = false;
+    state.projectScopeKey = "env-1:/project-2";
+    await render();
+    await complete();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
   });
 });
