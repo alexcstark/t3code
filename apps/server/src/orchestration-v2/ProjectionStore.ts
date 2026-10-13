@@ -1,5 +1,7 @@
 import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import * as DatabaseReader from "../persistence/DatabaseReader.ts";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
 import type {
@@ -1891,6 +1893,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const databaseReader = yield* Effect.serviceOption(DatabaseReader.DatabaseReader);
+    const reader = Option.isSome(databaseReader) ? databaseReader.value : sql;
 
     // For run upserts: a snapshot without `path` keeps the value another event recorded there.
     const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
@@ -5245,7 +5249,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const projection = yield* getThreadProjection(threadId);
@@ -5407,7 +5411,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       throughEntryId,
       conversationOnly,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const index = yield* readTimelineIndex(threadId, new Set());
@@ -5572,7 +5576,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
       options,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const historyAnchor =
@@ -6380,12 +6384,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
-      sql
+      reader
         .withTransaction(readShellSnapshotRows(options))
         .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
 
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const rowsByThreadId = new Map<ThreadId, ShellThreadRow>();

@@ -1167,6 +1167,15 @@ export async function ensureSshServer(
     const effectiveRunnerId =
       preserveNewerRunner && state?.kind === "managed" ? state.runnerId : input.runnerId;
 
+    // Discovery can finish before a service exits during runner installation.
+    // Do not return its cached descriptor after that handover has completed.
+    if (
+      live !== undefined &&
+      !ownedProcessIsAlive({ pid: live.runtime.pid, startToken: live.process.startToken })
+    ) {
+      live = undefined;
+    }
+
     if (live !== undefined) {
       if (
         live.runtime.serviceManaged ||

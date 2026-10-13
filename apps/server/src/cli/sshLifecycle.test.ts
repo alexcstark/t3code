@@ -7,6 +7,9 @@ import * as NodePath from "node:path";
 import * as NodeEvents from "node:events";
 
 import { assert, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+
+vi.mock("node:fs", { spy: true });
 
 import { ensureSshServer, probeSshServer, stopSshServer } from "./sshLifecycle.ts";
 
@@ -218,6 +221,57 @@ function stopTestProvider(harness: Harness): void {
   } catch {}
 }
 
+it("skips a wildcard listener when choosing the managed server's loopback port", async () => {
+  const harness = makeHarness();
+  const holder = NodeNet.createServer((socket) => socket.destroy());
+  let activePid: number | undefined;
+  try {
+    holder.listen({ port: 0, host: "0.0.0.0" });
+    await NodeEvents.EventEmitter.once(holder, "listening");
+    const address = holder.address();
+    if (address === null || typeof address === "string") throw new Error("No wildcard port.");
+    const ensured = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: writeRunner(harness, "candidate.sh", "1.2.3"),
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: address.port,
+    });
+    activePid = ensured.remotePid;
+    assert.equal(ensured.decision, "cold-start");
+    assert.isAbove(ensured.remotePort, address.port);
+    assert.isBelow(ensured.remotePort, address.port + 200);
+    assert.isTrue(holder.listening);
+    assert.deepInclude(
+      await probeSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        expectedVersion: "1.2.3",
+        runnerId: "runner-one",
+        baseDir: harness.baseDir,
+      }),
+      { status: "ready", remotePid: activePid, remotePort: ensured.remotePort },
+    );
+  } finally {
+    await stopSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      baseDir: harness.baseDir,
+    });
+    stopTestProvider(harness);
+    if (activePid !== undefined && processExists(activePid)) {
+      try {
+        process.kill(-activePid, "SIGKILL");
+      } catch {}
+    }
+    if (holder.listening) await new Promise<void>((resolve) => holder.close(() => resolve()));
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
 it("reuses the same legacy-managed server without signaling it", async () => {
   const harness = makeHarness();
   const runner = writeRunner(harness, "candidate.sh", "1.2.3");
@@ -419,6 +473,70 @@ it("waits for a committed service child to publish its runtime", async () => {
       ownerKey: OWNER_KEY,
       baseDir: harness.baseDir,
     });
+    await stopTestProcess(child);
+    stopTestProvider(harness);
+    NodeFS.rmSync(harness.root, { recursive: true, force: true });
+  }
+}, 20_000);
+
+it("replaces an adopted server that exits while the new runner is being installed", async () => {
+  const harness = makeHarness();
+  const serviceRunner = writeRunner(harness, "service.sh", "1.2.3");
+  const child = spawnFakeServer(harness, serviceRunner, await reservePort(), true);
+  const ready = NodeEvents.EventEmitter.once(child, "message");
+  let activePid: number | undefined;
+  try {
+    await ready;
+    const previousPid = child.pid;
+    if (previousPid === undefined) throw new Error("Service fixture has no PID.");
+    stopTestProvider(harness);
+    const candidate = writeRunner(harness, "candidate.sh", "1.2.3");
+    const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    using _promotion = vi.spyOn(NodeFS, "renameSync").mockImplementation((from, to) => {
+      fs.renameSync(from, to);
+      if (from !== candidate) return;
+      // Runner promotion happens after discovery. Wait for this exact child's
+      // exit before letting adoption continue, as a service handover can do.
+      process.kill(previousPid, "SIGKILL");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          const state = NodeChildProcess.execFileSync(
+            "ps",
+            ["-o", "stat=", "-p", String(previousPid)],
+            { encoding: "utf8" },
+          );
+          if (state.includes("Z")) return;
+        } catch {
+          return;
+        }
+      }
+      throw new Error("Service fixture did not exit during promotion.");
+    });
+    const ensured = await ensureSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      expectedVersion: "1.2.3",
+      runnerId: "runner-one",
+      candidateRunnerPath: candidate,
+      stableRunnerPath: harness.stableRunnerPath,
+      baseDir: harness.baseDir,
+      defaultPort: await reservePort(),
+    });
+    activePid = ensured.remotePid;
+    assert.equal(ensured.decision, "cold-start");
+    assert.notEqual(ensured.remotePid, previousPid);
+    assert.isTrue(processExists(ensured.remotePid));
+  } finally {
+    await stopSshServer({
+      stateRoot: harness.stateRoot,
+      ownerKey: OWNER_KEY,
+      baseDir: harness.baseDir,
+    });
+    if (activePid !== undefined && processExists(activePid)) {
+      try {
+        process.kill(-activePid, "SIGKILL");
+      } catch {}
+    }
     await stopTestProcess(child);
     stopTestProvider(harness);
     NodeFS.rmSync(harness.root, { recursive: true, force: true });

@@ -20,9 +20,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as DatabaseReader from "../persistence/DatabaseReader.ts";
 
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
 
@@ -65,9 +67,9 @@ export function buildActiveShellSnapshot(input: {
 }
 
 /**
- * One transaction covers the reads so they agree; the threads are decoded after it commits,
- * because the server shares one SQLite connection and decoding a large shell takes longer than
- * reading it.
+ * Loads the thread shell, projects and sequence for the shell snapshots.
+ * One transaction covers the reads so they agree; the threads are decoded
+ * after it commits so decoding a large shell does not hold the read connection.
  */
 export const loadShellSnapshotParts = Effect.fn("ShellStream.loadShellSnapshotParts")(function* <
   E1,
@@ -80,15 +82,17 @@ export const loadShellSnapshotParts = Effect.fn("ShellStream.loadShellSnapshotPa
   readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E3>;
   readonly latestSequence: Effect.Effect<number, E4>;
 }) {
-  const read = yield* input.sql
-    .withTransaction(
-      Effect.all({
-        decodeThreads: input.readThreads,
-        projects: input.listProjects,
-        snapshotSequence: input.latestSequence,
-      }),
-    )
-    .pipe(NodeSqliteClient.readOnly);
+  const databaseReader = yield* Effect.serviceOption(DatabaseReader.DatabaseReader);
+  const readTransaction = Option.isSome(databaseReader)
+    ? databaseReader.value.withTransaction
+    : input.sql.withTransaction;
+  const read = yield* readTransaction(
+    Effect.all({
+      decodeThreads: input.readThreads,
+      projects: input.listProjects,
+      snapshotSequence: input.latestSequence,
+    }),
+  ).pipe(NodeSqliteClient.readOnly);
   return {
     projects: read.projects,
     threads: yield* read.decodeThreads,
