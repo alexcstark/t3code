@@ -27,10 +27,12 @@ import * as Socket from "effect/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
+  BearerConnectionTarget,
   ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -1085,10 +1087,13 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
-  it.effect("closes the session after 15 seconds without a frame from the server", () =>
+  it.effect("closes a loopback session after 15 seconds without a frame from the server", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
-      const session = yield* factory.connect(PREPARED);
+      const session = yield* factory.connect({
+        ...PREPARED,
+        socketUrl: "ws://127.0.0.1:3773/ws",
+      });
       const readyFiber = yield* Effect.forkChild(session.ready);
       const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
       const socket = yield* awaitSocket(sockets);
@@ -1113,6 +1118,82 @@ describe("RpcSessionFactory", () => {
         detail: "Test environment stopped responding.",
       });
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    ["remote primary", PREPARED],
+    [
+      "direct remote",
+      {
+        ...PREPARED,
+        target: new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "remote",
+        }),
+      },
+    ],
+    [
+      "SSH tunnel",
+      {
+        ...PREPARED,
+        socketUrl: "ws://127.0.0.1:3773/ws",
+        target: new SshConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "ssh",
+        }),
+      },
+    ],
+    [
+      "T3 Connect",
+      {
+        ...PREPARED,
+        target: new RelayConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+        }),
+      },
+    ],
+  ] as const)(
+    "keeps a %s session through a 30-second stall and still detects silence",
+    ([_route, prepared]) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(prepared);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(readyFiber);
+
+        yield* TestClock.adjust("30 seconds");
+        expect(closedFiber.pollUnsafe()).toBeUndefined();
+        expect(socket.readyState).toBe(TestWebSocket.OPEN);
+
+        const probeFiber = yield* Effect.forkChild(session.probe);
+        const probeRequest = yield* awaitRequest(socket, 1);
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Exit",
+            requestId: probeRequest.id,
+            exit: { _tag: "Success", value: {} },
+          }),
+        );
+        yield* Fiber.join(probeFiber);
+
+        yield* TestClock.adjust("60 seconds");
+        expect(closedFiber.pollUnsafe()).toBeUndefined();
+        yield* TestClock.adjust("5 seconds");
+        expect(yield* Fiber.join(closedFiber)).toMatchObject({
+          reason: "transport",
+          detail: `Test environment stopped responding.${
+            prepared.target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : ""
+          }`,
+        });
+        expect(socket.readyState).toBe(TestWebSocket.CLOSED);
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps reading replies after closing a stream with a full buffer", () =>
