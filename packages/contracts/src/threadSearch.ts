@@ -11,7 +11,7 @@ import {
 export const OrchestrationThreadSearchSource = Schema.Literals(["user", "assistant"]);
 export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSource.Type;
 
-// The server's SQLite client is synchronous and single-connection. Bound both
+// The server shares one SQLite connection. Bound both
 // scan input and response size so a search cannot monopolize that connection.
 export const OrchestrationSearchThreadsInput = Schema.Struct({
   query: TrimmedString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),

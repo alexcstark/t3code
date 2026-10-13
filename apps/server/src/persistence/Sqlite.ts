@@ -24,11 +24,8 @@ const layerSetup = Layer.effectDiscard(
     }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'`;
     if (tables[0]?.count === 0) yield* sql`PRAGMA auto_vacuum = INCREMENTAL;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
-    // FULL fsyncs the WAL on every commit, on the main thread. Every provider
-    // event is its own commit, so a slow or busy disk stalls the event loop
-    // and clients drop. In WAL mode NORMAL only fsyncs at checkpoints. It
-    // cannot corrupt the database and an app crash loses nothing; an OS crash
-    // or power loss can roll back commits since the last checkpoint.
+    // NORMAL avoids syncing every commit when the disk is busy. WAL remains
+    // corruption-safe, but an OS crash can drop the last few commits.
     yield* sql`PRAGMA synchronous = NORMAL;`;
     // Checkpoints are now the only sync, and macOS fsync() does not flush the
     // drive cache. F_FULLFSYNC makes them reach disk; other platforms ignore it.
@@ -58,7 +55,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
 
   return Layer.provideMerge(
     layerSetup,
-    NodeSqliteClient.layer({
+    NodeSqliteClient.layerWorker({
       filename: dbPath,
       readerWorker: true,
       // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
