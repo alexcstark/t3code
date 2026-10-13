@@ -441,6 +441,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { createComposerSendState } from "./chat/composerSendState";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -807,7 +808,7 @@ function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
 const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
   Atom.make({
     selections: null as ReadonlyArray<ModelSelection> | null,
-    sendInFlight: { current: false },
+    sendInFlight: createComposerSendState(appAtomRegistry),
     uncertainSubmissions: { current: new Map<string, ThreadId>() },
   }).pipe(Atom.keepAlive),
 );
@@ -1992,6 +1993,7 @@ export default function ChatView(props: ChatViewProps) {
   const fanoutStateAtom = draftFanoutStateAtom(routeThreadKey);
   const fanoutState = useAtomValue(fanoutStateAtom);
   const sendInFlightRef = fanoutState.sendInFlight;
+  const isSendInFlight = useAtomValue(sendInFlightRef.pendingAtom);
   const [resumingThreadKeys, setResumingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -8852,7 +8854,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
-  const onSend = async (
+  const submitComposerMessage = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -10243,6 +10245,23 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  const onSend = (...args: Parameters<typeof submitComposerMessage>) =>
+    sendInFlightRef
+      .run(() => submitComposerMessage(...args))
+      .catch((error: unknown) => {
+        if (activeThread) {
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to send message.",
+          );
+        }
+        if (!sendInFlightRef.current) {
+          resetLocalDispatch();
+          setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
+          setDockedDraftHeroThreadKey((current) => (current === activeThreadKey ? null : current));
+        }
+      });
+
   const onRespondToApproval = useCallback(
     async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
       if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
@@ -10653,7 +10672,7 @@ export default function ChatView(props: ChatViewProps) {
     return false;
   }
 
-  const onImplementPlanInNewThread = useCallback(async () => {
+  const submitPlanInNewThread = useCallback(async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
@@ -10809,7 +10828,23 @@ export default function ChatView(props: ChatViewProps) {
     startThreadTurn,
     environmentId,
     composerRef,
+    sendInFlightRef,
   ]);
+
+  const onImplementPlanInNewThread = useCallback(
+    () =>
+      sendInFlightRef.run(submitPlanInNewThread).catch((error: unknown) => {
+        if (!sendInFlightRef.current) resetLocalDispatch();
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start implementation thread",
+            description: error instanceof Error ? error.message : "Failed to send message.",
+          }),
+        );
+      }),
+    [sendInFlightRef, submitPlanInNewThread, resetLocalDispatch],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -11767,6 +11802,7 @@ export default function ChatView(props: ChatViewProps) {
                               canInterrupt={canInterruptRunningThread}
                               isConnecting={isConnecting}
                               isSendBusy={
+                                isSendInFlight ||
                                 (isSendBusy && !sendQueuesBehindSetup) ||
                                 (setupQueueSendThreadKey !== null &&
                                   setupQueueSendThreadKey === activeThreadKey) ||
