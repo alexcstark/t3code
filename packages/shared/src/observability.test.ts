@@ -5,6 +5,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Order from "effect/Order";
@@ -331,6 +332,66 @@ describe("observability", () => {
   });
 
   nodeServicesIt("node services", (it) => {
+    it.effect("bounds queued traces during a stalled write and drains them on close", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const gate = Promise.withResolvers<void>();
+          const originalWrite = RotatingFileSink.prototype.write;
+          const write = vi.spyOn(RotatingFileSink.prototype, "write");
+          write.mockImplementation(async function (this: RotatingFileSink, chunk) {
+            await gate.promise;
+            await originalWrite.call(this, chunk);
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => write.mockRestore()));
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 8 * 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+          try {
+            for (let index = 0; index < 256; index += 1) {
+              sink.push(makeRecord("ordered", String(index)));
+            }
+            for (let index = 0; index < 500; index += 1) {
+              sink.push(makeRecord("overflow", `${index}-${"x".repeat(64 * 1024)}`));
+            }
+            let closed = false;
+            const closing = yield* sink.close().pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  closed = true;
+                }),
+              ),
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            assert.equal(closed, false);
+            assert.equal(write.mock.calls.length, 1);
+            gate.resolve();
+            yield* Fiber.join(closing);
+            sink.push(makeRecord("after-close"));
+            yield* sink.flush;
+            const records = yield* readTraceRecords(tracePath);
+            assert.deepEqual(
+              records.slice(0, 256).map((record) => record.spanId),
+              Array.from({ length: 256 }, (_, index) => `span-ordered-${index}`),
+            );
+            assert.isAbove(records.length, 256);
+            assert.isBelow(records.length, 756);
+            assert.isAtMost(Number((yield* fileSystem.stat(tracePath)).size), 5 * 1024 * 1024);
+            assert.isFalse(records.some((record) => record.name === "after-close"));
+          } finally {
+            gate.resolve();
+          }
+        }),
+      ),
+    );
+
     it.effect("flushes buffered trace records on close", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -568,13 +629,13 @@ describe("observability", () => {
         for (let index = 0; index < 5; index += 1) {
           sink.push(makeRecord("lost"));
           yield* TestClock.adjust("1 second");
+          yield* sink.flush;
         }
 
-        // One write per batch, never a growing backlog.
-        assert.deepStrictEqual(
-          write.mock.calls.map(([chunk]) => String(chunk).split("\n").length - 1),
-          [256, 256, 256, 256, 1, 1, 1, 1, 1],
-        );
+        // Failed batches are discarded rather than retried with later records.
+        const attempted = write.mock.calls.flatMap(([chunk]) => String(chunk).trim().split("\n"));
+        assert.equal(attempted.length, 1_029);
+        assert.equal(new Set(attempted).size, 1_025);
         expect(logs).toEqual([
           { logLevel: "Warn", message: [expect.any(String), { filePath: tracePath }] },
         ]);
@@ -583,6 +644,7 @@ describe("observability", () => {
         yield* fileSystem.remove(tracePath, { recursive: true });
         sink.push(makeRecord("recovered"));
         yield* TestClock.adjust("1 second");
+        yield* sink.flush;
 
         const records = yield* readTraceRecords(tracePath);
         assert.deepStrictEqual(
@@ -597,6 +659,7 @@ describe("observability", () => {
         // Healthy flushes after the recovery log nothing.
         sink.push(makeRecord("healthy"));
         yield* TestClock.adjust("1 second");
+        yield* sink.flush;
         expect(logs).toHaveLength(2);
 
         // A new failure episode warns again.
@@ -604,6 +667,7 @@ describe("observability", () => {
         yield* fileSystem.makeDirectory(tracePath);
         sink.push(makeRecord("lost-again"));
         yield* TestClock.adjust("1 second");
+        yield* sink.flush;
         assert.deepStrictEqual(
           logs.map((log) => log.logLevel),
           ["Warn", "Info", "Warn"],

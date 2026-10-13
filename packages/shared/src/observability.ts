@@ -37,6 +37,7 @@ export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
 };
 
 const FLUSH_BUFFER_THRESHOLD = 256;
+const MAX_TRACE_BUFFER_BYTES = 4 * 1024 * 1024;
 const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
@@ -371,7 +372,11 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     throwOnError: true,
   });
 
-  let buffer: Array<string> = [];
+  let buffer: Array<{ line: string; bytes: number }> = [];
+  let bufferBytes = 0;
+  let bufferDroppedCount = 0;
+  let activeFlush: Promise<void> | undefined;
+  let closed = false;
   // A failure episode starts at the first dropped record and ends when a flush
   // sees that the latest write succeeded. Flush checks once per window, so a
   // disk that flaps inside one window stays one episode.
@@ -384,17 +389,13 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     durationMs: 0,
   };
 
-  const flushUnsafe = () => {
-    if (buffer.length === 0) {
-      return;
-    }
-
-    const records = buffer;
-    buffer = [];
+  const writeRecords = async (records: typeof buffer) => {
     let persistedCount = 0;
 
     while (persistedCount < records.length) {
-      const firstRecordBytes = textEncoder.encode(records[persistedCount]).byteLength;
+      const firstRecord = records[persistedCount];
+      if (firstRecord === undefined) break;
+      const firstRecordBytes = firstRecord.bytes;
       if (firstRecordBytes > options.maxBytes) {
         persistedCount += 1;
         continue;
@@ -403,16 +404,21 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       let nextIndex = persistedCount + 1;
       let chunkBytes = firstRecordBytes;
       while (nextIndex < records.length) {
-        const nextRecordBytes = textEncoder.encode(records[nextIndex]).byteLength;
+        const nextRecord = records[nextIndex];
+        if (nextRecord === undefined) break;
+        const nextRecordBytes = nextRecord.bytes;
         if (chunkBytes + nextRecordBytes > options.maxBytes) break;
         chunkBytes += nextRecordBytes;
         nextIndex += 1;
       }
 
-      const chunk = records.slice(persistedCount, nextIndex).join("");
+      const chunk = records
+        .slice(persistedCount, nextIndex)
+        .map((record) => record.line)
+        .join("");
       const startedAt = performance.now();
       try {
-        sink.write(chunk);
+        await sink.write(chunk);
       } catch {
         // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
         // Retrying it would grow the backlog, and every later push would
@@ -431,10 +437,30 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
+  const startFlush = () => {
+    if (activeFlush !== undefined || buffer.length === 0) return;
+    const records = buffer;
+    buffer = [];
+    bufferBytes = 0;
+    activeFlush = writeRecords(records).finally(() => {
+      activeFlush = undefined;
+      if (buffer.length >= FLUSH_BUFFER_THRESHOLD || bufferBytes >= MAX_TRACE_BUFFER_BYTES / 2) {
+        startFlush();
+      }
+    });
+  };
+
   // Logs once when writes start failing and once when they recover, so a disk
   // that stays broken costs one line, not one per flush.
   const flush = Effect.gen(function* () {
-    flushUnsafe();
+    yield* Effect.promise(async () => {
+      while (true) {
+        startFlush();
+        const pending = activeFlush;
+        if (pending === undefined) break;
+        await pending;
+      }
+    });
     const stats = pendingFlushStats;
     pendingFlushStats = {
       logicalWriteBytes: 0,
@@ -443,6 +469,14 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     };
     if (stats.count > 0 && options.onFlush) {
       yield* options.onFlush(stats).pipe(Effect.ignore);
+    }
+    if (bufferDroppedCount > 0) {
+      const count = bufferDroppedCount;
+      bufferDroppedCount = 0;
+      yield* Effect.logWarning("Trace buffer filled while writing, dropping records", {
+        filePath: options.filePath,
+        droppedCount: count,
+      });
     }
     if (droppedCount > 0 && !failureReported) {
       failureReported = true;
@@ -465,7 +499,11 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
   );
 
-  yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
+  const close = () =>
+    Effect.sync(() => {
+      closed = true;
+    }).pipe(Effect.andThen(flush));
+  yield* Effect.addFinalizer(() => close().pipe(Effect.ignore));
   yield* Effect.forkScoped(
     Effect.sleep(`${options.batchWindowMs} millis`).pipe(Effect.andThen(flush), Effect.forever),
   );
@@ -473,17 +511,28 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   return {
     filePath: options.filePath,
     push(record) {
+      if (closed) return;
       try {
-        buffer.push(`${JSON.stringify(record)}\n`);
-        if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {
-          flushUnsafe();
+        const line = `${JSON.stringify(record)}\n`;
+        const bytes = textEncoder.encode(line).byteLength;
+        if (bytes > Math.min(options.maxBytes, MAX_TRACE_BUFFER_BYTES)) return;
+        // The producer keeps running during disk I/O, so pending records need
+        // a fixed budget rather than an unbounded chain of writes.
+        if (bufferBytes + bytes > MAX_TRACE_BUFFER_BYTES) {
+          bufferDroppedCount += 1;
+          return;
+        }
+        buffer.push({ line, bytes });
+        bufferBytes += bytes;
+        if (buffer.length >= FLUSH_BUFFER_THRESHOLD || bufferBytes >= MAX_TRACE_BUFFER_BYTES / 2) {
+          startFlush();
         }
       } catch {
         return;
       }
     },
     flush,
-    close: () => flush,
+    close,
   } satisfies TraceSink;
 });
 

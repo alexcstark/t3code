@@ -4,9 +4,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { ThreadId } from "@t3tools/contracts";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
@@ -249,13 +250,25 @@ describe("EventNdjsonLogger", () => {
       const threadPath = ownedLogPath(basePath, "thread-batched");
 
       try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        const persisted = yield* Deferred.make<void>();
+        const attribution = yield* ResourceAttribution.make();
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 1_000,
+          attribution: {
+            ...attribution,
+            record: (input) =>
+              attribution
+                .record(input)
+                .pipe(Effect.andThen(Deferred.succeed(persisted, undefined))),
+          },
+        });
         yield* store
           .logger("native")
           .write({ id: "batched-event" }, ThreadId.make("thread-batched"));
 
         assert.equal(NodeFS.existsSync(threadPath), false);
         yield* TestClock.adjust(1_000);
+        yield* Deferred.await(persisted);
         assert.equal(NodeFS.existsSync(threadPath), true);
         yield* store.close();
       } finally {
@@ -271,7 +284,18 @@ describe("EventNdjsonLogger", () => {
       const threadPath = ownedLogPath(basePath, "thread-interrupted");
 
       try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        const persisted = yield* Deferred.make<void>();
+        const attribution = yield* ResourceAttribution.make();
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 1_000,
+          attribution: {
+            ...attribution,
+            record: (input) =>
+              attribution
+                .record(input)
+                .pipe(Effect.andThen(Deferred.succeed(persisted, undefined))),
+          },
+        });
         const logger = store.logger("native");
         const interruptedWrite = yield* logger
           .write({ id: "possibly-interrupted" }, ThreadId.make("thread-interrupted"))
@@ -281,6 +305,7 @@ describe("EventNdjsonLogger", () => {
         yield* logger.write({ id: "accepted" }, ThreadId.make("thread-interrupted"));
 
         yield* TestClock.adjust(1_000);
+        yield* Deferred.await(persisted);
 
         assert.equal(NodeFS.existsSync(threadPath), true);
         assert.include(NodeFS.readFileSync(threadPath, "utf8"), '{"id":"accepted"}');
@@ -788,7 +813,7 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
-  it("attributes batches that were written before a later chunk fails", () => {
+  it("attributes batches that were written before a later chunk fails", async () => {
     const records: ReadonlyArray<PendingRecord> = [
       {
         stream: "native",
@@ -806,10 +831,10 @@ describe("EventNdjsonLogger", () => {
     const attributed: Array<PendingRecord> = [];
     let writes = 0;
 
-    assert.throws(() =>
+    await expect(
       writeBatchedMessages(
         {
-          write: () => {
+          write: async () => {
             writes += 1;
             if (writes === 2) throw new Error("simulated disk exhaustion");
           },
@@ -818,7 +843,7 @@ describe("EventNdjsonLogger", () => {
         5,
         (written) => attributed.push(...written),
       ),
-    );
+    ).rejects.toThrow("simulated disk exhaustion");
     assert.deepEqual(attributed, [records[0]]);
   });
 

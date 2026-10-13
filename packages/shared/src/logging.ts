@@ -47,6 +47,8 @@ export class RotatingFileSink {
   private readonly maxFiles: number;
   private readonly throwOnError: boolean;
   private currentSize = 0;
+  private initialized = false;
+  private pendingWrite = Promise.resolve();
 
   constructor(options: RotatingFileSinkOptions) {
     if (options.maxBytes < 1) {
@@ -68,111 +70,93 @@ export class RotatingFileSink {
     this.maxBytes = options.maxBytes;
     this.maxFiles = options.maxFiles;
     this.throwOnError = options.throwOnError ?? false;
-
-    try {
-      NodeFS.mkdirSync(NodePath.dirname(this.filePath), { recursive: true });
-    } catch (cause) {
-      throw new RotatingFileSinkError({
-        operation: "initialize",
-        filePath: this.filePath,
-        cause,
-      });
-    }
-    this.pruneOverflowBackups();
-    this.currentSize = this.readCurrentSize();
   }
 
-  write(chunk: string | Buffer): void {
+  /** Writes are serialized so rotation cannot overtake an earlier append. */
+  write(chunk: string | Buffer): Promise<void> {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-    if (buffer.length === 0) return;
+    if (buffer.length === 0) return Promise.resolve();
+    const write = this.pendingWrite.then(() => this.append(buffer));
+    // A failed write is reported to its caller; a later write can recover.
+    this.pendingWrite = write.catch(() => undefined);
+    return write;
+  }
 
+  private async initialize(): Promise<void> {
+    try {
+      await NodeFS.promises.mkdir(NodePath.dirname(this.filePath), { recursive: true });
+    } catch (cause) {
+      throw new RotatingFileSinkError({ operation: "initialize", filePath: this.filePath, cause });
+    }
+    await this.pruneOverflowBackups();
+    this.currentSize = await this.readCurrentSize();
+    this.initialized = true;
+  }
+
+  private async append(buffer: Buffer): Promise<void> {
+    if (!this.initialized) await this.initialize();
     try {
       if (this.currentSize > 0 && this.currentSize + buffer.length > this.maxBytes) {
-        this.rotate();
+        await this.rotate();
       }
-
-      NodeFS.appendFileSync(this.filePath, buffer);
+      await NodeFS.promises.appendFile(this.filePath, buffer);
       this.currentSize += buffer.length;
     } catch (cause) {
-      if (isRotatingFileSinkError(cause)) {
-        throw cause;
-      }
+      if (isRotatingFileSinkError(cause)) throw cause;
       if (this.throwOnError) {
-        throw new RotatingFileSinkError({
-          operation: "write",
-          filePath: this.filePath,
-          cause,
-        });
+        throw new RotatingFileSinkError({ operation: "write", filePath: this.filePath, cause });
       }
-      this.currentSize = this.readCurrentSize();
+      this.currentSize = await this.readCurrentSize();
     }
   }
 
-  private rotate(): void {
+  private async moveIfPresent(source: string, target: string): Promise<void> {
     try {
-      const oldest = this.withSuffix(this.maxFiles);
-      if (NodeFS.existsSync(oldest)) {
-        NodeFS.rmSync(oldest, { force: true });
-      }
+      await NodeFS.promises.rename(source, target);
+    } catch (cause) {
+      if (!isFileNotFoundError(cause)) throw cause;
+    }
+  }
 
+  private async rotate(): Promise<void> {
+    try {
+      await NodeFS.promises.rm(this.withSuffix(this.maxFiles), { force: true });
       for (let index = this.maxFiles - 1; index >= 1; index -= 1) {
-        const source = this.withSuffix(index);
-        const target = this.withSuffix(index + 1);
-        if (NodeFS.existsSync(source)) {
-          NodeFS.renameSync(source, target);
-        }
+        await this.moveIfPresent(this.withSuffix(index), this.withSuffix(index + 1));
       }
-
-      if (NodeFS.existsSync(this.filePath)) {
-        NodeFS.renameSync(this.filePath, this.withSuffix(1));
-      }
-
+      await this.moveIfPresent(this.filePath, this.withSuffix(1));
       this.currentSize = 0;
     } catch (cause) {
       if (this.throwOnError) {
-        throw new RotatingFileSinkError({
-          operation: "rotate",
-          filePath: this.filePath,
-          cause,
-        });
+        throw new RotatingFileSinkError({ operation: "rotate", filePath: this.filePath, cause });
       }
-      this.currentSize = this.readCurrentSize();
+      this.currentSize = await this.readCurrentSize();
     }
   }
 
-  private pruneOverflowBackups(): void {
+  private async pruneOverflowBackups(): Promise<void> {
     try {
       const dir = NodePath.dirname(this.filePath);
       const baseName = NodePath.basename(this.filePath);
-      for (const entry of NodeFS.readdirSync(dir)) {
+      for (const entry of await NodeFS.promises.readdir(dir)) {
         if (!entry.startsWith(`${baseName}.`)) continue;
         const suffix = Number(entry.slice(baseName.length + 1));
         if (!Number.isInteger(suffix) || suffix <= this.maxFiles) continue;
-        NodeFS.rmSync(NodePath.join(dir, entry), { force: true });
+        await NodeFS.promises.rm(NodePath.join(dir, entry), { force: true });
       }
     } catch (cause) {
       if (this.throwOnError) {
-        throw new RotatingFileSinkError({
-          operation: "prune",
-          filePath: this.filePath,
-          cause,
-        });
+        throw new RotatingFileSinkError({ operation: "prune", filePath: this.filePath, cause });
       }
     }
   }
 
-  private readCurrentSize(): number {
+  private async readCurrentSize(): Promise<number> {
     try {
-      return NodeFS.statSync(this.filePath).size;
+      return (await NodeFS.promises.stat(this.filePath)).size;
     } catch (cause) {
-      if (isFileNotFoundError(cause)) {
-        return 0;
-      }
-      throw new RotatingFileSinkError({
-        operation: "read",
-        filePath: this.filePath,
-        cause,
-      });
+      if (isFileNotFoundError(cause)) return 0;
+      throw new RotatingFileSinkError({ operation: "read", filePath: this.filePath, cause });
     }
   }
 

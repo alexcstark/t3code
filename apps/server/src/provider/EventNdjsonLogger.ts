@@ -369,19 +369,19 @@ export function boundProviderEventForLogging(event: unknown): unknown {
   return summarizeProviderEvent(event);
 }
 
-export function writeBatchedMessages(
+export async function writeBatchedMessages(
   sink: Pick<RotatingFileSink, "write">,
   records: ReadonlyArray<PendingRecord>,
   maxBytes: number,
   onWritten: (records: ReadonlyArray<PendingRecord>) => void,
-): void {
+): Promise<void> {
   let pendingRecords: Array<PendingRecord> = [];
   let pendingBytes = 0;
 
-  const flush = () => {
+  const flush = async () => {
     if (pendingRecords.length === 0) return;
     const writtenRecords = pendingRecords;
-    sink.write(writtenRecords.map((record) => record.line).join(""));
+    await sink.write(writtenRecords.map((record) => record.line).join(""));
     onWritten(writtenRecords);
     pendingRecords = [];
     pendingBytes = 0;
@@ -389,45 +389,49 @@ export function writeBatchedMessages(
 
   for (const record of records) {
     if (pendingBytes > 0 && pendingBytes + record.bytes > maxBytes) {
-      flush();
+      await flush();
     }
     pendingRecords.push(record);
     pendingBytes += record.bytes;
     if (pendingBytes >= maxBytes) {
-      flush();
+      await flush();
     }
   }
-  flush();
+  await flush();
 }
 
-function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
+async function isProviderLogFile(
+  filePath: string,
+  fileName: string,
+  filePrefix: string,
+): Promise<boolean> {
   if (!/\.log(?:\.\d+)?$/u.test(fileName)) return false;
   if (fileName.startsWith(filePrefix)) return true;
 
-  const descriptor = NodeFS.openSync(filePath, "r");
+  const descriptor = await NodeFS.promises.open(filePath, "r");
   try {
     const header = Buffer.alloc(256);
-    const bytesRead = NodeFS.readSync(descriptor, header, 0, header.byteLength, 0);
+    const { bytesRead } = await descriptor.read(header, 0, header.byteLength, 0);
     return /^\[[^\]\r\n]+\] (?:NTIVE|CANON|ORCH): /u.test(header.toString("utf8", 0, bytesRead));
   } finally {
-    NodeFS.closeSync(descriptor);
+    await descriptor.close();
   }
 }
 
-function enforceRetention(input: {
+async function enforceRetention(input: {
   readonly directory: string;
   readonly maxTotalBytes: number;
   readonly maxAgeMs: number;
   readonly activeFilePaths: ReadonlySet<string>;
   readonly filePrefix: string;
   readonly now: number;
-}): RetentionResult {
+}): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
   const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
 
   let entries: ReadonlyArray<NodeFS.Dirent>;
   try {
-    entries = NodeFS.readdirSync(input.directory, { withFileTypes: true });
+    entries = await NodeFS.promises.readdir(input.directory, { withFileTypes: true });
   } catch (cause) {
     return { failures: [{ filePath: input.directory, cause }] };
   }
@@ -436,8 +440,8 @@ function enforceRetention(input: {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
     try {
-      if (!isProviderLogFile(filePath, entry.name, input.filePrefix)) continue;
-      const stat = NodeFS.statSync(filePath);
+      if (!(await isProviderLogFile(filePath, entry.name, input.filePrefix))) continue;
+      const stat = await NodeFS.promises.stat(filePath);
       files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
     } catch (cause) {
       failures.push({ filePath, cause });
@@ -445,10 +449,10 @@ function enforceRetention(input: {
   }
 
   let totalBytes = files.reduce((total, file) => total + file.size, 0);
-  const remove = (file: (typeof files)[number]) => {
+  const remove = async (file: (typeof files)[number]) => {
     if (input.activeFilePaths.has(file.filePath)) return false;
     try {
-      NodeFS.rmSync(file.filePath, { force: true });
+      await NodeFS.promises.rm(file.filePath, { force: true });
       totalBytes -= file.size;
       return true;
     } catch (cause) {
@@ -457,16 +461,18 @@ function enforceRetention(input: {
     }
   };
 
-  const retained = files.filter((file) => {
-    if (input.now - file.mtimeMs <= input.maxAgeMs) return true;
-    return !remove(file);
-  });
+  const retained: typeof files = [];
+  for (const file of files) {
+    if (input.now - file.mtimeMs <= input.maxAgeMs || !(await remove(file))) {
+      retained.push(file);
+    }
+  }
 
   for (const file of retained.toSorted(
     (left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath),
   )) {
     if (totalBytes <= input.maxTotalBytes) break;
-    remove(file);
+    await remove(file);
   }
 
   return { failures };
@@ -517,7 +523,7 @@ function resolveOptions(
   return Effect.succeed(resolved);
 }
 
-function drainPending(input: {
+async function drainPending(input: {
   readonly directory: string;
   readonly options: ResolvedOptions;
   readonly state: StoreState;
@@ -525,7 +531,7 @@ function drainPending(input: {
   readonly now: number;
   readonly timerFired: boolean;
   readonly close: boolean;
-}): readonly [DrainResult, StoreState] {
+}): Promise<readonly [DrainResult, StoreState]> {
   if (input.state.closed) {
     return [{ attributions: [], failures: [] }, input.state];
   }
@@ -563,7 +569,7 @@ function drainPending(input: {
     }
 
     try {
-      writeBatchedMessages(sink, records, input.options.maxBytes, (writtenRecords) => {
+      await writeBatchedMessages(sink, records, input.options.maxBytes, (writtenRecords) => {
         for (const record of writtenRecords) {
           const current = attributionByStream.get(record.stream) ?? {
             count: 0,
@@ -584,7 +590,7 @@ function drainPending(input: {
   const retentionDue =
     input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
   const retention = retentionDue
-    ? enforceRetention({
+    ? await enforceRetention({
         directory: input.directory,
         maxTotalBytes: input.options.maxTotalBytes,
         maxAgeMs: input.options.maxAgeMs,
@@ -635,13 +641,13 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   const directory = NodePath.dirname(filePath);
   const filePrefix = providerLogPrefix(filePath);
 
-  yield* Effect.try({
-    try: () => NodeFS.mkdirSync(directory, { recursive: true }),
+  yield* Effect.tryPromise({
+    try: () => NodeFS.promises.mkdir(directory, { recursive: true }),
     catch: (cause) => new EventNdjsonLogDirectoryError({ directory, cause }),
   });
 
   const initializedAt = yield* Clock.currentTimeMillis;
-  const initialRetention = yield* Effect.sync(() =>
+  const initialRetention = yield* Effect.promise(() =>
     enforceRetention({
       directory,
       maxTotalBytes: resolved.maxTotalBytes,
@@ -671,7 +677,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   const flush = Effect.fnUntraced(function* (timerFired: boolean, close: boolean) {
     const startedAt = yield* Clock.currentTimeMillis;
     const result = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-      Effect.sync(() =>
+      Effect.promise(() =>
         drainPending({
           directory,
           options: resolved,
@@ -682,7 +688,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
           close,
         }),
       ),
-    );
+    ).pipe(Effect.uninterruptible);
 
     for (const failure of result.failures) {
       yield* logWarning("provider event log write or retention failed", {
