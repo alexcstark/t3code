@@ -117,8 +117,8 @@ export const compactDatabase = Effect.gen(function* () {
         }
       }
     }
-    // Both discovery and deletion use the synchronous connection. Yield even
-    // when this page has nothing to delete so startup and requests can progress.
+    // Yield between bounded pages so other database requests can progress,
+    // including when this page has nothing to delete.
     yield* Effect.yieldNow;
     if (obsolete.length > 0) {
       yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;

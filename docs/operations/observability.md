@@ -115,9 +115,11 @@ waiting. Read CPU together with page faults:
 - High `cpuSystemMs` with many page faults means memory pressure. Major faults are reads from disk or swap.
   On macOS, reads from compressed memory are minor faults plus system CPU.
 - High `cpuUserMs` with few page faults means JavaScript work or garbage collection.
-- Low CPU with few major page faults points at synchronous disk I/O, such as SQLite reads or trace
-  file writes.
+- Low CPU with few major page faults points at synchronous disk I/O, such as trace file writes.
 - Many `involuntaryContextSwitches` mean other processes were competing for the CPU.
+
+The persistent SQLite connection runs in a worker. Slow queries can delay database requests
+without stalling the main event loop; check `sql.execute` spans separately.
 
 ### Related Artifacts
 
