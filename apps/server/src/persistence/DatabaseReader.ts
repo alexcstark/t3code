@@ -29,9 +29,10 @@ export const layerFile = (filename: string) =>
         withTransaction: (effect) =>
           Effect.serviceOption(writer.transactionService).pipe(
             Effect.flatMap((transaction) => {
-              // Nested snapshots reuse their reader lease; reads inside a
-              // command must see that command's uncommitted changes.
-              if (Option.isSome(transaction)) return writer.withTransaction(effect);
+              // Reuse the command or reader snapshot already in scope. The
+              // reader alias does not carry the writer's private savepoint
+              // semaphore, so starting a writer transaction here fails.
+              if (Option.isSome(transaction)) return effect;
               return reader.withTransaction(
                 Effect.flatMap(Effect.serviceOption(reader.transactionService), (connection) =>
                   // Statements captured by stores use the writer's transaction

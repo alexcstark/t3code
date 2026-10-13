@@ -20,7 +20,7 @@ const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     );
   }).pipe(Effect.provide(NodeServices.layer));
 
-it.effect("keeps messages and their cursor consistent across a concurrent commit", () =>
+it.effect("keeps nested snapshot reads consistent across a concurrent commit", () =>
   withDatabase(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -46,7 +46,7 @@ it.effect("keeps messages and their cursor consistent across a concurrent commit
             const messages = yield* sql`SELECT body FROM sync_messages`;
             yield* Deferred.succeed(release, undefined);
             yield* Fiber.join(write);
-            const cursor = yield* sql`SELECT sequence FROM sync_messages`;
+            const cursor = yield* reader.withTransaction(sql`SELECT sequence FROM sync_messages`);
             return { messages, cursor };
           }),
         );
