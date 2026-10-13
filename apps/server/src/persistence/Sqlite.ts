@@ -9,6 +9,7 @@ import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 import * as DatabaseReader from "./DatabaseReader.ts";
+import * as DatabaseCheckpoint from "./DatabaseCheckpoint.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -45,7 +46,30 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       },
     }),
   );
-  return Layer.merge(writer, DatabaseReader.layerFile(dbPath).pipe(Layer.provide(writer)));
+  const maintenance = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const [row] = yield* sql<{ version: string }>`SELECT sqlite_version() AS version`;
+      // SQLite 3.51.3 fixes the concurrent WAL-reset corruption race and
+      // supports NOOP checkpoints. Older Node runtimes retain auto-checkpoint.
+      // https://sqlite.org/wal.html#walreset
+      if (row === undefined || !DatabaseCheckpoint.supportsBackgroundCheckpoint(row.version)) {
+        yield* Effect.logWarning("sqlite.background-checkpoint.unavailable", {
+          sqliteVersion: row?.version,
+        });
+        return;
+      }
+      // Build the checkpointer before disabling the writer's fallback. Migrations
+      // keep SQLite's default auto-checkpoint while they run during setup.
+      yield* Layer.build(DatabaseCheckpoint.layerFile(dbPath, sql));
+      yield* sql`PRAGMA wal_autocheckpoint = 0`;
+    }),
+  ).pipe(Layer.provide(writer));
+  return Layer.mergeAll(
+    writer,
+    maintenance,
+    DatabaseReader.layerFile(dbPath).pipe(Layer.provide(writer)),
+  );
 }, Layer.unwrap);
 
 export const layerMemory = Layer.provideMerge(
