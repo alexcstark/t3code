@@ -34,8 +34,13 @@ const makeHarness = Effect.fnUntraced(function* () {
   const values = new Map<string, FilesystemEntryMetadata | null>();
   const failure = { denied: false };
   const response = { wait: Effect.void as Effect.Effect<void> };
-  const makeSession = () =>
+  const makeSession = (
+    capabilities: { filesystemMetadata?: boolean } = { filesystemMetadata: true },
+  ) =>
     ({
+      initialConfig: Effect.succeed({
+        environment: { capabilities },
+      }),
       client: {
         [WS_METHODS.filesystemGetMetadata]: (input: FilesystemGetMetadataInput) =>
           Effect.gen(function* () {
@@ -119,6 +124,27 @@ const makeHarness = Effect.fnUntraced(function* () {
 });
 
 describe("file metadata", () => {
+  it.effect(
+    "uses listing hints without probing metadata on older servers and rechecks after an upgrade",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* SubscriptionRef.set(h.session, Option.some(h.makeSession({})));
+        yield* h.seed("listed", "directory");
+        expect(yield* h.read("/workspace/listed")).toEqual({ kind: "directory" });
+        expect(yield* h.read("/workspace/unknown")).toBeNull();
+        expect(h.batches).toHaveLength(0);
+
+        h.values.set("/workspace/unknown", { kind: "file", byteLength: 20 });
+        yield* SubscriptionRef.set(h.session, Option.some(h.makeSession()));
+        h.registry.refresh(h.atom("/workspace/unknown"));
+        expect(yield* h.read("/workspace/unknown")).toEqual({ kind: "file", byteLength: 20 });
+        expect(new Set(h.batches.flat())).toEqual(
+          new Set(["/workspace/listed", "/workspace/unknown"]),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("does not seed a different path from a literal name with a numeric suffix", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
