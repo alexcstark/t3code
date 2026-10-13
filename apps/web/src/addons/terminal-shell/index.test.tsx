@@ -11,7 +11,12 @@ describe("terminal shell addon", () => {
 
   it("renders ready status without working-only controls", () => {
     const markup = renderToStaticMarkup(
-      <TerminalShellStatus activeTerminalCount={0} isWorking={false} workingStepLabel={null} />,
+      <TerminalShellStatus
+        activeTerminalCount={0}
+        activityState="ready"
+        canInterrupt={false}
+        workingStepLabel={null}
+      />,
     );
 
     expect(markup).toContain("Ready");
@@ -21,7 +26,12 @@ describe("terminal shell addon", () => {
 
   it("renders working status and pluralizes active terminals", () => {
     const markup = renderToStaticMarkup(
-      <TerminalShellStatus activeTerminalCount={2} isWorking workingStepLabel="Running command" />,
+      <TerminalShellStatus
+        activeTerminalCount={2}
+        activityState="working"
+        canInterrupt
+        workingStepLabel="Running command"
+      />,
     );
 
     expect(markup).toContain('data-terminal-shell-status-state="working"');

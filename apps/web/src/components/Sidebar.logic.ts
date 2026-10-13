@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -1031,10 +1034,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.hasPendingUserInput) {
     return "input";
   }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
+  if (threadRuntimeIsActive(thread.runtime)) {
     return "working";
   }
   if (thread.runtime?.status === "idle") {

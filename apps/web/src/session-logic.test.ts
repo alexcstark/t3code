@@ -26,6 +26,7 @@ import {
   deriveActivePlanState,
   deriveCanInterruptRunningThread,
   deriveIsWorking,
+  deriveThreadActivityState,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
@@ -110,7 +111,7 @@ describe("V2 session presentation", () => {
     expect(deriveCanInterruptRunningThread(true, null)).toBe(false);
   });
 
-  it("does not present Thinking/Working while the run is only waiting", () => {
+  it("keeps a waiting run Working without presenting Thinking", () => {
     const idle = {
       phase: "ready" as const,
       runtimeStatus: "completed" as const,
@@ -130,6 +131,30 @@ describe("V2 session presentation", () => {
       }),
     ).toBe(true);
     expect(deriveIsWorking(idle)).toBe(false);
+    const waitingRuntime: ThreadRuntimeSummary = {
+      status: "waiting",
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("claude-default"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    };
+    const isWorking = deriveIsWorking({ ...idle, phase: "running", runtimeStatus: "waiting" });
+    expect(deriveThreadActivityState({ isWorking, runtime: waitingRuntime })).toBe("working");
+    expect(
+      deriveThreadActivityState({
+        isWorking: false,
+        runtime: { ...waitingRuntime, status: "idle" },
+      }),
+    ).toBe("waiting");
+    expect(
+      deriveThreadActivityState({
+        isWorking: false,
+        runtime: { ...waitingRuntime, status: "completed" },
+      }),
+    ).toBe("ready");
+    expect(deriveThreadActivityState({ isWorking: false, runtime: null })).toBe("ready");
+    expect(deriveThreadActivityState({ isWorking: true, runtime: null })).toBe("working");
   });
 
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {

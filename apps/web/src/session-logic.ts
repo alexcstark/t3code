@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
   type OrchestrationV2ExecutionNode,
@@ -1079,8 +1082,8 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
 }
 
 /**
- * Whether chat should present live agent work (Working timer, Thinking filler,
- * terminal Working). `waiting` still maps to phase "running" for Stop, but the
+ * Whether chat should present live agent work (Working timer, Thinking filler).
+ * `waiting` still maps to phase "running" for Stop, but the
  * model is not generating then (checkpoint or blocked wait), so a shimmering
  * Thinking row would lie.
  */
@@ -1096,6 +1099,15 @@ export function deriveIsWorking(input: {
   if (input.runlessWorkStartedAt !== null) return true;
   if (input.phase !== "running") return false;
   return input.runtimeStatus !== "waiting";
+}
+
+/** The thread stays busy while its run waits, even when the model is silent. */
+export function deriveThreadActivityState(input: {
+  readonly isWorking: boolean;
+  readonly runtime: ThreadRuntimeSummary | null | undefined;
+}): "working" | "waiting" | "ready" {
+  if (input.isWorking || threadRuntimeIsActive(input.runtime)) return "working";
+  return input.runtime?.status === "idle" ? "waiting" : "ready";
 }
 
 /**

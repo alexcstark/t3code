@@ -192,6 +192,7 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveIsWorking,
+  deriveThreadActivityState,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   selectHandoffImageResources,
   type TimelineEntriesProjection,
@@ -3637,7 +3638,7 @@ export default function ChatView(props: ChatViewProps) {
     !compactionSettled;
   // A rewind is not agent work: the composer shows "Rewinding conversation"
   // instead of the timeline growing a Thinking row. `waiting` stays interruptible
-  // via derivePhase but must not paint Thinking / Working as if the model is live.
+  // via derivePhase but must not paint Thinking as if the model is live.
   const isWorking = deriveIsWorking({
     phase,
     runtimeStatus: activeRuntime?.status,
@@ -11666,8 +11667,12 @@ export default function ChatView(props: ChatViewProps) {
                   {!isDraftHeroState ? (
                     <TerminalShellStatus
                       activeTerminalCount={terminalUiState.terminalIds.length}
-                      isWorking={isWorking}
-                      workingStepLabel={workingStepLabel}
+                      activityState={deriveThreadActivityState({
+                        isWorking,
+                        runtime: activeRuntime,
+                      })}
+                      canInterrupt={canInterruptRunningThread}
+                      workingStepLabel={isWorking ? workingStepLabel : null}
                     />
                   ) : null}
                   {isDraftHeroState ? (
