@@ -36,6 +36,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { replayAndBufferProjectedLiveEvents } from "../orchestration-v2/LiveStreamBudget.ts";
+import * as DatabaseReader from "./DatabaseReader.ts";
 
 import {
   toPersistenceDecodeError,
@@ -295,6 +296,10 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const databaseReader = yield* Effect.serviceOption(DatabaseReader.DatabaseReader);
+  const readTransaction = Option.isSome(databaseReader)
+    ? databaseReader.value.withTransaction
+    : <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
 
   const appendProjectEventRow = SqlSchema.findOne({
@@ -432,7 +437,7 @@ const makeEventStore = Effect.gen(function* () {
         ])}
       ORDER BY sequence ASC
       LIMIT ${input.limit}
-    `;
+    `.pipe(readTransaction);
 
   const appendAgentEvents: OrchestrationEventStore["Service"]["appendAgentEvents"] = (input) =>
     Effect.forEach(
@@ -566,6 +571,7 @@ const makeEventStore = Effect.gen(function* () {
         LIMIT ${Math.max(0, Math.floor(input.maxEvents)) + 1}
       )
     `.pipe(
+      readTransaction,
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
       Effect.map((rows) => ({
         eventCount: rows[0]?.eventCount ?? 0,
@@ -587,6 +593,7 @@ const makeEventStore = Effect.gen(function* () {
           OR (application_event_version = 2 AND aggregate_kind = 'thread')
         )
     `.pipe(
+      readTransaction,
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getReplayStats:query")),
       Effect.map((rows) => ({
         eventCount: rows[0]?.eventCount ?? 0,
@@ -609,6 +616,7 @@ const makeEventStore = Effect.gen(function* () {
         AND aggregate_kind = 'thread'
         ${threadId === undefined ? sql`` : sql`AND stream_id = ${threadId}`}
     `.pipe(
+      readTransaction,
       Effect.map((rows) => rows[0]?.sequence ?? 0),
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
     );
@@ -620,6 +628,7 @@ const makeEventStore = Effect.gen(function* () {
     WHERE aggregate_kind = 'project'
       OR (application_event_version = 2 AND aggregate_kind = 'thread')
   `.pipe(
+    readTransaction,
     Effect.map((rows) => rows[0]?.sequence ?? 0),
     Effect.mapError(
       toPersistenceSqlError("OrchestrationEventStore.latestApplicationSequence:query"),

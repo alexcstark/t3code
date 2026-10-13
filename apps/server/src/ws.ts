@@ -757,17 +757,6 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.thread_id": input.threadId,
     });
-    yield* threadManagement.ensureLegacyTranscript(input.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationV2GetThreadProjectionError({
-            threadId: input.threadId,
-            message: `Failed to hydrate migrated thread ${input.threadId}`,
-            cause,
-          }),
-      ),
-    );
-
     const eventStreamFrom = (afterSequence: number) =>
       threadManagement
         .streamStoredEventsFrom({
@@ -865,6 +854,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     // to live events before reading the persisted tail, so no event
     // published during the replay window is lost; overlapping events are
     // deduped by sequence on the client.
+    // Resume cursors come from hydrated snapshots, so replay needs no legacy
+    // import lookup. Snapshot fallbacks hydrate through threadManagement.
     if (input.afterSequence !== undefined) {
       const highWater = yield* applicationEvents.latestAgentSequence(input.threadId).pipe(
         Effect.mapError(
@@ -878,6 +869,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       );
       if (input.afterSequence > highWater) {
         return yield* snapshotThenLive();
+      }
+      // An unchanged thread needs only confirmation, with no replay to prepare.
+      if (input.afterSequence === highWater) {
+        return Stream.concat(completionMarker, eventStreamFrom(highWater));
       }
       const stats = yield* applicationEvents
         .getAgentReplayStats({

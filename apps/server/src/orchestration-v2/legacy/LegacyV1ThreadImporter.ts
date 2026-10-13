@@ -31,6 +31,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventSink from "../EventSink.ts";
+import * as DatabaseReader from "../../persistence/DatabaseReader.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
@@ -346,6 +347,7 @@ function chunks<A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const databaseReader = yield* Effect.serviceOption(DatabaseReader.DatabaseReader);
   const eventSink = yield* EventSink.EventSinkV2;
   const transcriptImports = yield* KeyedLock.make<ThreadId>();
 
@@ -695,12 +697,15 @@ const make = Effect.gen(function* () {
     transcriptImports.withLock(
       threadId,
       Effect.gen(function* () {
-        const imports = yield* sql<LegacyImportRow>`
+        const lookup = sql<LegacyImportRow>`
           SELECT thread_id, transcript_imported_at
           FROM orchestration_v2_legacy_imports
           WHERE thread_id = ${threadId}
           LIMIT 1
         `;
+        const imports = yield* Option.isSome(databaseReader)
+          ? databaseReader.value.withTransaction(lookup)
+          : lookup;
         const imported = imports[0];
         if (imported === undefined || imported.transcript_imported_at !== null) {
           if (imported !== undefined) {

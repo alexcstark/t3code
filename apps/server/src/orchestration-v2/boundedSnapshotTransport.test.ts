@@ -26,12 +26,17 @@ import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2Bounde
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Etag, HttpRouter } from "effect/http";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -68,7 +73,6 @@ const management = Layer.unwrap(
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     return Layer.mock(ThreadManagementService.ThreadManagementService)({
-      ensureLegacyTranscript: () => Effect.void,
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
@@ -91,7 +95,11 @@ const auth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
   ),
 );
 
-function threadCreated(id: ThreadId, at: DateTime.Utc, forkOf?: RunId): OrchestrationV2DomainEvent {
+function threadCreated(
+  id: ThreadId,
+  at: DateTime.Utc,
+  forkOf?: RunId,
+): Extract<OrchestrationV2DomainEvent, { type: "thread.created" }> {
   return {
     id: EventId.make(`event:${id}:created`),
     type: "thread.created",
@@ -277,7 +285,132 @@ function itemIds(projection: OrchestrationV2ThreadProjection): string[] {
   return projection.turnItems.map((item) => String(item.id));
 }
 
+it.effect("syncs messages independently of pending writes and replays them after commit", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sync-transport-" });
+    const database = SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"));
+    const stores = Layer.mergeAll(ProjectionStore.layer, OrchestrationEventStore.layer).pipe(
+      Layer.provideMerge(database),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const at = yield* DateTime.now;
+      const created = threadCreated(LONG, at);
+      yield* sql.withTransaction(
+        events
+          .appendAgentEvents({ events: [created] })
+          .pipe(Effect.andThen(projections.apply(created))),
+      );
+      const initial = yield* projections.getThreadSnapshotWindow(LONG, { rowLimit: 75 });
+      const changed: OrchestrationV2DomainEvent = {
+        ...created,
+        id: EventId.make("event:sync-transport:renamed"),
+        type: "thread.metadata-updated",
+        payload: { ...created.payload, title: "Updated messages" },
+      };
+      const writing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const write = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* events.appendAgentEvents({ events: [changed] });
+            yield* projections.apply(changed);
+            yield* Deferred.succeed(writing, undefined);
+            yield* Deferred.await(release);
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(writing);
+      const subscribeFromCached = subscribeOrchestrationV2Thread({
+        threadId: LONG,
+        afterSequence: initial.snapshotSequence,
+        requestCompletionMarker: true,
+        acceptBoundedSnapshot: true,
+      }).pipe(Effect.flatMap(Stream.runCollect));
+      yield* Effect.gen(function* () {
+        const snapshot = yield* projections.getThreadSnapshotWindow(LONG, { rowLimit: 75 });
+        assert.strictEqual(snapshot.projection.thread.title, String(LONG));
+        assert.strictEqual(snapshot.snapshotSequence, initial.snapshotSequence);
+        assert.deepStrictEqual(Array.from(yield* subscribeFromCached), [{ kind: "synchronized" }]);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      yield* Fiber.join(write);
+      const resumed = Array.from(yield* subscribeFromCached);
+      assert.strictEqual(resumed.length, 2);
+      assert.strictEqual(resumed[0]?.kind, "event");
+      if (resumed[0]?.kind === "event") {
+        assert.strictEqual(resumed[0].event.type, "thread.metadata-updated");
+        if (resumed[0].event.type === "thread.metadata-updated")
+          assert.strictEqual(resumed[0].event.payload.title, "Updated messages");
+      }
+      assert.deepStrictEqual(resumed[1], { kind: "synchronized" });
+    }).pipe(Effect.provide(management.pipe(Layer.provideMerge(stores))));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
+  it.effect("confirms current cached messages and immediately continues with live updates", () =>
+    Effect.gen(function* () {
+      const at = yield* DateTime.now;
+      const liveEvent = itemUpdated(LONG, longRun, "live", 93, at);
+      const items = yield* subscribeOrchestrationV2Thread({
+        threadId: LONG,
+        afterSequence: 7,
+        requestCompletionMarker: true,
+      }).pipe(
+        Effect.flatMap(Stream.runCollect),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+              latestAgentSequence: () => Effect.succeed(7),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              streamStoredEventsFrom: () =>
+                Stream.make({ sequence: 8, commandId: null, event: liveEvent }),
+            }),
+          ),
+        ),
+      );
+      assert.deepStrictEqual(
+        Array.from(items).map((item) =>
+          item.kind === "event" ? { kind: item.kind, sequence: item.sequence } : item,
+        ),
+        [{ kind: "synchronized" }, { kind: "event", sequence: 8 }],
+      );
+    }),
+  );
+
+  it.effect("replays missed messages before confirming sync without reloading history", () =>
+    Effect.gen(function* () {
+      const at = yield* DateTime.now;
+      const event = itemUpdated(LONG, longRun, "missed", 93, at);
+      const items = yield* subscribeOrchestrationV2Thread({
+        threadId: LONG,
+        afterSequence: 7,
+        requestCompletionMarker: true,
+      }).pipe(
+        Effect.flatMap(Stream.runCollect),
+        Effect.provide(
+          Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+            latestAgentSequence: () => Effect.succeed(8),
+            getAgentReplayStats: () =>
+              Effect.succeed({ eventCount: 1, rawPayloadBytes: 512, hasCreateEvent: false }),
+            readAgentEvents: () => Stream.make({ sequence: 8, commandId: null, event }),
+          }),
+        ),
+      );
+      assert.deepStrictEqual(
+        Array.from(items).map((item) =>
+          item.kind === "event" ? { kind: item.kind, sequence: item.sequence } : item,
+        ),
+        [{ kind: "event", sequence: 8 }, { kind: "synchronized" }],
+      );
+    }),
+  );
+
   describe.each([
     ["fork", FORK],
     ["long run with a retained interrupt request", LONG],

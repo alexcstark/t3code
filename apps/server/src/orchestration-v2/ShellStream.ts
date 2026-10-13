@@ -14,9 +14,11 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as DatabaseReader from "../persistence/DatabaseReader.ts";
 
 /** Build the regular navigation shell without duplicating the archive dataset. */
 export function buildActiveShellSnapshot(input: {
@@ -36,8 +38,7 @@ export function buildActiveShellSnapshot(input: {
 /**
  * Loads the thread shell, projects and sequence for the shell snapshots.
  * One transaction covers the reads so they agree; the threads are decoded
- * after it commits, because the server shares one SQLite connection and
- * decoding a large shell takes longer than reading it.
+ * after it commits so decoding a large shell does not hold the read connection.
  */
 export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
   readonly sql: SqlClient.SqlClient;
@@ -46,7 +47,11 @@ export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
   readonly latestSequence: Effect.Effect<number, E4>;
 }) =>
   Effect.gen(function* () {
-    const read = yield* input.sql.withTransaction(
+    const databaseReader = yield* Effect.serviceOption(DatabaseReader.DatabaseReader);
+    const readTransaction = Option.isSome(databaseReader)
+      ? databaseReader.value.withTransaction
+      : input.sql.withTransaction;
+    const read = yield* readTransaction(
       Effect.all({
         decodeThreads: input.readThreads,
         projects: input.listProjects,
