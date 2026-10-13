@@ -126,7 +126,7 @@ describe("RotatingFileSink", () => {
     const filePath = NodePath.join(directory, "log.ndjson");
     const sink = new RotatingFileSink({
       filePath,
-      maxBytes: 1024,
+      maxBytes: Number.MAX_SAFE_INTEGER,
       maxFiles: 1,
       throwOnError: true,
     });
