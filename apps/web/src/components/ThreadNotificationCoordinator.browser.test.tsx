@@ -22,6 +22,27 @@ const state = vi.hoisted(() => ({
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   delegatedChild: null as "running" | "approval" | null,
+  projectScopeKey: null as string | null,
+  projects: [
+    {
+      environmentId: "env-1",
+      id: "project-1",
+      title: "Project one",
+      workspaceRoot: "/project-1",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T08:00:00.000Z",
+      updatedAt: "2026-09-13T08:00:00.000Z",
+    },
+    {
+      environmentId: "env-1",
+      id: "project-2",
+      title: "Project two",
+      workspaceRoot: "/project-2",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T08:00:00.000Z",
+      updatedAt: "2026-09-13T08:00:00.000Z",
+    },
+  ],
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -128,14 +149,35 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useClientSettings: ((
     select: (
-      settings: Pick<ClientSettings, "notificationMode" | "inAppNotificationsEnabled">,
+      settings: Pick<
+        ClientSettings,
+        | "notificationMode"
+        | "inAppNotificationsEnabled"
+        | "sidebarProjectGroupingMode"
+        | "sidebarProjectGroupingOverrides"
+      >,
     ) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
+  ) =>
+    select({
+      notificationMode: state.mode,
+      inAppNotificationsEnabled: state.inApp,
+      sidebarProjectGroupingMode: "separate",
+      sidebarProjectGroupingOverrides: {},
+    })) as never,
   getClientSettings: (() => ({ notificationMode: state.mode })) as never,
 }));
 vi.mock(import("../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentIds: (() => ["env-1"]) as never,
+}));
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  useProjects: (() => state.projects) as never,
+}));
+vi.mock(import("../uiStateStore"), async (original) => ({
+  ...(await original()),
+  useUiStateStore: ((select: (value: { sidebarProjectScopeKey: string | null }) => unknown) =>
+    select({ sidebarProjectScopeKey: state.projectScopeKey })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
@@ -173,6 +215,7 @@ function setup() {
     subagent: false,
     background: [],
     delegatedChild: null,
+    projectScopeKey: null,
   });
   stableParent = null;
   const stack = new AsyncDisposableStack();
@@ -390,5 +433,17 @@ describe("thread notifications", () => {
       to: "/$environmentId/$threadId",
       params: { environmentId: "env-1", threadId: "thread-1" },
     });
+  });
+
+  it("only alerts for threads in the window's project scope", async () => {
+    await using app = setup();
+    state.mode = "notifications-and-sound";
+    state.focused = false;
+    state.projectScopeKey = "env-1:/project-2";
+    await app.render();
+    await app.complete();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
   });
 });

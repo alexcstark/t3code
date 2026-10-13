@@ -16,6 +16,27 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
+  projectScopeKey: null as string | null,
+  projects: [
+    {
+      environmentId: "one",
+      id: "project",
+      title: "Project one",
+      workspaceRoot: "/one",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+    {
+      environmentId: "two",
+      id: "project",
+      title: "Project two",
+      workspaceRoot: "/two",
+      repositoryIdentity: null,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+  ],
 }));
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
@@ -40,12 +61,32 @@ vi.mock(import("../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentIds: (() => state.environmentIds) as never,
 }));
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  useProjects: (() => state.projects) as never,
+}));
 vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useClientSettings: ((
-    select: (settings: { notificationMode: string; inAppNotificationsEnabled: boolean }) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
+    select: (settings: {
+      notificationMode: string;
+      inAppNotificationsEnabled: boolean;
+      sidebarProjectGroupingMode: string;
+      sidebarProjectGroupingOverrides: Record<string, string>;
+    }) => unknown,
+  ) =>
+    select({
+      notificationMode: state.mode,
+      inAppNotificationsEnabled: state.inApp,
+      sidebarProjectGroupingMode: "separate",
+      sidebarProjectGroupingOverrides: {},
+    })) as never,
   getClientSettings: (() => ({ notificationMode: state.mode })) as never,
+}));
+vi.mock(import("../uiStateStore"), async (original) => ({
+  ...(await original()),
+  useUiStateStore: ((select: (value: { sidebarProjectScopeKey: string | null }) => unknown) =>
+    select({ sidebarProjectScopeKey: state.projectScopeKey })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),
@@ -53,6 +94,8 @@ vi.mock(import("../threadNotifications"), async (original) => ({
   unlockNotificationAudio: vi.fn(),
   setNotificationBadge: state.badge,
 }));
+
+import { threadNotificationTag } from "../threadNotifications";
 
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
 
@@ -173,6 +216,7 @@ function setup() {
   state.mode = "notifications";
   state.inApp = false;
   state.environmentIds = ["one", "two"];
+  state.projectScopeKey = null;
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   focused = false;
@@ -284,6 +328,33 @@ it("removes alerts only from environments that leave the client", async () => {
   await app.render();
   expect(state.badge).toHaveBeenLastCalledWith(0);
   expect(retained!.close).toHaveBeenCalledOnce();
+});
+
+it("only badges threads in this window's project scope", async () => {
+  await using app = setup();
+  state.projectScopeKey = "one:/one";
+  await app.render();
+  complete("one");
+  complete("two");
+  await app.render();
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(TestNotification.sent[0]?.options.tag).toBe(
+    threadNotificationTag(EnvironmentId.make("one"), "thread" as never),
+  );
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  state.projectScopeKey = "two:/two";
+  await app.render();
+  expect(TestNotification.sent[0]?.close).toHaveBeenCalledOnce();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+
+  complete("two", "2026-09-13T08:01:00Z");
+  await app.render();
+  expect(TestNotification.sent).toHaveLength(2);
+  expect(TestNotification.sent[1]?.options.tag).toBe(
+    threadNotificationTag(EnvironmentId.make("two"), "thread" as never),
+  );
+  expect(state.badge).toHaveBeenLastCalledWith(1);
 });
 
 it("starts a fresh count after another native app window gains focus", async () => {
