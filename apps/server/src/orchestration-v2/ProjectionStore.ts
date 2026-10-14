@@ -3501,12 +3501,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeContextHandoffPayload, threadId)(contextHandoffRows),
           decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
         ]);
+        // Control reads need ordering for the selected messages only. In particular,
+        // user-only reads must not parse historical assistant payloads.
         const messageOrdinals = new Map<string, number>();
-        if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
+        const messageTypes = [
+          ...new Set(
+            messages.flatMap((message) =>
+              message.role === "system" ? [] : [`${message.role}_message`],
+            ),
+          ),
+        ];
+        if (
+          fields !== undefined &&
+          fields.includes("messages") &&
+          messages.length > 1 &&
+          messageTypes.length > 0
+        ) {
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${threadId} AND type IN ('user_message', 'assistant_message')
+            WHERE thread_id = ${threadId}
+              AND type IN (SELECT value FROM json_each(${encodeIdList(messageTypes)}))
+              AND json_extract(payload_json, '$.messageId') IN (
+                SELECT value FROM json_each(${encodeIdList(messages.map((message) => message.id))})
+              )
             GROUP BY json_extract(payload_json, '$.messageId')
           `;
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
@@ -4179,7 +4197,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       " \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
 
     const getTurnStartContext: ProjectionStoreV2Shape["getTurnStartContext"] = (threadId, runId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const thread = yield* getThread(threadId);
@@ -4644,7 +4662,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
       providerTurnId,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const rows = yield* sql<PayloadRow>`
@@ -4682,7 +4700,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     const getPlan: ProjectionStoreV2Shape["getPlan"] = (threadId, planId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -4728,7 +4746,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -4747,7 +4765,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
       target,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -4799,7 +4817,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     const getRunningTurnContext: ProjectionStoreV2Shape["getRunningTurnContext"] = (threadId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -4837,7 +4855,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
       targetInstanceId,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const thread = yield* getThread(threadId);
@@ -4878,7 +4896,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
       requestId,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -4921,7 +4939,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const threads = yield* sql<{ readonly thread_id: string }>`
@@ -4972,7 +4990,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       threadId,
       target,
     ) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -5136,7 +5154,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     const getRunMessage: ProjectionStoreV2Shape["getRunMessage"] = (threadId, runId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -5154,7 +5172,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
@@ -5237,7 +5255,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       fields,
       filter,
     ) =>
-      sql.withTransaction(readCanonicalProjection(threadId, undefined, fields, filter)).pipe(
+      reader.withTransaction(readCanonicalProjection(threadId, undefined, fields, filter)).pipe(
         Effect.map(
           (projection) =>
             Object.fromEntries([
@@ -5509,7 +5527,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .pipe(Effect.mapError(controlReadError(threadId)));
 
     const getTimelinePage: ProjectionStoreV2Shape["getTimelinePage"] = (threadId, options) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const index = yield* readTimelineIndex(threadId, new Set());
@@ -5953,7 +5971,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
 
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (threadId) =>
-      sql
+      reader
         .withTransaction(
           Effect.gen(function* () {
             const rows = yield* sql<SettlementThreadRow>`

@@ -23,7 +23,7 @@ import * as Tracer from "effect/Tracer";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Client from "effect/sql/SqlClient";
 import type { Borrower, Connection } from "effect/sql/SqlConnection";
-import { SqlError, classifySqliteError } from "effect/sql/SqlError";
+import { ConnectionError, SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
 import {
@@ -874,7 +874,11 @@ const makeWorkerConnection = Effect.fnUntraced(function* (
   let failed: SqlError | undefined;
   const fail = (cause: unknown) => {
     failed = new SqlError({
-      reason: classifyError(cause, "SQLite worker stopped unexpectedly", "execute"),
+      reason: new ConnectionError({
+        cause,
+        message: "SQLite worker stopped unexpectedly",
+        operation: "execute",
+      }),
     });
     for (const resume of pending.values()) resume(Effect.fail(failed));
     pending.clear();

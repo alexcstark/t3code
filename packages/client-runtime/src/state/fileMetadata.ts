@@ -207,6 +207,8 @@ export function createFileMetadataAtoms<R, E>(
         retained?.set(input.path, cached);
         return cached.value;
       }
+      const config = yield* session.value.initialConfig;
+      if (config.environment.capabilities.filesystemMetadata !== true) return null;
       return yield* Effect.request(
         new FileMetadataRequest({
           path: input.path,

@@ -1,5 +1,5 @@
 import * as NodeSqlite from "node:sqlite";
-import type * as NodeWorkerThreads from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -70,6 +70,30 @@ const countEntries = (sql: SqlClient.SqlClient) =>
   );
 
 const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
+
+it.effect("reports a disconnected worker as a connection failure", () => {
+  let worker: NodeWorkerThreads.Worker | undefined;
+  const postMessage = NodeWorkerThreads.Worker.prototype.postMessage;
+  const spy = vi
+    .spyOn(NodeWorkerThreads.Worker.prototype, "postMessage")
+    .mockImplementation(function (this: NodeWorkerThreads.Worker, message, transferList) {
+      // oxlint-disable-next-line typescript/no-this-alias -- Capture only the worker owned by this test for termination.
+      worker = this;
+      postMessage.call(this, message, transferList);
+    });
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    spy.mockRestore();
+    const captured = worker;
+    assert(captured !== undefined);
+    yield* Effect.promise(() => captured.terminate());
+    const error = yield* sql`SELECT 1`.pipe(Effect.flip);
+    assert.equal(error.reason._tag, "ConnectionError");
+  }).pipe(
+    Effect.provide(SqliteClient.layerWorker({ filename: ":memory:" })),
+    Effect.ensuring(Effect.sync(() => spy.mockRestore())),
+  );
+});
 
 it.effect.each([false, true])(
   "preserves SQLITE_FULL after an automatic rollback (nested=%s)",
