@@ -1,4 +1,4 @@
-import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { EnvironmentRegistry, EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentRpcSubscriptionObserver,
   request,
@@ -14,6 +14,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -35,6 +36,24 @@ interface RetainedScope {
 
 const retainedScopes = new Map<string, RetainedScope>();
 const retainedScopeListeners = new Set<() => void>();
+
+/** Activity leases describe live clients; saved or disconnected entries cannot renew one. */
+export const reportClientActivity = Effect.fn("web.backgroundActivity.reportEnvironment")(
+  function* (input: ClientActivityReportInput) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const session = yield* SubscriptionRef.get(supervisor.session);
+    const state = yield* SubscriptionRef.get(supervisor.state);
+    yield* Effect.annotateCurrentSpan({
+      "environment.id": input.environmentId,
+      "client.id": input.clientId,
+      "activity.session.available": Option.isSome(session),
+      "activity.connection.phase": state.phase,
+      "activity.connection.desired": state.desired,
+    });
+    if (Option.isNone(session)) return;
+    yield* request(WS_METHODS.serverReportClientActivity, input);
+  },
+);
 
 function notifyRetainedScopesChanged(): void {
   for (const listener of retainedScopeListeners) {
@@ -202,8 +221,7 @@ export const layer = Layer.effectDiscard(
           registry
             .run(
               environmentId,
-              request(
-                WS_METHODS.serverReportClientActivity,
+              reportClientActivity(
                 createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
               ),
             )

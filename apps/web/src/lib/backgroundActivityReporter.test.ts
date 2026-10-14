@@ -1,12 +1,89 @@
-import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import { type ClientActivityReportInput, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  EnvironmentSupervisor,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+} from "@t3tools/client-runtime/connection";
+import type { RpcSession, WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
   observeBackgroundActivitySubscription,
+  reportClientActivity,
   retainedBackgroundScopes,
   wasRecentlyInteracted,
 } from "./backgroundActivityReporter.ts";
+
+describe("background activity reporting", () => {
+  it.effect("skips a disconnected session and resumes reports after reconnecting", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("activity-report-test");
+      const input: ClientActivityReportInput = {
+        environmentId,
+        clientId: "activity-test-client",
+        clientKind: "desktop-renderer",
+        visible: true,
+        focused: true,
+        recentlyInteracted: true,
+        appState: "active",
+        scopes: [{ type: "provider-status" }],
+        ttlMs: 45_000,
+        observedAt: DateTime.makeUnsafe(10_000),
+      };
+      const reports: ClientActivityReportInput[] = [];
+      const client = {
+        [WS_METHODS.serverReportClientActivity]: (report: ClientActivityReportInput) =>
+          Effect.sync(() => {
+            reports.push(report);
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const connectedSession: RpcSession = {
+        client,
+        initialConfig: Effect.never,
+        subscribeServerConfig: () => Stream.never,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: Effect.never,
+      };
+      const session = yield* SubscriptionRef.make<Option.Option<RpcSession>>(Option.none());
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: new PrimaryConnectionTarget({
+          environmentId,
+          label: "Activity test",
+          httpBaseUrl: "http://activity.test",
+          wsBaseUrl: "ws://activity.test",
+        }),
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session,
+        prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const report = reportClientActivity(input).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      yield* report;
+      expect(reports).toEqual([]);
+      yield* SubscriptionRef.set(session, Option.some(connectedSession));
+      yield* report;
+      expect(reports).toEqual([input]);
+      yield* SubscriptionRef.set(session, Option.none());
+      yield* report;
+      expect(reports).toEqual([input]);
+      yield* SubscriptionRef.set(session, Option.some(connectedSession));
+      yield* report;
+      expect(reports).toEqual([input, input]);
+    }),
+  );
+});
 
 describe("wasRecentlyInteracted", () => {
   it("expires interaction independently of window focus", () => {
