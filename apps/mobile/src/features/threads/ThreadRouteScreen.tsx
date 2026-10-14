@@ -900,6 +900,7 @@ function ThreadRouteContent(
           selectedThreadFeed={composer.selectedThreadFeed}
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}
+          lastAgentUpdateAt={composer.lastAgentUpdateAt}
           activeWorkStartedAt={
             creationState?.kind === "preparing" ||
             (worktreeSetup !== null && setupTurnStartedAt === null)

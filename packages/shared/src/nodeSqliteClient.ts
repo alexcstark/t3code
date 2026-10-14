@@ -999,7 +999,10 @@ const makeClient = Effect.fn("makeSqliteClient")(function* (
   const available = (target: {
     readonly name: Acquired["connection"];
     readonly connection: Connection;
-  }) => (target.name === "writer" ? writerCleanup.acquirer : Effect.succeed(target.connection));
+  }) =>
+    target.name === "writer"
+      ? writerCleanup.borrower(Effect.succeed)
+      : Effect.succeed(target.connection);
   const writer = { name: "writer" as const, lock: semaphore, connection };
   const route = Effect.withFiber((fiber) =>
     acquireReader !== undefined && Context.get(fiber.context, ReadOnly)

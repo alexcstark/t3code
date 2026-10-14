@@ -177,6 +177,8 @@ export interface ThreadDetailScreenProps {
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly lastAgentUpdateAt?: string | null;
+  /** The live work is a provider-native subagent's runless root turn. */
   readonly runlessWorkActive?: boolean;
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
   readonly isCompacting: boolean;
@@ -566,7 +568,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       return { kind: "compacting" };
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
-      return { kind: "working", startedAt: props.activeWorkStartedAt };
+      return {
+        kind: "working",
+        startedAt: props.activeWorkStartedAt,
+        lastAgentUpdateAt: props.lastAgentUpdateAt ?? null,
+      };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
       return {

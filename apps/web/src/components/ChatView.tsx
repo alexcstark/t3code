@@ -100,6 +100,7 @@ import {
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadLastAgentUpdateAt,
   deriveLatestThreadRun,
   deriveThreadRuntime,
   presentPendingBackgroundWork,
@@ -5176,6 +5177,10 @@ export default function ChatView(props: ChatViewProps) {
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
   const nowMinute = useNowMinute();
+  const lastAgentUpdateAt = useMemo(
+    () => (serverProjection === null ? null : deriveThreadLastAgentUpdateAt(serverProjection)),
+    [serverProjection],
+  );
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
     localCheckoutBranchMismatch,
@@ -8437,6 +8442,8 @@ export default function ChatView(props: ChatViewProps) {
                         runtime: activeRuntime,
                       })}
                       canInterrupt={canInterruptRunningThread}
+                      lastAgentUpdateAt={lastAgentUpdateAt}
+                      timestampFormat={timestampFormat}
                       workingStepLabel={isWorking ? workingStepLabel : null}
                     />
                   ) : null}

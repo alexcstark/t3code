@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeEvents from "node:events";
 
 import { assert, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { vi } from "vite-plus/test";
 
 vi.mock("node:fs", { spy: true });
@@ -706,7 +707,7 @@ it("recovers a stale runtime whose recorded process has no server listener", asy
   }
 }, 20_000);
 
-it.skipIf(process.platform === "win32")(
+it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "replaces a legacy managed server that exited without being reaped",
   async () => {
     const harness = makeHarness();
@@ -748,7 +749,7 @@ it.skipIf(process.platform === "win32")(
       }
       assert.isTrue(zombie);
       const startToken =
-        process.platform === "linux"
+        HostProcess.Platform.defaultValue() === "linux"
           ? `linux:${
               NodeFS.readFileSync(`/proc/${String(zombiePid)}/stat`, "utf8")
                 .split(")")
