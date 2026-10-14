@@ -39,6 +39,8 @@ interface CodexAppServerClientRaw {
 export class CodexAppServerClient extends Context.Service<
   CodexAppServerClient,
   {
+    /** Observes transport loss even when no request is pending. */
+    readonly awaitTermination: Effect.Effect<CodexError.CodexAppServerError>;
     readonly raw: CodexAppServerClientRaw;
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
@@ -230,6 +232,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     );
 
   return CodexAppServerClient.of({
+    awaitTermination: transport.awaitTermination,
     raw: {
       notifications: transport.incomingNotifications,
       requests: transport.incomingRequests,

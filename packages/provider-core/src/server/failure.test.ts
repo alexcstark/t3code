@@ -17,6 +17,7 @@ import {
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   ContextHandoffBudgetError,
+  ProviderOutOfMemoryError,
 } from "./failure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -116,6 +117,36 @@ it("does not expose defect text nested inside a known error category", () => {
   assert.notInclude(failure.message, "user:pass");
   assert.notInclude(failure.message, "token=secret");
   assert.isBelow(failure.message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+});
+
+it("reports an exited Codex process through adapter wrappers without exposing its output", () => {
+  for (const transport of [
+    { _tag: "CodexAppServerProcessExitedError", code: 0 },
+    { _tag: "CodexAppServerInputStreamEndedError" },
+    { _tag: "CodexAppServerTransportError", operation: "read-process-exit-status" },
+  ]) {
+    const failure = makeProviderFailure({
+      cause: Cause.fail({
+        _tag: "ProviderAdapterTurnStartError",
+        cause: {
+          _tag: "ProviderAdapterProtocolError",
+          cause: { ...transport, cause: new Error("Bearer private-process-output") },
+        },
+      }),
+    });
+    assert.equal(failure.message, "Codex process exited. Retry the turn to start a new session.");
+  }
+});
+
+it("reports confirmed memory kills through the session failure wrapper", () => {
+  const failure = makeProviderFailure({
+    cause: {
+      _tag: "ProviderAdapterEventStreamError",
+      cause: new ProviderOutOfMemoryError({ cause: new Error("Bearer private-output") }),
+    },
+  });
+  assert.equal(failure.message, "Killed: out of memory.");
+  assert.equal(failure.code, "oom_kill");
 });
 
 it("handles cyclic causes and throwing accessors", () => {

@@ -30,6 +30,8 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
+import { ProviderOutOfMemoryError } from "@t3tools/provider-core/server/failure";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexError from "effect-codex-app-server/errors";
@@ -1756,6 +1758,7 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
+        events: runtime.events,
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
@@ -1768,6 +1771,43 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect.each([false, true])(
+    "fails an idle Codex session with confirmed memory kill %s",
+    (outOfMemory) =>
+      Effect.gen(function* () {
+        const session = yield* openReplaySession(
+          makeCodexReplayTranscript({
+            scenario: "idle-process-exit",
+            entries: [{ type: "runtime_exit", status: "success" }],
+          }),
+        );
+        const error = yield* session.events.pipe(Stream.runDrain, Effect.flip);
+
+        assert.instanceOf(error, ProviderAdapter.ProviderAdapterEventStreamError);
+        if (error._tag !== "ProviderAdapterEventStreamError") return;
+        assert.equal(error.providerSessionId, "provider-session-idle-process-exit");
+        if (outOfMemory) {
+          assert.instanceOf(error.cause, ProviderOutOfMemoryError);
+        } else {
+          assert.instanceOf(error.cause, CodexError.CodexAppServerProcessExitedError);
+          assert.propertyVal(error.cause, "code", 0);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(AgentScope, {
+          wrap: ({ command, args }) => Effect.succeed({ command, args }),
+          clear: () => Effect.void,
+          oomKilled: (threadId) => {
+            assert.equal(threadId, "thread-idle-process-exit");
+            return Effect.succeed(outOfMemory);
+          },
+        }),
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {
