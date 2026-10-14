@@ -26,6 +26,16 @@ export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoff
   }
 }
 
+/** The host confirmed that memory pressure stopped the provider's process scope. */
+export class ProviderOutOfMemoryError extends Schema.TaggedError<ProviderOutOfMemoryError>()(
+  "ProviderOutOfMemoryError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Killed: out of memory.";
+  }
+}
+
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
@@ -64,6 +74,7 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
  */
 function curatedCauseMessages(cause: unknown): {
   readonly known: string | undefined;
+  readonly code?: string;
   readonly category: string | undefined;
 } {
   const seen = new Set<unknown>();
@@ -85,6 +96,22 @@ function curatedCauseMessages(cause: unknown): {
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
       switch (tag) {
+        case "ProviderOutOfMemoryError":
+          return { known: "Killed: out of memory.", category: categoryMessage(), code: "oom_kill" };
+        case "CodexAppServerProcessExitedError":
+        case "CodexAppServerInputStreamEndedError":
+          return {
+            known: "Codex process exited. Retry the turn to start a new session.",
+            category: categoryMessage(),
+          };
+        case "CodexAppServerTransportError":
+          if ((cause as Record<string, unknown>).operation === "read-process-exit-status") {
+            return {
+              known: "Codex process exited. Retry the turn to start a new session.",
+              category: categoryMessage(),
+            };
+          }
+          break;
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
         case "AcpModelSelectionError":
@@ -212,7 +239,7 @@ export function makeProviderFailure(input: {
   const rawMessage =
     input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode = input.code ?? curated.code ?? stringField(input.cause, "code") ?? null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 

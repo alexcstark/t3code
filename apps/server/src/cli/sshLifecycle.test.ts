@@ -706,6 +706,124 @@ it("recovers a stale runtime whose recorded process has no server listener", asy
   }
 }, 20_000);
 
+it.skipIf(process.platform === "win32")(
+  "replaces a legacy managed server that exited without being reaped",
+  async () => {
+    const harness = makeHarness();
+    const parent = NodeChildProcess.spawn("sh", ["-c", "sleep 600 & echo $!; exec sleep 600"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let activePid: number | undefined;
+    try {
+      const [output] = await NodeEvents.EventEmitter.once(parent.stdout!, "data");
+      const zombiePid = Number(String(output).trim());
+      assert.isAbove(zombiePid, 0);
+      const parentPid = parent.pid;
+      if (parentPid === undefined) throw new Error("Zombie fixture parent has no PID.");
+      // The shell must finish exec before its child exits, otherwise it reaps it.
+      let parentIsSleeping = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          NodeChildProcess.execFileSync("ps", ["-o", "comm=", "-p", String(parentPid)], {
+            encoding: "utf8",
+          }).includes("sleep")
+        ) {
+          parentIsSleeping = true;
+          break;
+        }
+      }
+      assert.isTrue(parentIsSleeping);
+      process.kill(zombiePid, "SIGKILL");
+      let zombie = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          NodeChildProcess.execFileSync("ps", ["-o", "stat=", "-p", String(zombiePid)], {
+            encoding: "utf8",
+          }).includes("Z")
+        ) {
+          zombie = true;
+          break;
+        }
+      }
+      assert.isTrue(zombie);
+      const startToken =
+        process.platform === "linux"
+          ? `linux:${
+              NodeFS.readFileSync(`/proc/${String(zombiePid)}/stat`, "utf8")
+                .split(")")
+                .at(-1)!
+                .trim()
+                .split(/\s+/u)[19]
+            }`
+          : `darwin:${NodeChildProcess.execFileSync(
+              "ps",
+              ["-o", "lstart=", "-p", String(zombiePid)],
+              { encoding: "utf8" },
+            )
+              .trim()
+              .split(/\s+/u)
+              .join(" ")}`;
+      const port = await reservePort();
+      NodeFS.writeFileSync(
+        NodePath.join(harness.stateRoot, "server-state.json"),
+        JSON.stringify({
+          version: 1,
+          kind: "managed",
+          ownerKey: OWNER_KEY,
+          pid: zombiePid,
+          processStartToken: startToken,
+          processGroupId: parentPid,
+          port,
+          runnerId: "runner-one",
+        }),
+      );
+      const runtimePath = NodePath.join(harness.baseDir, "userdata", "server-runtime.json");
+      NodeFS.mkdirSync(NodePath.dirname(runtimePath), { recursive: true });
+      NodeFS.writeFileSync(
+        runtimePath,
+        JSON.stringify({
+          version: 1,
+          pid: zombiePid,
+          port,
+          origin: `http://127.0.0.1:${String(port)}`,
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      const ensured = await ensureSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        expectedVersion: "1.2.3",
+        runnerId: "runner-one",
+        candidateRunnerPath: writeRunner(harness, "candidate.sh", "1.2.3"),
+        stableRunnerPath: harness.stableRunnerPath,
+        baseDir: harness.baseDir,
+        defaultPort: port,
+      });
+      activePid = ensured.remotePid;
+      assert.notEqual(ensured.remotePid, zombiePid);
+      assert.equal(ensured.serverKind, "managed");
+      assert.isTrue(processExists(ensured.remotePid));
+      assert.isTrue(processExists(parentPid));
+    } finally {
+      await stopSshServer({
+        stateRoot: harness.stateRoot,
+        ownerKey: OWNER_KEY,
+        baseDir: harness.baseDir,
+      });
+      if (activePid !== undefined && processExists(activePid)) {
+        try {
+          process.kill(-activePid, "SIGKILL");
+        } catch {}
+      }
+      await stopTestProcess(parent);
+      stopTestProvider(harness);
+      NodeFS.rmSync(harness.root, { recursive: true, force: true });
+    }
+  },
+  20_000,
+);
+
 it("reuses an owned server that responds during the overload grace", async () => {
   const harness = makeHarness();
   const port = await reservePort();

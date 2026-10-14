@@ -892,7 +892,7 @@ describe("ssh tunnel scripts", () => {
         stale = true;
         const reconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
         yield* Deferred.await(probeStarted);
-        yield* TestClock.adjust("2 seconds");
+        yield* TestClock.adjust("16 seconds");
         yield* Fiber.join(reconnect);
         assert.equal(forwards, 2);
         assert.equal(kills, 1);
@@ -924,7 +924,7 @@ describe("ssh tunnel scripts", () => {
             ? { ...tunnel, isRunning: Effect.sync(() => firstTunnelRunning) }
             : tunnel;
         }
-        if (args.includes("--")) {
+        if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
           remoteLaunches += 1;
           return makeSuccessfulProcess('{"remotePort":3773}\n');
         }
@@ -982,7 +982,7 @@ describe("ssh tunnel scripts", () => {
           tunnelStarts += 1;
           return makeRunningProcess(() => undefined);
         }
-        if (args.includes("--")) {
+        if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
           remoteLaunches += 1;
           return makeSuccessfulProcess('{"remotePort":3773}\n');
         }
@@ -1044,7 +1044,7 @@ describe("ssh tunnel scripts", () => {
             tunnelKillCount += 1;
           });
         }
-        if (args.includes("--")) {
+        if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
           remoteLaunches += 1;
           return makeSuccessfulProcess('{"remotePort":3773}\n');
         }

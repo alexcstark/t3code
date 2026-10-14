@@ -35,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { ProviderOutOfMemoryError } from "@t3tools/provider-core/server/failure";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   COMPUTER_USE_TOOL_SOURCE,
@@ -1723,6 +1724,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
         const scope = yield* Scope.Scope;
+        const agentScope = yield* AgentScope;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
             ? undefined
@@ -1823,7 +1825,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<
+          ProviderAdapter.ProviderAdapterV2Event,
+          ProviderAdapter.ProviderAdapterEventStreamError
+        >();
+        // Drain already-emitted events before reporting transport loss, so a
+        // final turn completion wins over the process exiting just after it.
+        // The session manager then releases the dead runtime for the next turn.
+        yield* client.awaitTermination.pipe(
+          Effect.flatMap((cause) =>
+            Effect.gen(function* () {
+              // A shared app-server's scope belongs to the thread that opened
+              // it. Its confirmed OOM result applies to every attached turn.
+              const outOfMemory = yield* agentScope.oomKilled(input.threadId);
+              yield* Queue.fail(
+                events,
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause: outOfMemory ? new ProviderOutOfMemoryError({ cause }) : cause,
+                }),
+              );
+            }),
+          ),
+          Effect.forkScoped,
+        );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -6556,7 +6582,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: Stream.fromQueue(events),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race

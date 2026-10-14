@@ -3531,6 +3531,15 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
       assert.isTrue(Option.isNone(liveSession));
       assert.equal(runtimeState.closeCount, 1);
       assert.equal(projection.providerSessions.at(-1)?.status, "error");
+
+      const reopened = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.notStrictEqual(reopened, runtime);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
     });
 
     yield* effect.pipe(
