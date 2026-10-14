@@ -3794,6 +3794,8 @@ describe("orchestrator MCP toolkit", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("delegated-task-status");
+        // The parent makes final MCP calls after queued work completes, so this
+        // fixture keeps its shared runtime alive until the test scope closes.
         const rawTranscript = yield* readDelegatedTaskStatusTranscript();
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(rawTranscript, cwd),
