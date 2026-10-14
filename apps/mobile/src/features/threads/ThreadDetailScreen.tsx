@@ -164,6 +164,7 @@ export interface ThreadDetailScreenProps {
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly lastAgentUpdateAt?: string | null;
   /** The live work is a provider-native subagent's runless root turn. */
   readonly runlessWorkActive?: boolean;
   /** Set on a provider-native subagent thread, which shows status instead of a composer. */
@@ -539,7 +540,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       return { kind: "compacting" };
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
-      return { kind: "working", startedAt: props.activeWorkStartedAt };
+      return {
+        kind: "working",
+        startedAt: props.activeWorkStartedAt,
+        lastAgentUpdateAt: props.lastAgentUpdateAt ?? null,
+      };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
       return {

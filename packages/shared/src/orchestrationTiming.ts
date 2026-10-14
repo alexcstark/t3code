@@ -52,6 +52,14 @@ export function formatDuration(durationMs: number): string {
   return parts.join(" ");
 }
 
+/** Whole seconds since progress; a remote clock ahead of this client reads 0s. */
+export function formatAgentUpdateAge(updatedAt: string, nowMs: number): string | null {
+  const updatedMs = Date.parse(updatedAt);
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(nowMs)) return null;
+  const seconds = Math.max(0, Math.floor((nowMs - updatedMs) / 1_000));
+  return seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1_000);
+}
+
 function isLatestRunSettled(
   latestRun: LatestRunTiming | null,
   runtime: RuntimeActivityState | null,

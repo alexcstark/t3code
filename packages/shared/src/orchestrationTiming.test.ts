@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatDuration,
+  formatAgentUpdateAge,
   deriveActiveWorkStartedAt,
   deriveSubagentElapsedMs,
 } from "./orchestrationTiming.ts";
@@ -31,6 +32,27 @@ describe("formatDuration", () => {
 
   it.each([-1, NaN, Infinity, -Infinity])("handles invalid durations: %s", (durationMs) => {
     expect(formatDuration(durationMs)).toBe("0ms");
+  });
+});
+
+describe("formatAgentUpdateAge", () => {
+  const updatedAt = "2026-10-14T12:00:00.000Z";
+  const updatedMs = Date.parse(updatedAt);
+
+  it.each([
+    [-2_000, "0s"],
+    [0, "0s"],
+    [45_900, "45s"],
+    [60_000, "1m"],
+    [125_000, "2m 5s"],
+    [3_661_000, "1h 1m 1s"],
+  ])("shows the age after %d ms as %s", (elapsedMs, expected) => {
+    expect(formatAgentUpdateAge(updatedAt, updatedMs + elapsedMs)).toBe(expected);
+  });
+
+  it("omits unknown timing", () => {
+    expect(formatAgentUpdateAge("unknown", updatedMs)).toBeNull();
+    expect(formatAgentUpdateAge(updatedAt, Number.NaN)).toBeNull();
   });
 });
 

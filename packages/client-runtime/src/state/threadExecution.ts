@@ -107,6 +107,46 @@ export function deriveThreadActivityRun(
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
+/** Last provider progress for the active work, excluding user and app updates. */
+export function deriveThreadLastAgentUpdateAt(
+  projection: OrchestrationV2ThreadProjection,
+): string | null {
+  const run = latestMatchingRun(projection, (candidate) =>
+    ACTIVITY_RUN_STATUSES.has(candidate.status),
+  );
+  const startedAt = run?.startedAt ?? null;
+  const runlessStartedAt = run === null ? deriveRunlessWorkStartedAt(projection) : null;
+  if (run === null && runlessStartedAt === null) return null;
+
+  let latestMs = startedAt === null ? null : DateTime.toEpochMillis(startedAt);
+  if (runlessStartedAt !== null) latestMs = Date.parse(runlessStartedAt);
+  for (const item of projection.turnItems) {
+    if (item.runId !== (run?.id ?? null)) continue;
+    switch (item.type) {
+      case "user_message":
+      case "notification":
+      case "system_notice":
+      case "checkpoint":
+      case "run_interrupt_request":
+      case "run_interrupt_result":
+      case "handoff":
+      case "fork":
+        continue;
+    }
+    // Answering a request stamps updatedAt; startedAt still records the agent asking.
+    const progressAt =
+      item.type === "approval_request" ||
+      item.type === "user_input_request" ||
+      item.type === "secret_request"
+        ? item.startedAt
+        : item.updatedAt;
+    if (progressAt === null) continue;
+    const updatedMs = DateTime.toEpochMillis(progressAt);
+    if (latestMs === null || updatedMs > latestMs) latestMs = updatedMs;
+  }
+  return latestMs === null ? null : DateTime.formatIso(DateTime.makeUnsafe(latestMs));
+}
+
 /**
  * Provider-native subagent threads never get app runs: their work is a runless
  * root turn whose status follows the subagent. Returns when that work started

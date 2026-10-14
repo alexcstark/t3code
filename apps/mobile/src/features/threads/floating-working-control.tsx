@@ -1,5 +1,5 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatAgentUpdateAge, formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -479,7 +479,12 @@ function FloatingStatusLabel(props: {
     );
   }
   return (
-    <WorkingDuration key="working" startedAt={props.status.startedAt} onLayout={props.onLayout} />
+    <WorkingDuration
+      key="working"
+      startedAt={props.status.startedAt}
+      lastAgentUpdateAt={props.status.lastAgentUpdateAt ?? null}
+      onLayout={props.onLayout}
+    />
   );
 }
 
@@ -520,24 +525,31 @@ function StatusLabelRow(props: {
 
 function WorkingDuration(props: {
   readonly startedAt: string;
+  readonly lastAgentUpdateAt: string | null;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
   return (
     <StatusLabelRow onLayout={props.onLayout}>
-      <WorkingTimer startedAt={props.startedAt} />
+      <WorkingTimer startedAt={props.startedAt} lastAgentUpdateAt={props.lastAgentUpdateAt} />
     </StatusLabelRow>
   );
 }
 
-export function WorkingTimer(props: { readonly startedAt: string }) {
+export function WorkingTimer(props: {
+  readonly startedAt: string;
+  readonly lastAgentUpdateAt?: string | null;
+}) {
   const nowMs = useVisibleSecondClock(true);
+  const updateAge =
+    props.lastAgentUpdateAt == null ? null : formatAgentUpdateAge(props.lastAgentUpdateAt, nowMs);
   return (
     <SystemText
-      className="shrink text-xs text-foreground"
-      numberOfLines={1}
+      className="shrink text-center text-xs text-foreground"
+      numberOfLines={updateAge === null ? 1 : 2}
       style={{ fontVariant: ["tabular-nums"], fontWeight: "500" }}
     >
       Working {formatWorkingDuration(props.startedAt, nowMs)}
+      {updateAge === null ? null : `\nLast update ${updateAge} ago`}
     </SystemText>
   );
 }

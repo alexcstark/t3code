@@ -943,6 +943,7 @@ function ThreadRouteContent(
           onDismissFeedback={composer.dismissFeedback}
           selectedThreadFeed={composer.selectedThreadFeed}
           activityRun={composer.selectedThreadActivityRun}
+          lastAgentUpdateAt={composer.lastAgentUpdateAt}
           activeWorkStartedAt={
             creationState?.kind === "preparing" ||
             (worktreeSetup !== null && setupTurnStartedAt === null)

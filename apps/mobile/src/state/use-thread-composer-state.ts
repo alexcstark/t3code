@@ -7,6 +7,7 @@ import {
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadLastAgentUpdateAt,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -416,6 +417,13 @@ export function useThreadComposerState() {
       }) ?? runlessWorkStartedAt
     );
   }, [selectedThreadActivityRun, runlessWorkStartedAt, selectedThreadRuntime, selectedThreadShell]);
+  const lastAgentUpdateAt = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveThreadLastAgentUpdateAt(selectedThreadProjection.projection)
+        : null,
+    [selectedThreadProjection],
+  );
   const runlessWorkActive = runlessWorkStartedAt !== null;
 
   const providerSubagentStatus = useMemo(
@@ -1073,6 +1081,7 @@ export function useThreadComposerState() {
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
+    lastAgentUpdateAt,
     runlessWorkActive,
     providerSubagentStatus,
     isCompacting,

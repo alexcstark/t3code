@@ -7,6 +7,7 @@ import {
   ProviderSessionId,
   ProviderDriverKind,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
@@ -26,6 +27,7 @@ import {
   formatProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadLastAgentUpdateAt,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
@@ -54,6 +56,143 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it.each([
+    {
+      type: "approval_request" as const,
+      requestId: RuntimeRequestId.make("approval"),
+      requestKind: "command" as const,
+    },
+    {
+      type: "user_input_request" as const,
+      requestId: RuntimeRequestId.make("question"),
+      questions: [],
+    },
+    {
+      type: "secret_request" as const,
+      label: "API token",
+      reason: "Run checks",
+      secretStatus: "pending" as const,
+    },
+  ])("keeps the agent timestamp when a user answers a $type", (request) => {
+    const requestedAt = DateTime.makeUnsafe("2026-07-28T10:00:30.000Z");
+    const answeredAt = DateTime.makeUnsafe("2026-07-28T10:05:00.000Z");
+    const active = run("active", 1, "running");
+    const item = {
+      id: TurnItemId.make(request.type),
+      threadId: v2Projection.thread.id,
+      runId: active.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "waiting" as const,
+      title: null,
+      startedAt: requestedAt,
+      completedAt: null,
+      updatedAt: requestedAt,
+      ...request,
+    };
+    const projection = { ...v2Projection, runs: [active], turnItems: [item] };
+    expect(deriveThreadLastAgentUpdateAt(projection)).toBe("2026-07-28T10:00:30.000Z");
+    expect(
+      deriveThreadLastAgentUpdateAt({
+        ...projection,
+        turnItems: [
+          {
+            ...item,
+            status: "completed",
+            completedAt: answeredAt,
+            updatedAt: answeredAt,
+            ...(item.type === "secret_request" ? { secretStatus: "saved" as const } : {}),
+          },
+        ],
+      }),
+    ).toBe("2026-07-28T10:00:30.000Z");
+  });
+
+  it("times the latest agent update in the executing run despite a newer queued run", () => {
+    const updatedAt = DateTime.makeUnsafe("2026-07-28T10:00:45.000Z");
+    const later = DateTime.makeUnsafe("2026-07-28T10:01:00.000Z");
+    const active = run("active", 1, "running");
+    const item = {
+      id: TurnItemId.make("command"),
+      threadId: v2Projection.thread.id,
+      runId: active.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "command_execution" as const,
+      status: "running" as const,
+      title: null,
+      input: "vp test run",
+      startedAt: now,
+      completedAt: null,
+      updatedAt,
+    };
+    const projection = {
+      ...v2Projection,
+      runs: [active, run("queued", 2, "queued")],
+      updatedAt: later,
+      turnItems: [
+        item,
+        {
+          ...item,
+          id: TurnItemId.make("previous"),
+          runId: RunId.make("previous"),
+          updatedAt: later,
+        },
+        {
+          ...item,
+          id: TurnItemId.make("steer"),
+          type: "user_message" as const,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          messageId: MessageId.make("steer"),
+          inputIntent: "steer" as const,
+          text: "Also check mobile",
+          attachments: [],
+          updatedAt: later,
+        },
+        {
+          ...item,
+          id: TurnItemId.make("notice"),
+          type: "system_notice" as const,
+          message: "Server update",
+          updatedAt: later,
+        },
+      ],
+    };
+    expect(deriveThreadLastAgentUpdateAt(projection)).toBe("2026-07-28T10:00:45.000Z");
+    // Streaming into an existing item advances its update time without a new item.
+    expect(
+      deriveThreadLastAgentUpdateAt({ ...projection, turnItems: [{ ...item, updatedAt: later }] }),
+    ).toBe("2026-07-28T10:01:00.000Z");
+  });
+
+  it("uses the provider start until it reports progress and clears when work ends", () => {
+    const active = run("active", 1, "running");
+    expect(deriveThreadLastAgentUpdateAt({ ...v2Projection, runs: [active] })).toBe(
+      "2026-07-28T10:00:00.000Z",
+    );
+    expect(
+      deriveThreadLastAgentUpdateAt({
+        ...v2Projection,
+        runs: [{ ...active, status: "starting", startedAt: null }],
+      }),
+    ).toBeNull();
+    expect(
+      deriveThreadLastAgentUpdateAt({
+        ...v2Projection,
+        runs: [{ ...active, status: "completed", completedAt: now }],
+      }),
+    ).toBeNull();
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {
@@ -317,6 +456,7 @@ describe("deriveRunlessWorkStartedAt", () => {
   it("times a provider-native subagent from its runless root turn while it works", () => {
     const projection = { ...nativeChild, nodes: [rootTurn("running", later)] };
     expect(deriveRunlessWorkStartedAt(projection)).toBe("2026-07-28T10:05:00.000Z");
+    expect(deriveThreadLastAgentUpdateAt(projection)).toBe("2026-07-28T10:05:00.000Z");
     // The subagent has no run, so it stays unstoppable and unqueueable.
     expect(deriveThreadRuntime(projection)).toBeNull();
   });
@@ -325,6 +465,9 @@ describe("deriveRunlessWorkStartedAt", () => {
     "is idle once the subagent is %s",
     (status) => {
       expect(deriveRunlessWorkStartedAt({ ...nativeChild, nodes: [rootTurn(status)] })).toBe(null);
+      expect(deriveThreadLastAgentUpdateAt({ ...nativeChild, nodes: [rootTurn(status)] })).toBe(
+        null,
+      );
     },
   );
 
