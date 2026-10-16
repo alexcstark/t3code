@@ -1,9 +1,11 @@
 import {
+  htmlRenderScrollChainOffset,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
+  readHtmlRenderScrollChain,
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -72,6 +74,11 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  /**
+   * An inline thread frame. Wheel events never leave its opaque document, so
+   * the page asks the thread to scroll and to stop following the live edge.
+   */
+  readonly chainWheel?: boolean;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -105,20 +112,46 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openLink);
     return () => window.removeEventListener("message", openLink);
   }, []);
-  const { onContentHeight } = props;
+  const { onContentHeight, chainWheel = false } = props;
   // A page posts its height once per change, so listen from the commit that
   // inserts the frame; a passive effect could run after a fast page's first post.
   useLayoutEffect(() => {
-    if (onContentHeight === undefined) return;
+    const frameWindow = () => frameRef.current?.contentWindow ?? null;
     const resize = (event: MessageEvent) => {
+      if (onContentHeight === undefined || event.source !== frameWindow()) return;
       const height = readHtmlRenderContentHeight(event.data);
-      if (height !== undefined && event.source === frameRef.current?.contentWindow) {
-        onContentHeight(height);
+      if (height !== undefined) onContentHeight(height);
+    };
+    const scrollChain = (event: MessageEvent) => {
+      if (!chainWheel || event.source !== frameWindow()) return;
+      const request = readHtmlRenderScrollChain(event.data);
+      const frame = frameRef.current;
+      if (!request || !frame) return;
+      const scroller = frame.closest(".messages-timeline-scroll");
+      if (!(scroller instanceof HTMLElement)) return;
+      // Upward scrolling over the page is the reader leaving the live edge,
+      // even when the page itself consumes the wheel. The timeline only hears
+      // wheels that hit its own node.
+      if (request.deltaY < 0) {
+        scroller.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: request.deltaY,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      if (request.chain) {
+        scroller.scrollTop += htmlRenderScrollChainOffset(request, scroller.clientHeight);
       }
     };
     window.addEventListener("message", resize);
-    return () => window.removeEventListener("message", resize);
-  }, [onContentHeight]);
+    window.addEventListener("message", scrollChain);
+    return () => {
+      window.removeEventListener("message", resize);
+      window.removeEventListener("message", scrollChain);
+    };
+  }, [chainWheel, onContentHeight]);
   return (
     <iframe
       ref={frameRef}
@@ -136,7 +169,15 @@ export function HtmlRenderDocument(props: {
       // canvas, so the blank document a frame starts with would flash white in
       // dark mode. Once the page is in, its prefers-color-scheme follows the app.
       className={cn("border-0 scheme-light", props.className)}
-      style={loaded ? { colorScheme: theme.appearance } : undefined}
+      // Until the page can forward wheels, let them hit the thread. A loaded
+      // frame otherwise swallows the gesture and live-follow stays armed.
+      style={
+        loaded
+          ? { colorScheme: theme.appearance }
+          : chainWheel
+            ? { pointerEvents: "none" }
+            : undefined
+      }
     />
   );
 }

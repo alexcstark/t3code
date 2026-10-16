@@ -352,6 +352,28 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
+export interface TimelineFollowEdge {
+  readonly scroll: number;
+  readonly contentLength: number;
+}
+
+/**
+ * The reader moved up away from the live edge. Content growing under a pinned
+ * viewport also leaves `isAtEnd` false for a frame, without `scroll` decreasing
+ * or the gap past the end growing, and must not break follow.
+ */
+export function timelineScrollLeftTheEnd(
+  previous: TimelineFollowEdge | null,
+  scroll: number | undefined,
+  contentLength: number | undefined,
+): boolean {
+  if (previous === null || scroll === undefined || contentLength === undefined) return false;
+  const movedUp = previous.scroll - scroll > 1;
+  const previousGap = previous.contentLength - previous.scroll;
+  const nextGap = contentLength - scroll;
+  return movedUp && nextGap > previousGap + 1;
+}
+
 export function shouldFocusComposerAfterResponseClick(input: {
   readonly selectionInResponse: boolean;
   readonly targetIsInteractive: boolean;

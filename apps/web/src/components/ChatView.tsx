@@ -452,7 +452,11 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
-import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
+import {
+  resolveTimelineIsAtEnd,
+  timelineScrollLeftTheEnd,
+  worktreeSetupAgentStarted,
+} from "./chat/MessagesTimeline.logic";
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
@@ -6423,6 +6427,9 @@ export default function ChatView(props: ChatViewProps) {
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
+  // Last pinned edge. A wheel over an HTML frame scrolls the thread without a
+  // wheel event on the timeline, so a move up from here is what breaks follow.
+  const liveFollowEdgeRef = useRef<{ scroll: number; contentLength: number } | null>(null);
   const pendingAnchorScrollRestoreRef = useRef<{
     readonly messageId: MessageId;
     readonly offset: number;
@@ -6435,6 +6442,7 @@ export default function ChatView(props: ChatViewProps) {
     const wasProgrammaticScrollMode = timelineScrollModeRef.current !== "free-scrolling";
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
+    liveFollowEdgeRef.current = null;
     setTimelineLiveFollowEnabled(false);
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
@@ -6703,6 +6711,28 @@ export default function ChatView(props: ChatViewProps) {
               break;
           }
         };
+        // Wheels over an HTML frame scroll the thread without hitting this node.
+        // Leaving the end has to be noticed here, before the list's queued
+        // end-snap runs on the next frame.
+        const handleFollowScroll = () => {
+          const state = legendListRef.current?.getState();
+          const scroll = state?.scroll;
+          const contentLength = state?.contentLength;
+          const followArmed =
+            timelineScrollModeRef.current === "following-end" &&
+            liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current;
+          if (
+            followArmed &&
+            timelineScrollLeftTheEnd(liveFollowEdgeRef.current, scroll, contentLength)
+          ) {
+            cancelTimelineLiveFollowForUserNavigationRef.current();
+            return;
+          }
+          if (followArmed && typeof scroll === "number" && typeof contentLength === "number") {
+            liveFollowEdgeRef.current = { scroll, contentLength };
+          }
+        };
+        scrollNode.addEventListener("scroll", handleFollowScroll, { passive: true });
         scrollNode.addEventListener("wheel", handleWheel, {
           passive: true,
         });
@@ -6714,6 +6744,7 @@ export default function ChatView(props: ChatViewProps) {
         });
         document.addEventListener("keydown", handleKeyDown);
         removeListeners = () => {
+          scrollNode.removeEventListener("scroll", handleFollowScroll);
           scrollNode.removeEventListener("wheel", handleWheel);
           scrollNode.removeEventListener("touchmove", handleTouchMove);
           scrollNode.removeEventListener("pointerdown", handlePointerDown);
@@ -6827,37 +6858,55 @@ export default function ChatView(props: ChatViewProps) {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   }, [composerRef]);
 
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (
-      !isAtEnd &&
-      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-    ) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEndRef.current === isAtEnd) return;
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      if (timelineScrollIntentRef.current === "toward-end") {
-        composerRef.current?.restoreAfterTimelineReachedEnd();
+  const onIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => {
+      const state = legendListRef.current?.getState();
+      const scroll = state?.scroll;
+      const contentLength = state?.contentLength;
+      const followArmed =
+        timelineScrollModeRef.current === "following-end" &&
+        liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current;
+      if (
+        followArmed &&
+        !isAtEnd &&
+        timelineScrollLeftTheEnd(liveFollowEdgeRef.current, scroll, contentLength)
+      ) {
+        cancelTimelineLiveFollowForUserNavigation();
+      } else if (followArmed && typeof scroll === "number" && typeof contentLength === "number") {
+        liveFollowEdgeRef.current = { scroll, contentLength };
       }
-      timelineScrollModeRef.current = "following-end";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      // Reachable only once manual navigation has already broken follow, so
-      // the anchored turn framing is over: the user scrolled back to the live
-      // edge and expects the stream to stick to it again, exactly like the
-      // scroll-to-bottom pill (#6519).
-      setTimelineAnchor(releaseChatTimelineAnchor);
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
+      if (
+        !isAtEnd &&
+        liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
+      ) {
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+        return;
+      }
+      if (isAtEndRef.current === isAtEnd) return;
+      isAtEndRef.current = isAtEnd;
+      if (isAtEnd) {
+        if (timelineScrollIntentRef.current === "toward-end") {
+          composerRef.current?.restoreAfterTimelineReachedEnd();
+        }
+        timelineScrollModeRef.current = "following-end";
+        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+        setTimelineLiveFollowEnabled(true);
+        // Reachable only once manual navigation has already broken follow, so
+        // the anchored turn framing is over: the user scrolled back to the live
+        // edge and expects the stream to stick to it again, exactly like the
+        // scroll-to-bottom pill (#6519).
+        setTimelineAnchor(releaseChatTimelineAnchor);
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+      } else {
+        timelineScrollModeRef.current = "free-scrolling";
+        liveFollowUserScrollGenerationRef.current = null;
+        showScrollDebouncer.current.maybeExecute();
+      }
+    },
+    [cancelTimelineLiveFollowForUserNavigation],
+  );
 
   useLayoutEffect(() => {
     if (timelineScrollModeRef.current !== "anchoring-new-turn") return;

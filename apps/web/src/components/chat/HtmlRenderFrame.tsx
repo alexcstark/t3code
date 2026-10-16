@@ -98,6 +98,7 @@ export function HtmlRenderFrame(props: {
             src={src}
             title={title}
             className="block size-full"
+            chainWheel
             onContentHeight={setContentHeight}
           />
           <div className="absolute end-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">

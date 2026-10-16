@@ -37,6 +37,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldFocusComposerAfterResponseClick,
+  timelineScrollLeftTheEnd,
   threadReadLabelPrefix,
   threadReadTargetId,
   threadReadTargetTitle,
@@ -5383,5 +5384,22 @@ describe("shouldCollapseUserMessage", () => {
 
     expect(text.length).toBeGreaterThan(600);
     expect(shouldCollapseUserMessage(text)).toBe(false);
+  });
+});
+
+describe("timelineScrollLeftTheEnd", () => {
+  const edge = { scroll: 2000, contentLength: 2800 };
+
+  it("breaks follow when the reader moves up and the gap from the end grows", () => {
+    expect(timelineScrollLeftTheEnd(edge, 1600, 2800)).toBe(true);
+  });
+
+  it("keeps follow when content grows under a pinned viewport", () => {
+    expect(timelineScrollLeftTheEnd(edge, 2000, 3200)).toBe(false);
+    expect(timelineScrollLeftTheEnd(edge, 2300, 3400)).toBe(false);
+  });
+
+  it("keeps follow when an earlier row shrinks by as much as the viewport moved", () => {
+    expect(timelineScrollLeftTheEnd(edge, 1700, 2500)).toBe(false);
   });
 });

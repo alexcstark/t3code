@@ -4,6 +4,7 @@ import {
   HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
   htmlRenderReferencesEqual,
+  htmlRenderScrollChainOffset,
   htmlRenderTheme,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
@@ -11,6 +12,7 @@ import {
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
   readHtmlRenderReference,
+  readHtmlRenderScrollChain,
 } from "./htmlRender.ts";
 import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
@@ -26,6 +28,9 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(themeAt).toBeGreaterThan(injected.indexOf("<head>"));
     expect(themeAt).toBeLessThan(injected.indexOf(":root{--background:red}"));
     expect(injected).toContain('<meta charset="utf-8">');
+    expect(injected).toContain("ui/notifications/scroll-chain");
+    const script = injected.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(() => new Function(script ?? "")).not.toThrow();
     expect(injected).toContain('name="viewport"');
   });
 
@@ -114,6 +119,39 @@ describe("readHtmlRenderContentHeight", () => {
     expect(readHtmlRenderContentHeight({ ...notification({ height: 412 }), method: "x" })).toBe(
       undefined,
     );
+  });
+});
+
+describe("readHtmlRenderScrollChain", () => {
+  const notification = (params: unknown) => ({
+    jsonrpc: "2.0",
+    method: "ui/notifications/scroll-chain",
+    params,
+  });
+
+  it("reads an upward chain and ignores unrelated messages", () => {
+    expect(
+      readHtmlRenderScrollChain(notification({ deltaY: -48, deltaMode: 0, chain: true })),
+    ).toEqual({
+      deltaY: -48,
+      deltaMode: 0,
+      chain: true,
+    });
+    expect(
+      readHtmlRenderScrollChain(notification({ deltaY: 3, deltaMode: 1, chain: false })),
+    ).toEqual({ deltaY: 3, deltaMode: 1, chain: false });
+    expect(readHtmlRenderScrollChain(notification({ deltaY: 0, chain: true }))).toBeUndefined();
+    expect(readHtmlRenderScrollChain(notification({ deltaY: -10 }))).toBeUndefined();
+    expect(
+      readHtmlRenderScrollChain({ ...notification({ deltaY: -10, chain: true }), method: "x" }),
+    ).toBeUndefined();
+  });
+
+  it("converts line and page deltas into pixels", () => {
+    const lines = { deltaY: 2, deltaMode: 1 as const, chain: true };
+    const pages = { deltaY: -1, deltaMode: 2 as const, chain: true };
+    expect(htmlRenderScrollChainOffset(lines, 800)).toBe(32);
+    expect(htmlRenderScrollChainOffset(pages, 800)).toBe(-800);
   });
 });
 
