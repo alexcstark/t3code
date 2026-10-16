@@ -98,6 +98,7 @@ export function HtmlRenderFrame(props: {
             title={title}
             threadRef={props.threadRef}
             className="block size-full"
+            chainWheel
             onContentHeight={setContentHeight}
             onFullscreenChange={onFullscreenChange}
           />

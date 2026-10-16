@@ -428,7 +428,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
-import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import { resolveTimelineIsAtEnd, timelineScrollLeftTheEnd } from "./chat/MessagesTimeline.logic";
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
@@ -4197,6 +4197,9 @@ export default function ChatView(props: ChatViewProps) {
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
+  // Last pinned edge. A wheel over an HTML frame scrolls the thread without a
+  // wheel event on the timeline, so a move up from here is what breaks follow.
+  const liveFollowEdgeRef = useRef<{ scroll: number; contentLength: number } | null>(null);
   const pendingAnchorScrollRestoreRef = useRef<{
     readonly messageId: MessageId;
     readonly offset: number;
@@ -4209,6 +4212,7 @@ export default function ChatView(props: ChatViewProps) {
     const wasProgrammaticScrollMode = timelineScrollModeRef.current !== "free-scrolling";
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
+    liveFollowEdgeRef.current = null;
     setTimelineLiveFollowEnabled(false);
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
@@ -4638,6 +4642,21 @@ export default function ChatView(props: ChatViewProps) {
   const onToolOutputCollapsedAtEndStable = useStableCallback(onToolOutputCollapsedAtEnd);
 
   const onIsAtEndChange = (isAtEnd: boolean) => {
+    const state = legendListRef.current?.getState();
+    const scroll = state?.scroll;
+    const contentLength = state?.contentLength;
+    const followArmed =
+      timelineScrollModeRef.current === "following-end" &&
+      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current;
+    if (
+      followArmed &&
+      !isAtEnd &&
+      timelineScrollLeftTheEnd(liveFollowEdgeRef.current, scroll, contentLength)
+    ) {
+      cancelTimelineLiveFollowForUserNavigation();
+    } else if (followArmed && typeof scroll === "number" && typeof contentLength === "number") {
+      liveFollowEdgeRef.current = { scroll, contentLength };
+    }
     if (
       !isAtEnd &&
       liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
@@ -4655,6 +4674,10 @@ export default function ChatView(props: ChatViewProps) {
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       setTimelineLiveFollowEnabled(true);
+      // Reachable only once manual navigation has already broken follow, so
+      // the anchored turn framing is over: the user scrolled back to the live
+      // edge and expects the stream to stick to it again, exactly like the
+      // scroll-to-bottom pill (#6519).
       setTimelineAnchor(releaseChatTimelineAnchor);
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
