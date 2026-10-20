@@ -7,9 +7,7 @@ import {
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -143,25 +141,111 @@ describe("provider capacity", () => {
         },
       ],
     );
-    expect(capacity?.activeThreadCount).toBe(2);
+    expect(capacity).toMatchObject({ activeThreadCount: 2, activityKnown: true });
   });
 
-  it("recognizes identical credentials when account emails are not reported", () => {
-    const first = provider("first", [], {
-      usageLimits: {
-        checkedAt: "2026-10-20T12:00:00Z",
-        windows: [],
-        credentialFingerprint: "same-credential",
-      },
-    });
-    const second = { ...first, instanceId: ProviderInstanceId.make("second") };
-    expect(
-      rank(
+  describe.each(
+    [
+      { direction: "known-to-missing", workspaceId: "work", otherWorkspaceId: undefined },
+      { direction: "missing-to-known", workspaceId: undefined, otherWorkspaceId: "work" },
+    ].flatMap((direction) =>
+      (["email", "fingerprint"] as const).map((identity) => ({ ...direction, identity })),
+    ),
+  )(
+    "$direction workspace activity using $identity",
+    ({ workspaceId, otherWorkspaceId, identity }) => {
+      const selected = provider("selected", [], {
+        auth: {
+          status: "authenticated",
+          email: identity === "email" ? "user@example.com" : undefined,
+          workspaceId,
+        },
+        usageLimits: {
+          checkedAt: "2026-10-20T12:00:00Z",
+          windows: [],
+          credentialFingerprint: identity === "fingerprint" ? "same-credential" : undefined,
+        },
+      });
+      const confirmed = { ...selected, instanceId: ProviderInstanceId.make("confirmed") };
+      const ambiguous = {
+        ...selected,
+        auth: { ...selected.auth, workspaceId: otherWorkspaceId },
+      };
+      const currentThreadId = ThreadId.make("current");
+
+      it.each([
+        { activity: "running", status: "running", activityKnown: false },
+        { activity: "unavailable", status: null, activityKnown: false },
+        { activity: "idle", status: "idle", activityKnown: true },
+      ] as const)(
+        "preserves known counts when ambiguous activity is $activity",
+        ({ status, activityKnown }) => {
+          const environments: ProviderCapacityEnvironment[] = [
+            {
+              environmentId: local,
+              providers: [selected, confirmed],
+              threads: [thread("current", selected)],
+            },
+            {
+              environmentId: remote,
+              providers: [ambiguous],
+              threads: status === null ? null : [thread("current", ambiguous, status)],
+            },
+          ];
+          const rows = rank([selected], environments, currentThreadId);
+          expect(rows[0]).toMatchObject({ activeThreadCount: 0, activityKnown });
+          expect(rows.map(providerCapacityActivityLabel)).toEqual([
+            activityKnown ? "Idle in T3" : "Activity unknown",
+          ]);
+
+          environments[0] = {
+            environmentId: local,
+            providers: [selected, confirmed],
+            threads: [thread("current", selected), thread("known", confirmed)],
+          };
+          const partial = rank([selected], environments, currentThreadId);
+          expect(partial[0]).toMatchObject({ activeThreadCount: 1, activityKnown });
+          expect(partial.map(providerCapacityActivityLabel)).toEqual([
+            activityKnown ? "1 running elsewhere" : "1+ running elsewhere",
+          ]);
+        },
+      );
+
+      it("handles local workspace ambiguity and excludes the current thread", () => {
+        const alias = { ...ambiguous, instanceId: ProviderInstanceId.make("alias") };
+        const threads = [thread("current", alias), thread("known", selected)];
+        const environments = [{ environmentId: local, providers: [selected, alias], threads }];
+        const rows = rank([selected], environments, currentThreadId);
+        expect(rows[0]).toMatchObject({ activeThreadCount: 1, activityKnown: true });
+        expect(rows.map(providerCapacityActivityLabel)).toEqual(["1 running elsewhere"]);
+
+        threads.push(thread("ambiguous", alias));
+        const partial = rank([selected], environments, currentThreadId);
+        expect(partial[0]).toMatchObject({ activeThreadCount: 1, activityKnown: false });
+        expect(partial.map(providerCapacityActivityLabel)).toEqual(["1+ running elsewhere"]);
+      });
+    },
+  );
+
+  it.each([undefined, "work"])(
+    "recognizes identical credentials in workspace %s without email",
+    (workspaceId) => {
+      const first = provider("first", [], {
+        auth: { status: "authenticated", workspaceId },
+        usageLimits: {
+          checkedAt: "2026-10-20T12:00:00Z",
+          windows: [],
+          credentialFingerprint: "same-credential",
+        },
+      });
+      const second = { ...first, instanceId: ProviderInstanceId.make("second") };
+      const rows = rank(
         [first],
         [{ environmentId: local, providers: [first, second], threads: [thread("other", second)] }],
-      )[0]?.activeThreadCount,
-    ).toBe(1);
-  });
+      );
+      expect(rows[0]).toMatchObject({ activeThreadCount: 1, activityKnown: true });
+    },
+  );
 
   it("keeps identical instance names on different environments independent without shared identity", () => {
     const first = provider("codex");
@@ -235,7 +319,7 @@ describe("provider capacity expiry", () => {
       environmentId: local,
       providers,
       environments: [],
-      now: Effect.runSync(Clock.currentTimeMillis),
+      now: DateTime.toEpochMillis(DateTime.nowUnsafe()),
     });
   }
 

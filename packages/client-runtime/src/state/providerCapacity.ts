@@ -4,7 +4,7 @@ import type {
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { remainingPercent, usageAccountKeyResolver } from "@t3tools/shared/usageLimits";
+import { remainingPercent } from "@t3tools/shared/usageLimits";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -57,6 +57,13 @@ export function createProviderCapacityEnvironmentsAtom(input: {
   );
 }
 
+function capacityAccountKey(provider: ServerProvider): string | null {
+  const email = provider.auth.email?.trim().toLowerCase();
+  if (email) return `${provider.driver}:${email}`;
+  const fingerprint = provider.usageLimits?.credentialFingerprint;
+  return fingerprint ? `${provider.driver}:credential:${fingerprint}` : null;
+}
+
 /** Ranks quota headroom conservatively using the least remaining reported window. */
 export function rankProviderCapacity(input: {
   readonly environmentId: EnvironmentId;
@@ -65,44 +72,41 @@ export function rankProviderCapacity(input: {
   readonly currentThreadId?: ThreadId | null;
   readonly now: number;
 }): readonly ProviderCapacity[] {
-  const accountKey = usageAccountKeyResolver(
-    [...input.providers, ...input.environments.flatMap((environment) => environment.providers)]
-      .filter((provider) => provider.enabled)
-      .map((provider) => ({
-        ...provider.auth,
-        driver: provider.driver,
-        usageLimits: provider.usageLimits,
-      })),
-  );
-  const keyFor = (provider: ServerProvider) =>
-    accountKey({ ...provider.auth, driver: provider.driver, usageLimits: provider.usageLimits });
-
   return input.providers
     .map((provider): ProviderCapacity => {
-      const key = keyFor(provider);
+      const key = capacityAccountKey(provider);
       let activeThreadCount = 0;
       let activityKnown = false;
       let missingActivity = false;
       for (const environment of input.environments) {
-        const matchingIds = new Set(
-          environment.providers
-            .filter(
-              (candidate) =>
-                (environment.environmentId === input.environmentId &&
-                  candidate.instanceId === provider.instanceId) ||
-                (key !== null && keyFor(candidate) === key),
-            )
-            .map((candidate) => candidate.instanceId),
-        );
-        if (matchingIds.size === 0) continue;
+        const matchingIds = new Set<ServerProvider["instanceId"]>();
+        const ambiguousIds = new Set<ServerProvider["instanceId"]>();
+        for (const candidate of environment.providers) {
+          if (
+            environment.environmentId === input.environmentId &&
+            candidate.instanceId === provider.instanceId
+          ) {
+            matchingIds.add(candidate.instanceId);
+            continue;
+          }
+          if (key === null || capacityAccountKey(candidate) !== key) continue;
+          if (candidate.auth.workspaceId === provider.auth.workspaceId) {
+            matchingIds.add(candidate.instanceId);
+          } else if (!candidate.auth.workspaceId || !provider.auth.workspaceId) {
+            // A shared login with a missing workspace may draw on this account.
+            ambiguousIds.add(candidate.instanceId);
+          }
+        }
+        if (matchingIds.size === 0 && ambiguousIds.size === 0) continue;
         if (environment.threads === null) {
           missingActivity = true;
           continue;
         }
-        activityKnown = true;
+        activityKnown ||= matchingIds.size > 0;
         for (const thread of environment.threads) {
           if (
-            !matchingIds.has(thread.providerInstanceId) ||
+            (!matchingIds.has(thread.providerInstanceId) &&
+              !ambiguousIds.has(thread.providerInstanceId)) ||
             (environment.environmentId === input.environmentId &&
               thread.id === input.currentThreadId)
           )
@@ -113,8 +117,10 @@ export function rankProviderCapacity(input: {
             status === "starting" ||
             status === "running" ||
             status === "waiting"
-          )
-            activeThreadCount += 1;
+          ) {
+            if (matchingIds.has(thread.providerInstanceId)) activeThreadCount += 1;
+            else missingActivity = true;
+          }
         }
       }
       const limits = provider.usageLimits;
