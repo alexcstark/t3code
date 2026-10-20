@@ -1838,6 +1838,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        const turnStartPermits = new Map<string, Semaphore.Semaphore>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -1920,7 +1921,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // run settles.
         const goalRuns = new Map<ProviderTurnId, Array<ActiveCodexTurnContext>>();
         // `/goal` runs whose goal turns active after the first turn starts.
-        const goalActivations = new Map<string, { stopped: boolean }>();
+        const goalActivations = new Map<
+          string,
+          {
+            readonly attemptId: ProviderAdapter.ProviderAdapterV2TurnInput["attemptId"];
+            stopped: boolean;
+          }
+        >();
         // Stops in progress by native thread. Until a Stop resolves its target,
         // a held run must not settle as completed.
         const goalStops = new Map<string, number>();
@@ -6157,7 +6164,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(heldBefore?.providerTurnId === requestedTurnId ? [heldBefore] : []),
             ];
             const activation = goalActivations.get(goalThreadId);
-            if (activation !== undefined) activation.stopped = true;
+            if (
+              activation !== undefined &&
+              turnsBefore.some((context) => context.input.attemptId === activation.attemptId)
+            ) {
+              activation.stopped = true;
+            }
             if (goalsByNativeThread.get(goalThreadId)?.status === "active") {
               yield* client
                 .request("thread/goal/set", { threadId: goalThreadId, status: "paused" })
@@ -6205,12 +6217,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
 
         /** Starts a native turn with this run's full turn configuration. */
-        const startNativeTurn = (
+        const startNativeTurn = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
-        ) =>
-          Effect.gen(function* () {
-            const threadId = yield* getNativeThreadId(turnInput.providerThread);
+        ) {
+          const threadId = yield* getNativeThreadId(turnInput.providerThread);
+          let permit = turnStartPermits.get(threadId);
+          if (permit === undefined) {
+            permit = Semaphore.makeUnsafe(1);
+            turnStartPermits.set(threadId, permit);
+          }
+          return yield* Effect.gen(function* () {
+            // Codex folds turn/start into an active turn. A replacement run must
+            // first settle its predecessor, or events keep the previous owner.
+            // Serialize starts per thread so a late acknowledgement cannot race
+            // this check and attach two runs to the same native turn.
+            const previous = yield* findActiveTurnByNativeThreadId(threadId);
+            if (previous !== undefined && previous.input.attemptId !== turnInput.attemptId) {
+              yield* runtime.interruptTurn({
+                providerThread: previous.providerThread,
+                providerTurnId: previous.providerTurnId,
+              });
+            }
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
@@ -6252,7 +6280,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ).pipe(Effect.ignore),
             ),
+            permit.withPermit,
           );
+        });
 
         /**
          * Runs `/goal` through Codex's native goal API, as the Codex TUI does.
@@ -6319,7 +6349,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             // Until the goal is active, a fast first turn still holds the run,
             // and Stop cancels the activation.
-            const activation = { stopped: false };
+            const activation = { attemptId: turnInput.attemptId, stopped: false };
             goalActivations.set(threadId, activation);
             yield* Effect.gen(function* () {
               // The first goal turn carries the objective; a resume continues from history.
