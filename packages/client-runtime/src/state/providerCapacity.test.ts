@@ -379,7 +379,9 @@ describe("provider capacity expiry", () => {
   it("does not schedule wakeups for unknown, expired, unavailable or undated quotas", async () => {
     const providers = [
       provider("unknown"),
-      provider("expired", [{ ...window(20), resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now)) }]),
+      provider("expired", [
+        { ...window(20), resetsAt: DateTime.formatIso(DateTime.makeUnsafe(now)) },
+      ]),
       provider("unavailable", [], {
         usageLimits: {
           checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
