@@ -227,6 +227,10 @@
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
     },
+    "./state/provider-capacity": {
+      "types": "./src/state/providerCapacity.ts",
+      "default": "./src/state/providerCapacity.ts"
+    },
     "./state/usage": {
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"

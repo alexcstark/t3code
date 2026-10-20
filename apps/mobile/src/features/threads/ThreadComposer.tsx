@@ -651,6 +651,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const settingsRouteSession = {
     ownerId: settingsOwnerId,
     environmentId: props.environmentId,
+    currentThreadId: props.selectedThread.id,
     projectId: props.selectedThread.projectId,
     providerInstanceId: currentModelSelection.instanceId,
     ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),

@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { memo, useEffect, useState } from "react";
 import { Badge } from "../ui/badge";
@@ -29,6 +30,11 @@ import { shortcutLabelForCommand } from "../../keybindings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
+  currentThreadId?: ThreadId | null;
+  /**
+   * The instance currently selected in the composer. Drives the trigger
+   * icon, label and the default-highlighted combobox row.
+   */
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
@@ -282,6 +288,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <ModelPickerContent
           environmentId={props.environmentId}
+          currentThreadId={props.currentThreadId ?? null}
           activeInstanceId={activeInstanceId}
           model={props.model}
           {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}

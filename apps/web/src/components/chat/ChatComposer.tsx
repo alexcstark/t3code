@@ -5183,6 +5183,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) : null}
       <ProviderModelPicker
         environmentId={environmentId}
+        currentThreadId={routeKind === "server" ? activeThreadId : null}
         compact={false}
         isComposerOwned
         disabled={providerCatalogPending || isSendBusy}
