@@ -1929,3 +1929,53 @@ it.effect.each(["successful", "failed"] as const)(
     ),
   { skip: !supportsNoopCheckpoint },
 );
+
+it.effect(
+  "bounds the worker writer WAL and cancels blocked admission without executing SQL",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-worker-wal-bound-" });
+      const filename = path.join(directory, "state.sqlite");
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA journal_mode = WAL`;
+        yield* sql`PRAGMA synchronous = NORMAL`;
+        yield* sql`CREATE TABLE pages(payload BLOB)`;
+        yield* sql`INSERT INTO pages VALUES (x'00')`;
+        const reader = yield* openDatabase(filename);
+        reader.exec("BEGIN");
+        reader.prepare("SELECT count(*) FROM pages").get();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (reader.isTransaction) reader.exec("ROLLBACK");
+          }),
+        );
+        yield* sql`INSERT INTO pages VALUES (zeroblob(42000000))`;
+        const observer = yield* openDatabase(filename);
+        assert.isAtLeast(
+          Number(observer.prepare("PRAGMA wal_checkpoint(NOOP)").get()?.log),
+          10_000,
+        );
+        const worker = startedWorkers.at(-1)!;
+        const firstReply = new Promise<unknown>((resolve) => worker.once("message", resolve));
+        const blocked = yield* Effect.forkChild(sql`INSERT INTO pages VALUES (x'01')`, {
+          startImmediately: true,
+        });
+        assert.include(yield* Effect.promise(() => firstReply), { _tag: "Waiting" });
+        yield* Fiber.interrupt(blocked);
+        assert.equal(observer.prepare("SELECT count(*) AS count FROM pages").get()?.count, 2);
+        const secondReply = new Promise<unknown>((resolve) => worker.once("message", resolve));
+        const resumed = yield* Effect.forkChild(sql`INSERT INTO pages VALUES (x'02')`, {
+          startImmediately: true,
+        });
+        assert.include(yield* Effect.promise(() => secondReply), { _tag: "Waiting" });
+        reader.exec("ROLLBACK");
+        yield* Fiber.join(resumed);
+        assert.equal(observer.prepare("SELECT count(*) AS count FROM pages").get()?.count, 3);
+        assert.isBelow(Number((yield* fs.stat(`${filename}-wal`)).size), 42000000);
+      }).pipe(Effect.provide(SqliteClient.layerWorker({ filename, checkpointWorker: true })));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  { skip: !supportsNoopCheckpoint, timeout: 15_000 },
+);
