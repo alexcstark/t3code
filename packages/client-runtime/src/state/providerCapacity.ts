@@ -5,6 +5,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { remainingPercent, usageAccountKeyResolver } from "@t3tools/shared/usageLimits";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
@@ -166,6 +168,11 @@ export function scheduleProviderCapacityExpiry(
     }
   }
   if (!Number.isFinite(nextReset)) return;
-  const timer = setTimeout(onExpire, Math.min(Math.max(nextReset - Date.now(), 0), 2_147_483_647));
-  return () => clearTimeout(timer);
+  return Effect.runCallback(
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      yield* Effect.sleep(Math.min(Math.max(nextReset - now, 0), 2_147_483_647));
+      yield* Effect.sync(onExpire);
+    }),
+  );
 }
