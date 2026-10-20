@@ -6564,6 +6564,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           hasPendingBackgroundWorkForThread: (providerThread) =>
             Effect.gen(function* () {
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+              const nativeRootTurn =
+                nativeThreadId == null ? undefined : nativeRootTurns.get(nativeThreadId);
+              if (
+                nativeRootTurn !== undefined &&
+                !(yield* Deferred.isDone(nativeRootTurn.completed))
+              ) {
+                return true;
+              }
               const contexts = [
                 ...(yield* Ref.get(activeTurns)).values(),
                 ...(yield* Ref.get(settledTurns)).values(),
@@ -6808,16 +6817,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           unloadThread: (unloadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
-              const nativeRootTurn = nativeRootTurns.get(nativeThreadId);
-              if (
-                nativeRootTurn !== undefined &&
-                !(yield* Deferred.isDone(nativeRootTurn.completed))
-              ) {
-                return;
-              }
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
               nativeRootTurns.delete(nativeThreadId);
-              turnStartPermits.delete(nativeThreadId);
             }).pipe(
               Effect.mapError((cause) =>
                 cause._tag === "ProviderAdapterProtocolError"

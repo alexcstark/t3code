@@ -8831,6 +8831,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: nextNativeTurnId, status: "completed" }),
             }),
+            ...request(
+              7,
+              "thread/unsubscribe",
+              { threadId: nativeThreadId },
+              { status: "unsubscribed" },
+            ),
           ],
         });
         const requests: string[] = [];
@@ -8871,6 +8877,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("10 seconds");
         assert.equal((yield* Fiber.join(replacement))._tag, "Failure");
         assert.deepEqual(requests, ["initialize", "thread/start", "turn/start", "turn/interrupt"]);
+        const hasPendingWork = harness.runtime.hasPendingBackgroundWorkForThread;
+        const unload = harness.runtime.unloadThread;
+        if (hasPendingWork === undefined || unload === undefined) {
+          return yield* Effect.die("Codex must support thread idle unloading.");
+        }
+        assert.isTrue(yield* hasPendingWork(harness.providerThread));
         const retry = yield* harness.runtime
           .startTurn({
             ...next,
@@ -8881,6 +8893,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           .pipe(Effect.result);
         assert.equal(retry._tag, "Success");
         yield* Deferred.await(completed);
+        assert.isFalse(yield* hasPendingWork(harness.providerThread));
+        yield* unload({ providerThread: harness.providerThread });
         assert.deepEqual(requests, [
           "initialize",
           "thread/start",
@@ -8888,6 +8902,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "turn/interrupt",
           "turn/interrupt",
           "turn/start",
+          "thread/unsubscribe",
         ]);
       }).pipe(
         Effect.scoped,
