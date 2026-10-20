@@ -1,0 +1,219 @@
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type ServerProvider,
+  type ServerProviderUsageLimits,
+  type ServerProviderUsageWindow,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  providerCapacityActivityLabel,
+  rankProviderCapacity,
+  type ProviderCapacityEnvironment,
+} from "./providerCapacity.ts";
+
+const local = EnvironmentId.make("local");
+const remote = EnvironmentId.make("remote");
+const now = Date.parse("2026-10-20T12:00:00Z");
+
+function window(usedPercent: number, kind: ServerProviderUsageWindow["kind"] = "session") {
+  return { id: kind, kind, label: kind, usedPercent };
+}
+
+function provider(
+  id: string,
+  windows: readonly ServerProviderUsageWindow[] = [],
+  overrides: Partial<ServerProvider> = {},
+): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(id),
+    driver: ProviderDriverKind.make("codex"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-20T12:00:00Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: { checkedAt: "2026-10-20T12:00:00Z", windows },
+    ...overrides,
+  };
+}
+
+function thread(
+  id: string,
+  provider: ServerProvider,
+  status: "preparing" | "starting" | "running" | "waiting" | "idle" | "completed" = "running",
+) {
+  return { id: ThreadId.make(id), providerInstanceId: provider.instanceId, status };
+}
+
+function rank(
+  providers: readonly ServerProvider[],
+  environments: readonly ProviderCapacityEnvironment[] = [
+    { environmentId: local, providers, threads: [] },
+  ],
+  currentThreadId: ThreadId | null = null,
+) {
+  return rankProviderCapacity({
+    environmentId: local,
+    providers,
+    environments,
+    currentThreadId,
+    now,
+  });
+}
+
+describe("provider capacity", () => {
+  it("ranks the least remaining window instead of hiding an exhausted weekly allowance", () => {
+    const highSession = provider("high-session", [window(5), window(99, "weekly")]);
+    const balanced = provider("balanced", [window(30), window(40, "weekly")]);
+    const exhausted = provider("exhausted", [window(100)]);
+    const unknown = provider("unknown");
+    expect(
+      rank([highSession, unknown, exhausted, balanced]).map((item) => [
+        item.provider.instanceId,
+        item.remainingPercent,
+        item.limitingWindow,
+      ]),
+    ).toEqual([
+      ["balanced", 60, "weekly"],
+      ["high-session", 1, "weekly"],
+      ["exhausted", 0, "session"],
+      ["unknown", null, null],
+    ]);
+  });
+
+  it("breaks quota ties using other running threads and excludes this thread and settled work", () => {
+    const busy = provider("busy", [window(20)]);
+    const idle = provider("idle", [window(20)]);
+    const rows = rank(
+      [busy, idle],
+      [
+        {
+          environmentId: local,
+          providers: [busy, idle],
+          threads: [
+            thread("current", idle),
+            thread("old-idle", idle, "idle"),
+            thread("completed", idle, "completed"),
+            thread("preparing", busy, "preparing"),
+            thread("starting", busy, "starting"),
+            thread("running", busy),
+            { ...thread("suspended", busy, "waiting"), activityRunStatus: "waiting" },
+          ],
+        },
+      ],
+      ThreadId.make("current"),
+    );
+    expect(rows.map((item) => [item.provider.instanceId, item.activeThreadCount])).toEqual([
+      ["idle", 0],
+      ["busy", 4],
+    ]);
+    expect(rows.map(providerCapacityActivityLabel)).toEqual(["Idle in T3", "4 running elsewhere"]);
+  });
+
+  it("counts shared logins across instances and environments without mixing different workspaces", () => {
+    const work = provider("work", [window(10)], {
+      auth: { status: "authenticated", email: "user@example.com", workspaceId: "work" },
+    });
+    const alias = provider("alias", [], {
+      auth: { status: "authenticated", email: "USER@example.com", workspaceId: "work" },
+    });
+    const personal = provider("personal", [], {
+      auth: { status: "authenticated", email: "user@example.com", workspaceId: "personal" },
+    });
+    const [capacity] = rank(
+      [work],
+      [
+        { environmentId: local, providers: [work, alias], threads: [thread("local", alias)] },
+        {
+          environmentId: remote,
+          providers: [alias, personal],
+          threads: [thread("remote", alias), thread("personal", personal)],
+        },
+      ],
+    );
+    expect(capacity?.activeThreadCount).toBe(2);
+  });
+
+  it("recognizes identical credentials when account emails are not reported", () => {
+    const first = provider("first", [], {
+      usageLimits: {
+        checkedAt: "2026-10-20T12:00:00Z",
+        windows: [],
+        credentialFingerprint: "same-credential",
+      },
+    });
+    const second = { ...first, instanceId: ProviderInstanceId.make("second") };
+    expect(
+      rank(
+        [first],
+        [{ environmentId: local, providers: [first, second], threads: [thread("other", second)] }],
+      )[0]?.activeThreadCount,
+    ).toBe(1);
+  });
+
+  it("keeps identical instance names on different environments independent without shared identity", () => {
+    const first = provider("codex");
+    const rows = rank(
+      [first],
+      [
+        { environmentId: local, providers: [first], threads: [] },
+        { environmentId: remote, providers: [first], threads: [thread("remote", first)] },
+      ],
+    );
+    expect(rows[0]?.activeThreadCount).toBe(0);
+    expect(rows.map(providerCapacityActivityLabel)).toEqual(["Idle in T3"]);
+  });
+
+  it("never claims idle when a matching environment has no live activity", () => {
+    const shared = provider("shared", [], {
+      auth: { status: "authenticated", email: "user@example.com" },
+    });
+    const rows = rank(
+      [shared],
+      [
+        { environmentId: local, providers: [shared], threads: [] },
+        { environmentId: remote, providers: [shared], threads: null },
+      ],
+    );
+    expect(rows.map(providerCapacityActivityLabel)).toEqual(["Activity unknown"]);
+    const partial = rank(
+      [shared],
+      [
+        { environmentId: local, providers: [shared], threads: [thread("running", shared)] },
+        { environmentId: remote, providers: [shared], threads: null },
+      ],
+    );
+    expect(partial.map(providerCapacityActivityLabel)).toEqual(["1+ running elsewhere"]);
+  });
+
+  it.each([
+    { reason: "unsupported", windows: [window(0)] },
+    { reason: "probeFailed", windows: [window(0)] },
+  ] as const)(
+    "does not rank unavailable $reason quota as spare capacity",
+    ({ reason, windows }) => {
+      const limits: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-20T12:00:00Z",
+        windows,
+        unavailable: { reason },
+      };
+      expect(
+        rank([provider("unavailable", [], { usageLimits: limits })])[0]?.remainingPercent,
+      ).toBeNull();
+    },
+  );
+
+  it("requires a fresh reading after a reset instead of assuming the window refilled", () => {
+    const expired = provider("expired", [{ ...window(0), resetsAt: "2026-10-20T11:00:00Z" }]);
+    expect(rank([expired])[0]?.usageStatus).toBe("Usage needs refresh");
+    expect(rank([expired])[0]?.remainingPercent).toBeNull();
+  });
+});

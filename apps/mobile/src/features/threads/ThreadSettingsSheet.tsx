@@ -12,6 +12,7 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
@@ -88,6 +89,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
+import { ProviderCapacitySection } from "./ProviderCapacitySection";
 import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
@@ -252,6 +254,7 @@ type ThreadSettingsSubmenuPage =
 
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
+  readonly currentThreadId?: ThreadId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -307,6 +310,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
+  readonly currentThreadId?: ThreadId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
@@ -608,6 +612,7 @@ function ThreadSettingsSessionProvider(
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
       environmentId: props.environmentId,
+      currentThreadId: props.currentThreadId ?? null,
       providerInstanceId: props.providerInstanceId,
       providerGroups,
       manageHidden,
@@ -651,6 +656,7 @@ function ThreadSettingsSessionProvider(
       isApplied,
       isDisplayed,
       props.environmentId,
+      props.currentThreadId,
       props.selectedModel,
       props.reportedModelSelection,
       props.providerInstanceId,
@@ -1093,6 +1099,14 @@ function ThreadSettingsMainContent(props: {
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
       ListHeaderComponent={
         <>
+          {session.environmentId && !session.searchQuery.trim() ? (
+            <ProviderCapacitySection
+              environmentId={session.environmentId}
+              currentThreadId={session.currentThreadId ?? null}
+              providerGroups={session.providerGroups}
+              onSelectProvider={session.setProviderFilter}
+            />
+          ) : null}
           {Platform.OS === "android" ? (
             <View className="px-4 pb-2 pt-3">
               <View
