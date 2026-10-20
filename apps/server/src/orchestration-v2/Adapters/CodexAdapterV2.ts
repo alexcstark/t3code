@@ -1842,7 +1842,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // completion owns this state; retain the latest context for late start replies.
         const nativeRootTurns = new Map<
           string,
-          { readonly context: ActiveCodexTurnContext; completed: boolean }
+          { readonly context: ActiveCodexTurnContext; readonly completed: Deferred.Deferred<void> }
         >();
         const turnStartPermits = new Map<string, Semaphore.Semaphore>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
@@ -2014,11 +2014,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const nativeThreadId = yield* getNativeThreadId(input.turnInput.providerThread);
             const nativeRootTurn = nativeRootTurns.get(nativeThreadId);
-            if (nativeRootTurn?.context.nativeTurnId === input.nativeTurnId) {
-              return nativeRootTurn.context;
-            }
-            const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
+            const existing =
+              nativeRootTurn?.context.nativeTurnId === input.nativeTurnId
+                ? nativeRootTurn.context
+                : (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
             if (existing !== undefined) {
+              if (existing.input.attemptId !== input.turnInput.attemptId) {
+                return yield* toProtocolError(
+                  "Codex returned a turn owned by another run attempt.",
+                );
+              }
               return existing;
             }
             const providerTurnId = idAllocator.derive.providerTurn({
@@ -2046,7 +2051,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               startedAt: input.startedAt,
               itemPositions: new Map(),
             };
-            nativeRootTurns.set(nativeThreadId, { context, completed: false });
+            nativeRootTurns.set(nativeThreadId, {
+              context,
+              completed: yield* Deferred.make<void>(),
+            });
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
               next.delete(context.providerThread.id);
@@ -6021,7 +6029,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const nativeRootTurn = nativeRootTurns.get(payload.threadId);
             if (nativeRootTurn?.context.nativeTurnId === payload.turn.id) {
-              nativeRootTurn.completed = true;
+              yield* Deferred.succeed(nativeRootTurn.completed, undefined);
             }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
@@ -6251,17 +6259,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const previous = nativeRootTurns.get(threadId);
             if (
               previous !== undefined &&
-              !previous.completed &&
+              !(yield* Deferred.isDone(previous.completed)) &&
               previous.context.input.attemptId !== turnInput.attemptId
             ) {
-              yield* runtime.interruptTurn({
-                providerThread: previous.context.providerThread,
-                providerTurnId: previous.context.providerTurnId,
-                requestRuntimeRestart: true,
-              });
-              if (nativeRootTurns.get(threadId)?.completed === false) {
+              if (
+                (yield* Ref.get(activeTurns)).get(previous.context.nativeTurnId) ===
+                previous.context
+              ) {
+                yield* runtime.interruptTurn({
+                  providerThread: previous.context.providerThread,
+                  providerTurnId: previous.context.providerTurnId,
+                  requestRuntimeRestart: true,
+                });
+              } else {
+                // A previous Stop timed out locally. Retry the native interrupt
+                // even though its projection is already terminal.
+                const acknowledged = yield* client
+                  .request("turn/interrupt", {
+                    threadId,
+                    turnId: previous.context.nativeTurnId,
+                  })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Deferred.isDone(previous.completed).pipe(
+                        Effect.flatMap((done) => (done ? Effect.void : Effect.fail(cause))),
+                      ),
+                    ),
+                    Effect.timeoutOption("3 seconds"),
+                  );
+                if (Option.isNone(acknowledged)) {
+                  return yield* toProtocolError(
+                    "Codex did not acknowledge the previous turn interrupt. Retry to send it again.",
+                  );
+                }
+                yield* Deferred.await(previous.completed).pipe(Effect.timeoutOption("10 seconds"));
+              }
+              const nativeRootTurn = nativeRootTurns.get(threadId);
+              if (
+                nativeRootTurn !== undefined &&
+                !(yield* Deferred.isDone(nativeRootTurn.completed))
+              ) {
                 return yield* toProtocolError(
-                  "Codex has not confirmed that its previous turn stopped. Retry after it finishes.",
+                  "Codex has not confirmed that its previous turn stopped. Retry to send another interrupt.",
                 );
               }
             }
@@ -6769,7 +6808,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           unloadThread: (unloadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
+              const nativeRootTurn = nativeRootTurns.get(nativeThreadId);
+              if (
+                nativeRootTurn !== undefined &&
+                !(yield* Deferred.isDone(nativeRootTurn.completed))
+              ) {
+                return;
+              }
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              nativeRootTurns.delete(nativeThreadId);
+              turnStartPermits.delete(nativeThreadId);
             }).pipe(
               Effect.mapError((cause) =>
                 cause._tag === "ProviderAdapterProtocolError"
