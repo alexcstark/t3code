@@ -1838,6 +1838,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        // Local Stop deadlines can settle projections before Codex stops. Native
+        // completion owns this state; retain the latest context for late start replies.
+        const nativeRootTurns = new Map<
+          string,
+          { readonly context: ActiveCodexTurnContext; completed: boolean }
+        >();
         const turnStartPermits = new Map<string, Semaphore.Semaphore>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
@@ -2006,6 +2012,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly waitForNativeStart?: boolean;
         }) =>
           Effect.gen(function* () {
+            const nativeThreadId = yield* getNativeThreadId(input.turnInput.providerThread);
+            const nativeRootTurn = nativeRootTurns.get(nativeThreadId);
+            if (nativeRootTurn?.context.nativeTurnId === input.nativeTurnId) {
+              return nativeRootTurn.context;
+            }
             const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
             if (existing !== undefined) {
               return existing;
@@ -2035,6 +2046,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               startedAt: input.startedAt,
               itemPositions: new Map(),
             };
+            nativeRootTurns.set(nativeThreadId, { context, completed: false });
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
               next.delete(context.providerThread.id);
@@ -6007,6 +6019,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            const nativeRootTurn = nativeRootTurns.get(payload.threadId);
+            if (nativeRootTurn?.context.nativeTurnId === payload.turn.id) {
+              nativeRootTurn.completed = true;
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
@@ -6232,12 +6248,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             // first settle its predecessor, or events keep the previous owner.
             // Serialize starts per thread so a late acknowledgement cannot race
             // this check and attach two runs to the same native turn.
-            const previous = yield* findActiveTurnByNativeThreadId(threadId);
-            if (previous !== undefined && previous.input.attemptId !== turnInput.attemptId) {
+            const previous = nativeRootTurns.get(threadId);
+            if (
+              previous !== undefined &&
+              !previous.completed &&
+              previous.context.input.attemptId !== turnInput.attemptId
+            ) {
               yield* runtime.interruptTurn({
-                providerThread: previous.providerThread,
-                providerTurnId: previous.providerTurnId,
+                providerThread: previous.context.providerThread,
+                providerTurnId: previous.context.providerTurnId,
+                requestRuntimeRestart: true,
               });
+              if (nativeRootTurns.get(threadId)?.completed === false) {
+                return yield* toProtocolError(
+                  "Codex has not confirmed that its previous turn stopped. Retry after it finishes.",
+                );
+              }
             }
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const turnStartParams = yield* buildCodexTurnStartParams({
