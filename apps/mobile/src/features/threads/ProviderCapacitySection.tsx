@@ -2,9 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   providerCapacityActivityLabel,
   rankProviderCapacity,
+  scheduleProviderCapacityExpiry,
 } from "@t3tools/client-runtime/state/provider-capacity";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -20,7 +21,7 @@ export function ProviderCapacitySection(props: {
   readonly onSelectProvider: (providerKey: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [now, setNow] = useState(Date.now);
+  const [expiryVersion, invalidateCapacity] = useReducer((value: number) => value + 1, 0);
   const environments = useAtomValue(providerCapacityEnvironmentsAtom);
   const capacity = useMemo(() => {
     const selectableIds = new Set(
@@ -41,9 +42,17 @@ export function ProviderCapacitySection(props: {
               selectableIds.has(provider.instanceId),
           ) ?? [],
       environments,
-      now,
+      now: Date.now(),
     });
-  }, [environments, now, props.environmentId, props.currentThreadId, props.providerGroups]);
+  }, [
+    environments,
+    expiryVersion,
+    open,
+    props.environmentId,
+    props.currentThreadId,
+    props.providerGroups,
+  ]);
+  useEffect(() => scheduleProviderCapacityExpiry(capacity, invalidateCapacity), [capacity]);
   if (capacity.length === 0) return null;
 
   return (
@@ -51,10 +60,7 @@ export function ProviderCapacitySection(props: {
       <MaterialButton
         label={open ? "Hide provider capacity" : "Provider capacity"}
         tone="text"
-        onPress={() => {
-          setNow(Date.now());
-          setOpen((value) => !value);
-        }}
+        onPress={() => setOpen((value) => !value)}
       />
       {open ? (
         <>

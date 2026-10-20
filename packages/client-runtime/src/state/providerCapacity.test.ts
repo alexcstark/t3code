@@ -7,11 +7,12 @@ import {
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   providerCapacityActivityLabel,
   rankProviderCapacity,
+  scheduleProviderCapacityExpiry,
   type ProviderCapacityEnvironment,
 } from "./providerCapacity.ts";
 
@@ -215,5 +216,110 @@ describe("provider capacity", () => {
     const expired = provider("expired", [{ ...window(0), resetsAt: "2026-10-20T11:00:00Z" }]);
     expect(rank([expired])[0]?.usageStatus).toBe("Usage needs refresh");
     expect(rank([expired])[0]?.remainingPercent).toBeNull();
+  });
+});
+
+describe("provider capacity expiry", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  function readCapacity(providers: readonly ServerProvider[]) {
+    return rankProviderCapacity({
+      environmentId: local,
+      providers,
+      environments: [],
+      now: Date.now(),
+    });
+  }
+
+  it("invalidates and reranks at the first reset, including a non-limiting window", () => {
+    const providers = [
+      provider("first", [
+        { ...window(90), resetsAt: new Date(now + 2_000).toISOString() },
+        { ...window(20, "weekly"), resetsAt: new Date(now + 1_000).toISOString() },
+      ]),
+      provider("second", [window(95)]),
+    ];
+    let capacity = readCapacity(providers);
+    const expire = vi.fn(() => {
+      capacity = readCapacity(providers);
+    });
+    scheduleProviderCapacityExpiry(capacity, expire);
+    expect(capacity.map((item) => item.remainingPercent)).toEqual([10, 5]);
+
+    vi.advanceTimersByTime(999);
+    expect(expire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(capacity.map((item) => [item.provider.instanceId, item.remainingPercent])).toEqual([
+      ["second", 5],
+      ["first", null],
+    ]);
+    expect(capacity[1]?.usageStatus).toBe("Usage needs refresh");
+    vi.advanceTimersByTime(60_000);
+    expect(expire).toHaveBeenCalledOnce();
+  });
+
+  it("cancels the previous deadline when a fresh quota reading replaces it", () => {
+    const old = provider("account", [
+      { ...window(90), resetsAt: new Date(now + 1_000).toISOString() },
+    ]);
+    const expire = vi.fn();
+    const cancel = scheduleProviderCapacityExpiry(readCapacity([old]), expire);
+    vi.advanceTimersByTime(500);
+    cancel?.();
+
+    const fresh = provider("account", [
+      { ...window(30), resetsAt: new Date(now + 4_000).toISOString() },
+    ]);
+    let capacity = readCapacity([fresh]);
+    const expireFresh = vi.fn(() => {
+      capacity = readCapacity([fresh]);
+    });
+    scheduleProviderCapacityExpiry(capacity, expireFresh);
+    vi.advanceTimersByTime(500);
+    expect(expire).not.toHaveBeenCalled();
+    expect(expireFresh).not.toHaveBeenCalled();
+    expect(capacity[0]?.remainingPercent).toBe(70);
+    vi.advanceTimersByTime(3_000);
+    expect(expireFresh).toHaveBeenCalledOnce();
+    expect(capacity[0]?.remainingPercent).toBeNull();
+  });
+
+  it("does not schedule wakeups for unknown, expired, unavailable or undated quotas", () => {
+    const providers = [
+      provider("unknown"),
+      provider("expired", [{ ...window(20), resetsAt: new Date(now).toISOString() }]),
+      provider("unavailable", [], {
+        usageLimits: {
+          checkedAt: new Date(now).toISOString(),
+          windows: [{ ...window(20), resetsAt: new Date(now + 1_000).toISOString() }],
+          unavailable: { reason: "probeFailed" },
+        },
+      }),
+      provider("undated", [window(20)]),
+    ];
+    const expire = vi.fn();
+    scheduleProviderCapacityExpiry(readCapacity(providers), expire);
+    vi.advanceTimersByTime(60_000);
+    expect(expire).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("expires immediately if the reset passes between calculating and scheduling", () => {
+    const providers = [
+      provider("account", [{ ...window(20), resetsAt: new Date(now + 1_000).toISOString() }]),
+    ];
+    let capacity = readCapacity(providers);
+    expect(capacity[0]?.remainingPercent).toBe(80);
+    vi.setSystemTime(now + 2_000);
+    scheduleProviderCapacityExpiry(capacity, () => {
+      capacity = readCapacity(providers);
+    });
+    vi.advanceTimersByTime(0);
+    expect(capacity[0]?.remainingPercent).toBeNull();
   });
 });

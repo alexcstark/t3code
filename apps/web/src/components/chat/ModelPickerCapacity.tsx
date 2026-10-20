@@ -2,10 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   providerCapacityActivityLabel,
   rankProviderCapacity,
+  scheduleProviderCapacityExpiry,
 } from "@t3tools/client-runtime/state/provider-capacity";
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { providerCapacityEnvironmentsAtom } from "../../state/providerCapacity";
@@ -22,7 +23,7 @@ export function ModelPickerCapacity(props: {
   readonly onSelectInstance: (instanceId: ProviderInstanceId) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const [now, setNow] = useState(Date.now);
+  const [expiryVersion, invalidateCapacity] = useReducer((value: number) => value + 1, 0);
   const environments = useAtomValue(providerCapacityEnvironmentsAtom);
   const capacity = useMemo(
     () =>
@@ -31,21 +32,16 @@ export function ModelPickerCapacity(props: {
         currentThreadId: props.currentThreadId ?? null,
         providers: props.entries.map((entry) => entry.snapshot),
         environments,
-        now,
+        now: Date.now(),
       }),
-    [environments, now, props.environmentId, props.currentThreadId, props.entries],
+    [environments, expiryVersion, open, props.environmentId, props.currentThreadId, props.entries],
   );
+  useEffect(() => scheduleProviderCapacityExpiry(capacity, invalidateCapacity), [capacity]);
   if (capacity.length === 0) return null;
 
   return (
     <div className="shrink-0 border-b border-border/70">
-      <Collapsible
-        open={open}
-        onOpenChange={(value) => {
-          setNow(Date.now());
-          setOpen(value);
-        }}
-      >
+      <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="w-full" />}>
           <GaugeIcon aria-hidden="true" />
           <span className="flex-1 text-left">Provider capacity</span>

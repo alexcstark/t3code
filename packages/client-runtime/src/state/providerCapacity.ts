@@ -151,3 +151,21 @@ export function providerCapacityActivityLabel(capacity: ProviderCapacity): strin
   }
   return capacity.activityKnown ? "Idle in T3" : "Activity unknown";
 }
+
+export function scheduleProviderCapacityExpiry(
+  capacity: readonly ProviderCapacity[],
+  onExpire: () => void,
+) {
+  let nextReset = Infinity;
+  for (const item of capacity) {
+    if (item.remainingPercent === null) continue;
+    for (const window of item.provider.usageLimits?.windows ?? []) {
+      if (window.resetsAt === undefined) continue;
+      const resetsAt = Date.parse(window.resetsAt);
+      if (resetsAt < nextReset) nextReset = resetsAt;
+    }
+  }
+  if (!Number.isFinite(nextReset)) return;
+  const timer = setTimeout(onExpire, Math.min(Math.max(nextReset - Date.now(), 0), 2_147_483_647));
+  return () => clearTimeout(timer);
+}
