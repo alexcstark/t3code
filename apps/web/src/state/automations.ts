@@ -9,7 +9,6 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ScheduledTask } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -66,5 +65,5 @@ export function useEnvironmentAutomations() {
 /** Scoped thread keys (`environmentId:threadId`) of every automated thread. */
 export function useAutomatedThreadKeys(): ReadonlySet<string> {
   const joined = useAtomValue(automatedThreadKeysAtom);
-  return useMemo(() => new Set(joined === "" ? [] : joined.split("\n")), [joined]);
+  return new Set(joined === "" ? [] : joined.split("\n"));
 }

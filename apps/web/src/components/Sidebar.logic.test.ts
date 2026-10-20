@@ -67,6 +67,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   type ServerProviderModel,
   ThreadId,
 } from "@t3tools/contracts";

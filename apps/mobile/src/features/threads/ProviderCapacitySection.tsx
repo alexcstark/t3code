@@ -5,11 +5,11 @@ import {
   scheduleProviderCapacityExpiry,
 } from "@t3tools/client-runtime/state/provider-capacity";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { MaterialButton } from "../../components/MaterialButton";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import type { ProviderGroup } from "../../lib/modelOptions";
 import { providerCapacityEnvironmentsAtom } from "../../state/providerCapacity";
 import { ChoiceRow } from "./ThreadSettingsRows";
@@ -21,46 +21,44 @@ export function ProviderCapacitySection(props: {
   readonly onSelectProvider: (providerKey: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [expiryVersion, invalidateCapacity] = useReducer((value: number) => value + 1, 0);
+  const [capacityNow, refreshCapacityNow] = useReducer(
+    (_previous: number) => Date.now(),
+    undefined,
+    Date.now,
+  );
   const environments = useAtomValue(providerCapacityEnvironmentsAtom);
-  const capacity = useMemo(() => {
-    const selectableIds = new Set(
-      props.providerGroups
-        .filter((group) => group.models.some((model) => !model.isUnavailable && !model.isHidden))
-        .map((group) => group.providerKey),
-    );
-    return rankProviderCapacity({
-      environmentId: props.environmentId,
-      currentThreadId: props.currentThreadId ?? null,
-      providers:
-        environments
-          .find((environment) => environment.environmentId === props.environmentId)
-          ?.providers.filter(
-            (provider) =>
-              provider.enabled &&
-              provider.status === "ready" &&
-              selectableIds.has(provider.instanceId),
-          ) ?? [],
-      environments,
-      now: Date.now(),
-    });
-  }, [
+  const selectableIds = new Set(
+    props.providerGroups
+      .filter((group) => group.models.some((model) => !model.isUnavailable && !model.isHidden))
+      .map((group) => group.providerKey),
+  );
+  const capacity = rankProviderCapacity({
+    environmentId: props.environmentId,
+    currentThreadId: props.currentThreadId ?? null,
+    providers:
+      environments
+        .find((environment) => environment.environmentId === props.environmentId)
+        ?.providers.filter(
+          (provider) =>
+            provider.enabled &&
+            provider.status === "ready" &&
+            selectableIds.has(provider.instanceId),
+        ) ?? [],
     environments,
-    expiryVersion,
-    open,
-    props.environmentId,
-    props.currentThreadId,
-    props.providerGroups,
-  ]);
-  useEffect(() => scheduleProviderCapacityExpiry(capacity, invalidateCapacity), [capacity]);
+    now: capacityNow,
+  });
+  useEffect(() => scheduleProviderCapacityExpiry(capacity, refreshCapacityNow), [capacity]);
   if (capacity.length === 0) return null;
 
   return (
     <View className="mx-4 mb-2">
-      <MaterialButton
+      <Button
         label={open ? "Hide provider capacity" : "Provider capacity"}
         tone="text"
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => {
+          setOpen((value) => !value);
+          refreshCapacityNow();
+        }}
       />
       {open ? (
         <>

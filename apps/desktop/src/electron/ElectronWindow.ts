@@ -248,14 +248,15 @@ export const make = Effect.gen(function* () {
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
-    forWebContentsId: (webContentsId) =>
-      Effect.gen(function* () {
-        for (const window of yield* Ref.get(appWindowsRef)) {
-          if (yield* isWindowDestroyed(window)) continue;
-          if (window.webContents.id === webContentsId) return Option.some(window);
-        }
-        return Option.none<Electron.BrowserWindow>();
-      }),
+    forWebContentsId: Effect.fn("desktop.electron.window.forWebContentsId")(function* (
+      webContentsId: number,
+    ) {
+      for (const window of yield* Ref.get(appWindowsRef)) {
+        if (yield* isWindowDestroyed(window)) continue;
+        if (window.webContents.id === webContentsId) return Option.some(window);
+      }
+      return Option.none<Electron.BrowserWindow>();
+    }),
     setMain: (window) =>
       Ref.update(appWindowsRef, (windows) => [
         window,

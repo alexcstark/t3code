@@ -34,9 +34,12 @@ export interface ProviderCapacity {
   readonly activityKnown: boolean;
 }
 
-/** Reads existing config and shell streams; never probes providers or loads thread histories. */
+/** Reads existing provider and shell streams; never probes providers or loads thread histories. */
 export function createProviderCapacityEnvironmentsAtom(input: {
   readonly presentationsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, EnvironmentPresentation>>;
+  readonly providersValueAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<readonly ServerProvider[] | null>;
   readonly shellStateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>;
 }) {
   return Atom.make((get): readonly ProviderCapacityEnvironment[] =>
@@ -47,7 +50,7 @@ export function createProviderCapacityEnvironmentsAtom(input: {
           : null;
       return {
         environmentId,
-        providers: presentation.serverConfig?.providers ?? [],
+        providers: get(input.providersValueAtom(environmentId)) ?? [],
         threads:
           shell?.status === "live" && Option.isNone(shell.error)
             ? (Option.getOrNull(shell.snapshot)?.threads ?? null)

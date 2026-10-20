@@ -1452,9 +1452,9 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
-  const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainMultipleSubmissionsRef } =
+  const { sendInFlight: composerSendState, uncertainSubmissions: uncertainMultipleSubmissionsRef } =
     draftSendState(routeThreadKey);
-  const isSendInFlight = useAtomValue(sendInFlightRef.pendingAtom);
+  const isSendInFlight = useAtomValue(composerSendState.pendingAtom);
   const [resumingThreadKeys, setResumingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -3310,7 +3310,8 @@ export default function ChatView(props: ChatViewProps) {
     loadBalancingSettings.loadBalancingWeights,
   );
   useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
+    if (!needsLoadBalancing || loadBalancing.pending || !draftId || composerSendState.pending)
+      return;
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
@@ -3326,7 +3327,7 @@ export default function ChatView(props: ChatViewProps) {
     loadBalancing.environmentId,
     draftId,
     logicalProjectEnvironments,
-    sendInFlightRef,
+    composerSendState,
     setDraftThreadContext,
   ]);
   const onAutoEnvironment = () => {
@@ -3394,7 +3395,7 @@ export default function ChatView(props: ChatViewProps) {
   const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
 
   const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
-    if (envLocked || !draftId || sendInFlightRef.current) return;
+    if (envLocked || !draftId || composerSendState.pending) return;
     const originalDraft = getDraftSession(draftId);
     if (!originalDraft || originalDraft.promotedTo) return;
     const target = logicalProjectEnvironments.find(
@@ -3409,7 +3410,7 @@ export default function ChatView(props: ChatViewProps) {
       if (
         environmentChangeRef.current !== request ||
         environmentChangeScopeRef.current !== request.scope ||
-        sendInFlightRef.current ||
+        composerSendState.pending ||
         !currentDraft ||
         currentDraft.promotedTo ||
         currentDraft.environmentId !== originalDraft.environmentId ||
@@ -4726,6 +4727,7 @@ export default function ChatView(props: ChatViewProps) {
     isAtEndRef.current = followEnd;
     timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = followEnd ? "following-end" : "free-scrolling";
+    liveFollowEdgeRef.current = null;
     liveFollowUserScrollGenerationRef.current = followEnd
       ? anchorUserScrollGenerationRef.current
       : null;
@@ -5200,10 +5202,8 @@ export default function ChatView(props: ChatViewProps) {
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
   const nowMinute = useNowMinute();
-  const lastAgentUpdateAt = useMemo(
-    () => (serverProjection === null ? null : deriveThreadLastAgentUpdateAt(serverProjection)),
-    [serverProjection],
-  );
+  const lastAgentUpdateAt =
+    serverProjection === null ? null : deriveThreadLastAgentUpdateAt(serverProjection);
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
     localCheckoutBranchMismatch,
@@ -5377,14 +5377,14 @@ export default function ChatView(props: ChatViewProps) {
   })() as ComposerBannerStackItem | null;
 
   const sendStandaloneCommand = async (text: string, failureMessage: string) => {
-    if (!activeThread || !clientSettingsHydrated || sendInFlightRef.current) return;
+    if (!activeThread || !clientSettingsHydrated || composerSendState.pending) return;
     const context = composerRef.current?.getSendContext();
     if (!context?.providerAvailable) return;
 
     const threadId = activeThread.id;
     const messageId = newMessageId();
     const createdAt = new Date().toISOString();
-    sendInFlightRef.current = true;
+    composerSendState.setPending(true);
     beginLocalDispatch();
     setThreadError(threadId, null);
     setOptimisticUserMessages((messages) => [
@@ -5434,7 +5434,7 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       clearUsageLimitsFor(routeThreadKey);
     }
-    sendInFlightRef.current = false;
+    composerSendState.setPending(false);
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
   const activeGoal = activeThreadShell?.goal ?? null;
@@ -6189,12 +6189,12 @@ export default function ChatView(props: ChatViewProps) {
       isRevertingCheckpoint ||
       threadDetailLoading ||
       activeEnvironmentUnavailable ||
-      sendInFlightRef.current
+      composerSendState.pending
     ) {
       return;
     }
     const threadId = activeThread.id;
-    sendInFlightRef.current = true;
+    composerSendState.setPending(true);
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
     // Commands settle into a result, so this always runs.
@@ -6248,7 +6248,7 @@ export default function ChatView(props: ChatViewProps) {
       clearUsageLimitsFor(routeThreadKey);
       if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
     }
-    sendInFlightRef.current = false;
+    composerSendState.setPending(false);
     setResumingThreadKeys((current) => {
       const next = new Set(current);
       next.delete(routeThreadKey);
@@ -6300,7 +6300,7 @@ export default function ChatView(props: ChatViewProps) {
       !clientSettingsHydrated ||
       threadDetailLoading ||
       readPendingEnvironmentChange() !== null ||
-      sendInFlightRef.current ||
+      composerSendState.pending ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
       notifyDirectAnnotationAttached();
@@ -6760,11 +6760,11 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
 
-    sendInFlightRef.current = true;
+    composerSendState.setPending(true);
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
-      sendInFlightRef.current = false;
+      composerSendState.setPending(false);
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
       return;
     }
@@ -6787,12 +6787,12 @@ export default function ChatView(props: ChatViewProps) {
       await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
       const attachmentCapabilitiesAfterUpload = readLiveAttachmentCapabilities();
       if (attachmentCapabilitiesAfterUpload.fileBlockReason !== null) {
-        sendInFlightRef.current = false;
+        composerSendState.setPending(false);
         setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
         return;
       }
       if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
-        sendInFlightRef.current = false;
+        composerSendState.setPending(false);
         setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
         return;
       }
@@ -6829,7 +6829,7 @@ export default function ChatView(props: ChatViewProps) {
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
     ) {
-      sendInFlightRef.current = false;
+      composerSendState.setPending(false);
       setThreadError(
         threadIdForSend,
         attachmentCapabilitiesBeforeDispatch.fileBlockReason ??
@@ -6986,7 +6986,7 @@ export default function ChatView(props: ChatViewProps) {
             else failedSelections.push(target.selection);
           }),
         );
-        sendInFlightRef.current = false;
+        composerSendState.setPending(false);
         resetLocalDispatch();
         releasedComposer = true;
         await starts;
@@ -7053,7 +7053,7 @@ export default function ChatView(props: ChatViewProps) {
                   if (
                     !draftId ||
                     !useComposerDraftStore.getState().getDraftSession(draftId) ||
-                    sendInFlightRef.current ||
+                    composerSendState.pending ||
                     composerDraftHasUserContent(
                       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
                     )
@@ -7074,7 +7074,7 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
       if (!releasedComposer) {
-        sendInFlightRef.current = false;
+        composerSendState.setPending(false);
         resetLocalDispatch();
       }
       return;
@@ -7447,7 +7447,7 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
     }
-    sendInFlightRef.current = false;
+    composerSendState.setPending(false);
     setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
     if (!turnStartSucceeded) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
@@ -7458,7 +7458,7 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const onSend = (...args: Parameters<typeof submitComposerMessage>) =>
-    sendInFlightRef
+    composerSendState
       .run(() => submitComposerMessage(...args))
       .catch((error: unknown) => {
         if (activeThread) {
@@ -7467,7 +7467,7 @@ export default function ChatView(props: ChatViewProps) {
             error instanceof Error ? error.message : "Failed to send message.",
           );
         }
-        if (!sendInFlightRef.current) {
+        if (!composerSendState.pending) {
           resetLocalDispatch();
           setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
           setDockedDraftHeroThreadKey((current) => (current === activeThreadKey ? null : current));
@@ -7489,7 +7489,7 @@ export default function ChatView(props: ChatViewProps) {
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightRef.current
+      composerSendState.pending
     ) {
       return false;
     }
@@ -7522,7 +7522,7 @@ export default function ChatView(props: ChatViewProps) {
       text: trimmed,
     });
 
-    sendInFlightRef.current = true;
+    composerSendState.setPending(true);
     beginLocalDispatch({ preparingWorktree: false });
     setThreadError(threadIdForSend, null);
 
@@ -7599,7 +7599,7 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     if (failure === null) {
-      sendInFlightRef.current = false;
+      composerSendState.setPending(false);
       resetLocalDispatch();
       return true;
     }
@@ -7614,7 +7614,7 @@ export default function ChatView(props: ChatViewProps) {
         error instanceof Error ? error.message : "Failed to send plan follow-up.",
       );
     }
-    sendInFlightRef.current = false;
+    composerSendState.setPending(false);
     resetLocalDispatch();
     return false;
   }
@@ -7629,7 +7629,7 @@ export default function ChatView(props: ChatViewProps) {
       isSendBusy ||
       isConnecting ||
       activeEnvironmentUnavailable ||
-      sendInFlightRef.current
+      composerSendState.pending
     ) {
       return;
     }
@@ -7660,10 +7660,10 @@ export default function ChatView(props: ChatViewProps) {
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
 
-    sendInFlightRef.current = true;
+    composerSendState.setPending(true);
     beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {
-      sendInFlightRef.current = false;
+      composerSendState.setPending(false);
       resetLocalDispatch();
     };
 
@@ -7759,8 +7759,8 @@ export default function ChatView(props: ChatViewProps) {
     finish();
   };
   const onImplementPlanInNewThread = () =>
-    sendInFlightRef.run(submitPlanInNewThread).catch((error: unknown) => {
-      if (!sendInFlightRef.current) resetLocalDispatch();
+    composerSendState.run(submitPlanInNewThread).catch((error: unknown) => {
+      if (!composerSendState.pending) resetLocalDispatch();
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -7944,7 +7944,7 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (
       !workLocallyResendReady ||
-      sendInFlightRef.current ||
+      composerSendState.pending ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
       return;
@@ -7958,7 +7958,7 @@ export default function ChatView(props: ChatViewProps) {
     composerDraftTarget,
     feedbackUploadsInFlightRef,
     resendAfterWorkLocallyStable,
-    sendInFlightRef,
+    composerSendState,
     routeThreadKey,
     sendEnvMode,
     setDraftThreadContext,

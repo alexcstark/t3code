@@ -7,10 +7,10 @@ export function createComposerSendState(registry: AtomRegistry.AtomRegistry) {
 
   return {
     pendingAtom,
-    get current() {
+    get pending() {
       return registry.get(pendingAtom);
     },
-    set current(pending: boolean) {
+    setPending(pending: boolean) {
       if (pending) generation += 1;
       registry.set(pendingAtom, pending);
     },

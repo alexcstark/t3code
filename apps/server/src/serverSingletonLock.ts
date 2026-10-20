@@ -36,24 +36,22 @@ export class ServerSingletonLockConflict extends Schema.TaggedError<ServerSingle
 const encodeLockState = Schema.encodeSync(Schema.fromJsonString(ServerSingletonLockState));
 const decodeLockState = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSingletonLockState));
 
-const readHolder = (lockPath: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const contents = yield* Effect.option(fs.readFileString(lockPath));
-    if (Option.isNone(contents)) return undefined;
-    // An undecodable lock is not proof of a live holder; treat it as stale.
-    const state = yield* Effect.option(decodeLockState(contents.value));
-    return Option.isSome(state) ? state.value.pid : undefined;
-  });
+const readHolder = Effect.fn("ServerSingletonLock.readHolder")(function* (lockPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const contents = yield* Effect.option(fs.readFileString(lockPath));
+  if (Option.isNone(contents)) return undefined;
+  // An undecodable lock is not proof of a live holder; treat it as stale.
+  const state = yield* Effect.option(decodeLockState(contents.value));
+  return Option.isSome(state) ? state.value.pid : undefined;
+});
 
-const writeOurs = (lockPath: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const startedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const state: ServerSingletonLockState = { version: 1, pid: process.pid, startedAt };
-    const file = yield* fs.open(lockPath, { flag: "wx", mode: 0o600 });
-    yield* file.writeAll(new TextEncoder().encode(`${encodeLockState(state)}\n`));
-  }).pipe(Effect.scoped);
+const writeOurs = Effect.fn("ServerSingletonLock.writeOurs")(function* (lockPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const startedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const state: ServerSingletonLockState = { version: 1, pid: process.pid, startedAt };
+  const file = yield* fs.open(lockPath, { flag: "wx", mode: 0o600 });
+  yield* file.writeAll(new TextEncoder().encode(`${encodeLockState(state)}\n`));
+}, Effect.scoped);
 
 const isAlreadyExists = (cause: unknown): boolean =>
   typeof cause === "object" &&
@@ -79,11 +77,8 @@ const conflictFor = (lockPath: string, holderPid: number, launcherManaged: boole
  * when some other, unmanaged server holds it, because a version trial would
  * migrate the database out from under that server.
  */
-export const acquireServerSingletonLock = (input: {
-  readonly lockPath: string;
-  readonly launcherManaged: boolean;
-}) =>
-  Effect.gen(function* () {
+export const acquireServerSingletonLock = Effect.fn("ServerSingletonLock.acquire")(
+  function* (input: { readonly lockPath: string; readonly launcherManaged: boolean }) {
     const fs = yield* FileSystem.FileSystem;
     const created = yield* Effect.exit(writeOurs(input.lockPath));
     if (Exit.isSuccess(created)) return;
@@ -106,24 +101,28 @@ export const acquireServerSingletonLock = (input: {
       return yield* conflictFor(input.lockPath, winnerPid, input.launcherManaged);
     }
     return yield* Effect.die(retryCause);
-  });
+  },
+);
 
 /**
  * Releases the lock only when it is still ours, so a lock reclaimed by a
  * successor after our death is never deleted by our own shutdown.
  */
-export const releaseServerSingletonLock = (lockPath: string) =>
-  Effect.gen(function* () {
+export const releaseServerSingletonLock = Effect.fn("ServerSingletonLock.release")(
+  function* (lockPath: string) {
     const fs = yield* FileSystem.FileSystem;
     const holderPid = yield* readHolder(lockPath);
     if (holderPid === process.pid) {
       yield* fs.remove(lockPath, { force: true });
     }
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Failed to release server singleton lock", { cause, lockPath }),
+  },
+  (effect, lockPath) =>
+    effect.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to release server singleton lock", { cause, lockPath }),
+      ),
     ),
-  );
+);
 
 /** Exposed for tests. */
 export const __testing = {
@@ -138,14 +137,16 @@ export const __testing = {
       }),
     ),
   /** Writes a lock state as if a server with `pid` had started. */
-  writeLockState: (lockPath: string, pid: number) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const state: ServerSingletonLockState = {
-        version: 1,
-        pid,
-        startedAt: "2026-09-09T00:00:00.000Z",
-      };
-      yield* fs.writeFileString(lockPath, `${encodeLockState(state)}\n`);
-    }),
+  writeLockState: Effect.fn("ServerSingletonLock.writeLockState")(function* (
+    lockPath: string,
+    pid: number,
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const state: ServerSingletonLockState = {
+      version: 1,
+      pid,
+      startedAt: "2026-09-09T00:00:00.000Z",
+    };
+    yield* fs.writeFileString(lockPath, `${encodeLockState(state)}\n`);
+  }),
 };

@@ -183,6 +183,32 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
   }
 };
 
+// Native SQLite binds byte views; a bare ArrayBuffer is otherwise treated as
+// named parameters, which silently binds NULL on the positional path.
+const sqliteBindings = (params: ReadonlyArray<unknown>) =>
+  params.map((value) => {
+    if (NodeUtil.types.isAnyArrayBuffer(value)) return new Uint8Array(value);
+    if (
+      value === null ||
+      isBlob(value) ||
+      (typeof value !== "object" && typeof value !== "function")
+    )
+      return value;
+    const properties = Object.getOwnPropertyDescriptors(value);
+    let changed = false;
+    for (const property of Object.values(properties)) {
+      if (
+        property.enumerable &&
+        "value" in property &&
+        NodeUtil.types.isAnyArrayBuffer(property.value)
+      ) {
+        property.value = new Uint8Array(property.value);
+        changed = true;
+      }
+    }
+    return changed ? Object.defineProperties({}, properties) : value;
+  });
+
 // Evaluated source instead of a worker file, so the reader also starts from
 // bundles and single-executable builds that have no module file on disk.
 const readerWorkerSource = `
@@ -381,8 +407,15 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
           });
           if (pending.size === 1) worker.ref();
           const cached = input.cached && !hasLargeBinding(input.params);
+          const message = {
+            id,
+            safeIntegers,
+            ...input,
+            params: sqliteBindings(input.params),
+            cached,
+          };
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached });
+          worker.postMessage(message);
         });
       });
 
@@ -918,8 +951,13 @@ const makeWorkerConnection = Effect.fnUntraced(function* (
       const id = nextId++;
       pending.set(id, resume);
       try {
+        const message = {
+          ...input,
+          ...(input.operation === "execute" ? { params: sqliteBindings(input.params) } : {}),
+          id,
+        };
         // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers use message channels, not window origins.
-        worker.postMessage({ ...input, id });
+        worker.postMessage(message);
       } catch (cause) {
         pending.delete(id);
         resume(
@@ -1283,9 +1321,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
               if (hasRows(statement)) {
                 arrays = mode === "values";
                 if (arrays) statement.setReturnArrays(true);
-                return statement.all(...(params as any));
+                return statement.all(...(sqliteBindings(params) as any));
               }
-              const result = statement.run(...(params as any));
+              const result = statement.run(...(sqliteBindings(params) as any));
               return mode === "raw" ? (result as unknown as ReadonlyArray<unknown>) : [];
             });
             result = Exit.succeed(value);

@@ -7,10 +7,16 @@ import {
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { Atom, AtomRegistry } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { BearerConnectionTarget } from "../connection/model.ts";
+import type { EnvironmentPresentation } from "../connection/presentation.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  createProviderCapacityEnvironmentsAtom,
   providerCapacityActivityLabel,
   rankProviderCapacity,
   scheduleProviderCapacityExpiry,
@@ -415,4 +421,50 @@ describe("provider capacity expiry", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(capacity[0]?.remainingPercent).toBeNull();
   });
+});
+
+it("refreshes capacity from the providers stream without replacing the presentation", () => {
+  const initial = provider("initial", [window(20)]);
+  const updated = provider("updated", [window(60)]);
+  const providers = Atom.make<readonly ServerProvider[] | null>([initial]);
+  const presentations = Atom.make<ReadonlyMap<EnvironmentId, EnvironmentPresentation>>(
+    new Map<EnvironmentId, EnvironmentPresentation>([
+      [
+        local,
+        {
+          entry: {
+            target: new BearerConnectionTarget({
+              environmentId: local,
+              label: "Local",
+              connectionId: "local",
+            }),
+            profile: Option.none(),
+            enabled: true,
+          },
+          connection: { phase: "connected", error: null, traceId: null },
+          serverConfig: null,
+        },
+      ],
+    ]),
+  );
+  const shell = Atom.make<EnvironmentShellState>({
+    status: "empty",
+    snapshot: Option.none(),
+    error: Option.none(),
+  });
+  const capacity = createProviderCapacityEnvironmentsAtom({
+    presentationsAtom: presentations,
+    providersValueAtom: () => providers,
+    shellStateValueAtom: () => shell,
+  });
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(capacity);
+  try {
+    expect(registry.get(capacity)[0]?.providers).toEqual([initial]);
+    registry.set(providers, [updated]);
+    expect(registry.get(capacity)[0]?.providers).toEqual([updated]);
+  } finally {
+    unmount();
+    registry.dispose();
+  }
 });

@@ -1,6 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
 
 import { isElectron } from "../../env";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
@@ -34,7 +33,7 @@ export function AutomationsPage() {
   const threads = useThreadShells();
   const projects = useProjects();
 
-  const automatedThreads = useMemo(() => {
+  const automatedThreads = (() => {
     const byKey = new Map<string, AutomatedThread>();
     for (const environment of environments) {
       for (const task of environment.tasks ?? []) {
@@ -50,15 +49,12 @@ export function AutomationsPage() {
       }
     }
     return [...byKey.values()];
-  }, [environments]);
-  const threadByKey = useMemo(
-    () => new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread])),
-    [threads],
+  })();
+  const threadByKey = new Map(
+    threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread]),
   );
-  const projectTitleByKey = useMemo(
-    () =>
-      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.title])),
-    [projects],
+  const projectTitleByKey = new Map(
+    projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
   );
   const unavailable = environments.filter(
     (environment) => !environment.connected || environment.error,

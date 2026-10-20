@@ -195,7 +195,9 @@ export const layer: Layer.Layer<
     return ProjectionMaintenanceV2.of({
       verify: mapError("verify")(verify),
       rebuild: mapError("rebuild")(rebuild),
-      compactEventStore: mapError("compact event store")(compactEventStore),
+      compactEventStore: mapError("compact event store")(
+        compactEventStore.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+      ),
     });
   }),
 );

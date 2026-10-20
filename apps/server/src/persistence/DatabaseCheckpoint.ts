@@ -21,52 +21,53 @@ export const supportsBackgroundCheckpoint = (version: string) => {
 };
 
 /** Capture a separate connection so checkpoint fsync never leases the writer. */
-export const makeFileCheckpoint = (filename: string) =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(
-      NodeSqliteClient.layerWorker({
-        filename,
-        spanAttributes: { "db.connection.role": "checkpoint" },
-      }),
-    );
-    const checkpoint = Context.get(context, SqlClient.SqlClient);
-    yield* checkpoint`PRAGMA busy_timeout = 0`;
-    yield* checkpoint`PRAGMA synchronous = NORMAL`;
-    yield* checkpoint`PRAGMA checkpoint_fullfsync = ON`;
-    yield* checkpoint`PRAGMA wal_autocheckpoint = 0`;
-    let retryPending = false;
+export const makeFileCheckpoint = Effect.fn("DatabaseCheckpoint.makeFileCheckpoint")(function* (
+  filename: string,
+) {
+  const context = yield* Layer.build(
+    NodeSqliteClient.layerWorker({
+      filename,
+      spanAttributes: { "db.connection.role": "checkpoint" },
+    }),
+  );
+  const checkpoint = Context.get(context, SqlClient.SqlClient);
+  yield* checkpoint`PRAGMA busy_timeout = 0`;
+  yield* checkpoint`PRAGMA synchronous = NORMAL`;
+  yield* checkpoint`PRAGMA checkpoint_fullfsync = ON`;
+  yield* checkpoint`PRAGMA wal_autocheckpoint = 0`;
+  let retryPending = false;
 
-    // PASSIVE copies only frames safe for current readers and never waits for
-    // their locks. A pinned snapshot is retried on the next tick.
-    // @effect-diagnostics-next-line returnEffectInGen:off -- Return the maintenance effect with its connection captured.
-    return Effect.gen(function* () {
-      // File size includes reused frames. NOOP reports actual pending frames
-      // without copying or syncing, and idle checks do not fill the trace log.
-      const [wal] = yield* checkpoint<{ log: number; checkpointed: number }>`
+  // PASSIVE copies only frames safe for current readers and never waits for
+  // their locks. A pinned snapshot is retried on the next tick.
+  // @effect-diagnostics-next-line returnEffectInGen:off -- Return the maintenance effect with its connection captured.
+  return Effect.gen(function* () {
+    // File size includes reused frames. NOOP reports actual pending frames
+    // without copying or syncing, and idle checks do not fill the trace log.
+    const [wal] = yield* checkpoint<{ log: number; checkpointed: number }>`
         PRAGMA wal_checkpoint(NOOP)
       `.pipe(Effect.withTracerEnabled(false));
-      if (wal === undefined || wal.log <= wal.checkpointed) {
-        retryPending = false;
-        return;
+    if (wal === undefined || wal.log <= wal.checkpointed) {
+      retryPending = false;
+      return;
+    }
+    if (!retryPending && wal.log - wal.checkpointed < CHECKPOINT_PAGES) return;
+    yield* Effect.gen(function* () {
+      const [result] = yield* checkpoint<{
+        busy: number;
+        log: number;
+        checkpointed: number;
+      }>`PRAGMA wal_checkpoint(PASSIVE)`;
+      if (result !== undefined) {
+        retryPending = result.busy !== 0 || result.log > result.checkpointed;
+        yield* Effect.annotateCurrentSpan({
+          "sqlite.wal.busy": result.busy,
+          "sqlite.wal.frames": result.log,
+          "sqlite.wal.checkpointed": result.checkpointed,
+        });
       }
-      if (!retryPending && wal.log - wal.checkpointed < CHECKPOINT_PAGES) return;
-      yield* Effect.gen(function* () {
-        const [result] = yield* checkpoint<{
-          busy: number;
-          log: number;
-          checkpointed: number;
-        }>`PRAGMA wal_checkpoint(PASSIVE)`;
-        if (result !== undefined) {
-          retryPending = result.busy !== 0 || result.log > result.checkpointed;
-          yield* Effect.annotateCurrentSpan({
-            "sqlite.wal.busy": result.busy,
-            "sqlite.wal.frames": result.log,
-            "sqlite.wal.checkpointed": result.checkpointed,
-          });
-        }
-      }).pipe(Effect.withSpan("sqlite.checkpoint"));
-    });
+    }).pipe(Effect.withSpan("sqlite.checkpoint"));
   });
+});
 
 export const layerWith = <E, R>(
   makeCheckpoint: Effect.Effect<Effect.Effect<void, E>, E, R | Scope.Scope>,

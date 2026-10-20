@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/provider-capacity";
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { providerCapacityEnvironmentsAtom } from "../../state/providerCapacity";
@@ -23,25 +23,31 @@ export function ModelPickerCapacity(props: {
   readonly onSelectInstance: (instanceId: ProviderInstanceId) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const [expiryVersion, invalidateCapacity] = useReducer((value: number) => value + 1, 0);
-  const environments = useAtomValue(providerCapacityEnvironmentsAtom);
-  const capacity = useMemo(
-    () =>
-      rankProviderCapacity({
-        environmentId: props.environmentId,
-        currentThreadId: props.currentThreadId ?? null,
-        providers: props.entries.map((entry) => entry.snapshot),
-        environments,
-        now: Date.now(),
-      }),
-    [environments, expiryVersion, open, props.environmentId, props.currentThreadId, props.entries],
+  const [capacityNow, refreshCapacityNow] = useReducer(
+    (_previous: number) => Date.now(),
+    undefined,
+    Date.now,
   );
-  useEffect(() => scheduleProviderCapacityExpiry(capacity, invalidateCapacity), [capacity]);
+  const environments = useAtomValue(providerCapacityEnvironmentsAtom);
+  const capacity = rankProviderCapacity({
+    environmentId: props.environmentId,
+    currentThreadId: props.currentThreadId ?? null,
+    providers: props.entries.map((entry) => entry.snapshot),
+    environments,
+    now: capacityNow,
+  });
+  useEffect(() => scheduleProviderCapacityExpiry(capacity, refreshCapacityNow), [capacity]);
   if (capacity.length === 0) return null;
 
   return (
     <div className="shrink-0 border-b border-border/70">
-      <Collapsible open={open} onOpenChange={setOpen}>
+      <Collapsible
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          refreshCapacityNow();
+        }}
+      >
         <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="w-full" />}>
           <GaugeIcon aria-hidden="true" />
           <span className="flex-1 text-left">Provider capacity</span>

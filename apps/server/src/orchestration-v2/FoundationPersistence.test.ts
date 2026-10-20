@@ -953,12 +953,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ON CONFLICT(thread_id) DO NOTHING
       `;
       yield* sql`
-        INSERT INTO projection_thread_activities (
-          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
         )
         VALUES
-          ('activity:v1:imported', ${importedV1ThreadId}, NULL, 'info', 'tool', 'done', '{}', ${nowIso}),
-          ('activity:v1:pending', ${pendingV1ThreadId}, NULL, 'info', 'tool', 'done', '{}', ${nowIso})
+          ('message:v1:imported', ${importedV1ThreadId}, NULL, 'assistant', 'done', 0, ${nowIso}, ${nowIso}),
+          ('message:v1:pending', ${pendingV1ThreadId}, NULL, 'assistant', 'done', 0, ${nowIso}, ${nowIso})
       `;
       yield* sql`
         INSERT INTO orchestration_command_receipts (
@@ -1021,14 +1021,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["command:foundation-compact:pending"],
       );
 
-      const remainingActivities = yield* sql<{ readonly activity_id: string }>`
-        SELECT activity_id
-        FROM projection_thread_activities
+      const remainingMessages = yield* sql<{ readonly message_id: string }>`
+        SELECT message_id
+        FROM projection_thread_messages
         WHERE thread_id IN (${importedV1ThreadId}, ${pendingV1ThreadId})
       `;
       assert.deepEqual(
-        remainingActivities.map((row) => row.activity_id),
-        ["activity:v1:pending"],
+        remainingMessages.map((row) => row.message_id),
+        ["message:v1:pending"],
       );
 
       // Replay across the deletion gaps must still produce a valid projection.

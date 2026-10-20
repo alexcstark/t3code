@@ -34,11 +34,11 @@ describe("composer submission state", () => {
       busyStates.push(pending),
     );
     const submission = state.run(async () => {
-      state.current = true;
+      state.setPending(true);
       await response.promise;
     });
 
-    expect(state.current).toBe(true);
+    expect(state.pending).toBe(true);
     expect(registry.get(state.pendingAtom)).toBe(true);
     expect(busyStates).toEqual([true]);
 
@@ -54,39 +54,39 @@ describe("composer submission state", () => {
     const { registry, state } = createState();
     const response = deferredResponse();
     const submission = state.run(async () => {
-      state.current = true;
+      state.setPending(true);
       await response.promise;
     });
     const rejected = expect(submission).rejects.toThrow("Connection lost");
     response.reject(new Error("Connection lost"));
     await rejected;
 
-    expect(state.current).toBe(false);
+    expect(state.pending).toBe(false);
     expect(registry.get(state.pendingAtom)).toBe(false);
     await state.run(async () => {
-      expect(state.current).toBe(false);
-      state.current = true;
+      expect(state.pending).toBe(false);
+      state.setPending(true);
     });
-    expect(state.current).toBe(false);
+    expect(state.pending).toBe(false);
   });
 
   it("does not release a pending send when a duplicate submission is blocked", async () => {
     const { state } = createState();
     const response = deferredResponse();
     const submission = state.run(async () => {
-      state.current = true;
+      state.setPending(true);
       await response.promise;
     });
 
     await state.run(async () => {
-      if (state.current) return;
+      if (state.pending) return;
       throw new Error("The duplicate should be blocked");
     });
-    expect(state.current).toBe(true);
+    expect(state.pending).toBe(true);
 
     response.resolve();
     await submission;
-    expect(state.current).toBe(false);
+    expect(state.pending).toBe(false);
   });
 
   it("does not release a newer send when background submissions finish later", async () => {
@@ -94,21 +94,21 @@ describe("composer submission state", () => {
     const backgroundResponse = deferredResponse();
     const nextResponse = deferredResponse();
     const background = state.run(async () => {
-      state.current = true;
-      state.current = false;
+      state.setPending(true);
+      state.setPending(false);
       await backgroundResponse.promise;
     });
     const next = state.run(async () => {
-      state.current = true;
+      state.setPending(true);
       await nextResponse.promise;
     });
 
     backgroundResponse.resolve();
     await background;
-    expect(state.current).toBe(true);
+    expect(state.pending).toBe(true);
 
     nextResponse.resolve();
     await next;
-    expect(state.current).toBe(false);
+    expect(state.pending).toBe(false);
   });
 });
