@@ -674,6 +674,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => ({
       ownerId: settingsOwnerId,
       environmentId: props.environmentId,
+      currentThreadId: props.selectedThread.id,
       providerInstanceId: currentModelSelection.instanceId,
       ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
       providerGroups: threadProviderGroups,
@@ -695,6 +696,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }),
     [
       currentModelSelection,
+      props.selectedThread.id,
       props.reportedModelSelection,
       currentRuntimeMode,
       props.onUpdateModelSelection,

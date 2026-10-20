@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
@@ -14,6 +15,7 @@ import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRe
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { ModelPickerCapacity } from "./ModelPickerCapacity";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
@@ -158,6 +160,7 @@ function ModelListSeparator() {
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   environmentId: EnvironmentId | null;
+  currentThreadId?: ThreadId | null;
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
   model: string;
@@ -441,6 +444,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
   const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const capacityEntries = useMemo(
+    () =>
+      instanceEntries.filter(
+        (entry) =>
+          isProviderInstancePickerReady(entry) &&
+          matchesLockedProvider(entry) &&
+          (modelOptionsByInstance.get(entry.instanceId) ?? []).some(
+            (model) =>
+              !model.isUnavailable && !getModelDisabledReason?.(entry.instanceId, model.slug),
+          ),
+      ),
+    [getModelDisabledReason, instanceEntries, matchesLockedProvider, modelOptionsByInstance],
+  );
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -970,6 +986,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             />
+
+            {!isSearching && props.environmentId !== null ? (
+              <ModelPickerCapacity
+                environmentId={props.environmentId}
+                currentThreadId={props.currentThreadId ?? null}
+                entries={capacityEntries}
+                onSelectInstance={handleSelectInstance}
+              />
+            ) : null}
 
             {/* Model list */}
             <div
