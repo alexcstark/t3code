@@ -13,7 +13,7 @@ export interface DesktopWindowLayoutView {
 // Which window shows a thread: the window it was moved into, else the first
 // window scoped to its project, else the first unscoped window, else home.
 // Every window resolves the same layout, so each thread shows in exactly one.
-export function resolveThreadWindowId(
+function resolveThreadWindowId(
   layout: DesktopWindowLayout,
   threadKey: string,
   projectKey: string | null,
