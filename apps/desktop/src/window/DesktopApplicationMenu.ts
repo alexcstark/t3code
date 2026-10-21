@@ -69,6 +69,11 @@ const openNewWindow = Effect.gen(function* () {
   yield* desktopWindow.openWindow({});
 }).pipe(Effect.withSpan("desktop.menu.openNewWindow"));
 
+const mergeAllWindows = Effect.gen(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.mergeWindows;
+}).pipe(Effect.withSpan("desktop.menu.mergeAllWindows"));
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -163,6 +168,9 @@ export const make = Effect.gen(function* () {
     const newWindowClick = () => {
       runMenuEffect("new-window", openNewWindow);
     };
+    const mergeWindowsClick = () => {
+      runMenuEffect("merge-all-windows", mergeAllWindows);
+    };
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
       runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
     };
@@ -207,6 +215,10 @@ export const make = Effect.gen(function* () {
             // The shorter Shift and Alt chords are new-thread shortcuts.
             accelerator: "CmdOrCtrl+Alt+Shift+N",
             click: newWindowClick,
+          },
+          {
+            label: "Merge All Windows",
+            click: mergeWindowsClick,
           },
           { type: "separator" },
           ...(environment.platform === "darwin"

@@ -211,6 +211,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
           applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
           applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+          updateWindowLayout: () => Effect.die("unexpected window layout update"),
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 

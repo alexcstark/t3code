@@ -40,6 +40,7 @@ export interface DesktopSettings {
   // Changing this requires a desktop restart because the pool's primary spec is
   // chosen once at layer init.
   readonly wslOnly: boolean;
+  readonly windowLayout: DesktopWindowLayout;
 }
 
 export interface DesktopSettingsChange {
@@ -59,6 +60,20 @@ export const DesktopWindowBoundsSchema = Schema.Struct({
   height: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_MAIN_WINDOW_SIZE.height)),
 });
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
+const DesktopWindowLayoutEntrySchema = Schema.Struct({
+  id: Schema.String,
+  projectScopeKey: Schema.NullOr(Schema.String),
+  bounds: Schema.NullOr(DesktopWindowBoundsSchema),
+  maximized: Schema.Boolean,
+});
+export type DesktopWindowLayoutEntry = typeof DesktopWindowLayoutEntrySchema.Type;
+const DesktopWindowLayoutSchema = Schema.Struct({
+  windows: Schema.Array(DesktopWindowLayoutEntrySchema),
+  assignments: Schema.Record(Schema.String, Schema.String),
+});
+// Open windows in order (the first is home) and the threads moved into each.
+export type DesktopWindowLayout = typeof DesktopWindowLayoutSchema.Type;
+export const EMPTY_WINDOW_LAYOUT: DesktopWindowLayout = { windows: [], assignments: {} };
 export const DEFAULT_MAIN_WINDOW_SIZE = {
   width: 1100,
   height: 780,
@@ -77,6 +92,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslBackendEnabled: false,
   wslDistro: null,
   wslOnly: false,
+  windowLayout: EMPTY_WINDOW_LAYOUT,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -100,6 +116,7 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  windowLayout: Schema.optionalKey(Schema.Unknown),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -110,6 +127,7 @@ const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
+const decodeDesktopWindowLayout = Schema.decodeUnknownOption(DesktopWindowLayoutSchema);
 
 const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSettingsChange => ({
   settings,
@@ -175,6 +193,9 @@ export class DesktopAppSettings extends Context.Service<
       DesktopSettingsWriteError
     >;
     readonly applyWslWindowsFallbackInMemory: Effect.Effect<DesktopSettingsChange>;
+    readonly updateWindowLayout: (
+      update: (layout: DesktopWindowLayout) => DesktopWindowLayout,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
   }
 >()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
@@ -231,6 +252,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
+    windowLayout: normalizeWindowLayout(parsed.windowLayout),
   };
 }
 
@@ -277,8 +299,97 @@ function toDesktopSettingsDocument(
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
   }
+  if (settings.windowLayout.windows.length > 0) {
+    document.windowLayout = settings.windowLayout;
+  }
 
   return document;
+}
+
+function assignmentsWithin(
+  windows: DesktopWindowLayout["windows"],
+  assignments: DesktopWindowLayout["assignments"],
+): DesktopWindowLayout["assignments"] {
+  const windowIds = new Set(windows.map((window) => window.id));
+  return Object.fromEntries(
+    Object.entries(assignments).filter(([, windowId]) => windowIds.has(windowId)),
+  );
+}
+
+// An unreadable layout falls back to one window showing every thread.
+export function normalizeWindowLayout(value: unknown): DesktopWindowLayout {
+  const decoded = decodeDesktopWindowLayout(value);
+  if (Option.isNone(decoded)) return EMPTY_WINDOW_LAYOUT;
+  const seenIds = new Set<string>();
+  const windows = decoded.value.windows.filter((window) => {
+    if (seenIds.has(window.id)) return false;
+    seenIds.add(window.id);
+    return true;
+  });
+  return { windows, assignments: assignmentsWithin(windows, decoded.value.assignments) };
+}
+
+export function addLayoutWindow(
+  layout: DesktopWindowLayout,
+  entry: DesktopWindowLayoutEntry,
+): DesktopWindowLayout {
+  return layout.windows.some((window) => window.id === entry.id)
+    ? layout
+    : { ...layout, windows: [...layout.windows, entry] };
+}
+
+// The closed window's threads fall back to wherever their project resolves.
+export function removeLayoutWindow(layout: DesktopWindowLayout, id: string): DesktopWindowLayout {
+  if (!layout.windows.some((window) => window.id === id)) return layout;
+  const windows = layout.windows.filter((window) => window.id !== id);
+  return { windows, assignments: assignmentsWithin(windows, layout.assignments) };
+}
+
+export function updateLayoutWindow(
+  layout: DesktopWindowLayout,
+  id: string,
+  patch: Partial<Omit<DesktopWindowLayoutEntry, "id">>,
+): DesktopWindowLayout {
+  const current = layout.windows.find((window) => window.id === id);
+  if (current === undefined) return layout;
+  const next = { ...current, ...patch };
+  const unchanged =
+    next.projectScopeKey === current.projectScopeKey &&
+    next.maximized === current.maximized &&
+    (next.bounds === current.bounds ||
+      (next.bounds !== null &&
+        current.bounds !== null &&
+        desktopWindowBoundsEquivalence(next.bounds, current.bounds)));
+  return unchanged
+    ? layout
+    : { ...layout, windows: layout.windows.map((window) => (window.id === id ? next : window)) };
+}
+
+export function assignLayoutThreads(
+  layout: DesktopWindowLayout,
+  threadKeys: readonly string[],
+  windowId: string,
+): DesktopWindowLayout {
+  if (!layout.windows.some((window) => window.id === windowId)) return layout;
+  if (threadKeys.every((key) => layout.assignments[key] === windowId)) return layout;
+  const assignments = { ...layout.assignments };
+  for (const key of threadKeys) assignments[key] = windowId;
+  return { ...layout, assignments };
+}
+
+// Keeps only the home window, which then shows every thread again.
+export function mergeLayoutWindows(layout: DesktopWindowLayout): DesktopWindowLayout {
+  return layout.windows.length <= 1 && Object.keys(layout.assignments).length === 0
+    ? layout
+    : { windows: layout.windows.slice(0, 1), assignments: {} };
+}
+
+function setWindowLayout(
+  settings: DesktopSettings,
+  update: (layout: DesktopWindowLayout) => DesktopWindowLayout,
+): DesktopSettings {
+  const windowLayout = update(settings.windowLayout);
+  return windowLayout === settings.windowLayout ? settings : { ...settings, windowLayout };
 }
 
 function setServerExposureMode(
@@ -571,6 +682,10 @@ export const make = Effect.gen(function* () {
     applyWslWindowsFallbackInMemory: updateInMemory(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallbackInMemory"),
     ),
+    updateWindowLayout: (update) =>
+      persist((settings) => setWindowLayout(settings, update)).pipe(
+        Effect.withSpan("desktop.settings.updateWindowLayout"),
+      ),
   });
 });
 
@@ -610,6 +725,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setLocalEnvironmentEnabled(settings, enabled)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
+        updateWindowLayout: (layoutUpdate) =>
+          update((settings) => setWindowLayout(settings, layoutUpdate)),
       });
     }),
   );

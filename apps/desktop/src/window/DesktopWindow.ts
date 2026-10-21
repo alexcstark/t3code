@@ -1,5 +1,6 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -8,7 +9,12 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopSnapShotEvent,
+  type DesktopWindowLayout,
+  type DesktopWindowMoveTarget,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -25,6 +31,7 @@ import {
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
+  WINDOW_LAYOUT_CHANNEL,
 } from "../ipc/channels.ts";
 import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -90,7 +97,14 @@ export type MainWindowZoomDirection = "in" | "out" | "reset";
 export type MainWindowContentsCommand = "reload" | "forceReload" | "toggleDevTools";
 
 export interface OpenWindowOptions {
+  // Omitted, the new window copies the focused window's project scope.
   readonly projectScopeKey?: string | undefined;
+}
+
+interface CreateWindowOptions {
+  readonly entry: DesktopAppSettings.DesktopWindowLayoutEntry;
+  // Restored windows reopen where they were; new ones cascade over the opener.
+  readonly restored: boolean;
 }
 
 // How far each additional window is offset from the window it opened over.
@@ -106,6 +120,21 @@ export class DesktopWindow extends Context.Service<
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     // Opens another app window, optionally with its sidebar scoped to one project.
     readonly openWindow: (options: OpenWindowOptions) => Effect.Effect<void, DesktopWindowError>;
+    readonly windowLayoutFor: (
+      webContentsId: number,
+    ) => Effect.Effect<{ readonly windowId: string; readonly layout: DesktopWindowLayout } | null>;
+    readonly setWindowProjectScope: (
+      webContentsId: number,
+      projectScopeKey: string | null,
+    ) => Effect.Effect<void>;
+    // Resolves false when no window took the threads.
+    readonly moveThreadsToWindow: (
+      webContentsId: number,
+      threadKeys: readonly string[],
+      target: DesktopWindowMoveTarget,
+    ) => Effect.Effect<boolean, DesktopWindowError>;
+    // Closes every window but home, which shows every thread again.
+    readonly mergeWindows: Effect.Effect<void>;
     // Show a lightweight "Connecting to WSL" splash window immediately (wsl-only
     // mode), before the WSL backend that acts as the primary is ready. It is
     // dismissed automatically once the real main window reveals.
@@ -316,6 +345,22 @@ function bindFirstRevealTrigger(
   }
 }
 
+function toPublicWindowLayout(layout: DesktopAppSettings.DesktopWindowLayout): DesktopWindowLayout {
+  return {
+    windows: layout.windows.map(({ id, projectScopeKey }) => ({ id, projectScopeKey })),
+    assignments: layout.assignments,
+  };
+}
+
+function containsPoint(bounds: Electron.Rectangle, point: Electron.Point): boolean {
+  return (
+    point.x >= bounds.x &&
+    point.y >= bounds.y &&
+    point.x < bounds.x + bounds.width &&
+    point.y < bounds.y + bounds.height
+  );
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -331,12 +376,66 @@ export const make = Effect.gen(function* () {
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
+  const crypto = yield* Crypto.Crypto;
+  const newLayoutEntry = (projectScopeKey: string | null) =>
+    crypto.randomUUIDv4().pipe(
+      Effect.orDie,
+      Effect.map((id): DesktopAppSettings.DesktopWindowLayoutEntry => ({
+        id,
+        projectScopeKey,
+        bounds: null,
+        maximized: false,
+      })),
+    );
   const backendReadyRef = yield* Ref.make(false);
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  // Open app windows by layout id. The layout in settings is the authority for
+  // which windows exist across restarts and which threads each one shows.
+  const windowById = new Map<string, Electron.BrowserWindow>();
+  const windowIdByContentsId = new Map<number, string>();
+
+  // A window that is still loading reads the layout itself at boot, so it is skipped.
+  const broadcastWindowLayout = Effect.fn("desktop.window.broadcastWindowLayout")(function* (
+    skipWindowId: string | undefined,
+  ) {
+    const layout = toPublicWindowLayout((yield* desktopSettings.get).windowLayout);
+    for (const [id, window] of windowById) {
+      if (id !== skipWindowId && !window.isDestroyed()) {
+        window.webContents.send(WINDOW_LAYOUT_CHANNEL, layout);
+      }
+    }
+  });
+
+  const updateWindowLayout = (
+    update: (
+      layout: DesktopAppSettings.DesktopWindowLayout,
+    ) => DesktopAppSettings.DesktopWindowLayout,
+    {
+      broadcast = true,
+      skipWindowId,
+    }: { readonly broadcast?: boolean; readonly skipWindowId?: string } = {},
+  ) =>
+    desktopSettings.updateWindowLayout(update).pipe(
+      Effect.flatMap((change) =>
+        change.changed && broadcast ? broadcastWindowLayout(skipWindowId) : Effect.void,
+      ),
+      Effect.catch((error) =>
+        logWindowWarning("failed to persist window layout", { message: error.message }),
+      ),
+    );
+
+  const layoutEntryOf = Effect.fn("desktop.window.layoutEntryOf")(function* (
+    window: Electron.BrowserWindow,
+  ) {
+    if (window.isDestroyed()) return undefined;
+    const id = windowIdByContentsId.get(window.webContents.id);
+    const { windowLayout } = yield* desktopSettings.get;
+    return windowLayout.windows.find((entry) => entry.id === id);
+  });
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -378,16 +477,12 @@ export const make = Effect.gen(function* () {
   });
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    options: OpenWindowOptions = {},
+    options: CreateWindowOptions,
   ): Effect.fn.Return<Option.Option<Electron.BrowserWindow>, DesktopWindowError> {
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
-    // The renderer reads (and strips) this once at boot to scope its sidebar.
-    const windowUrl =
-      options.projectScopeKey === undefined
-        ? applicationUrl
-        : `${applicationUrl}?projectScope=${encodeURIComponent(options.projectScopeKey)}`;
+    const layoutId = options.entry.id;
     // An additional window opens over the current one instead of restoring the
     // saved bounds, which would stack it exactly on top.
     const openerWindow = yield* electronWindow.main;
@@ -412,9 +507,14 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const initialBounds = Option.isSome(openerWindow)
-      ? resolveCascadedWindowBounds(openerWindow.value.getNormalBounds(), displayBounds)
-      : resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    const restoredSecondaryBounds =
+      Option.isSome(openerWindow) && options.restored ? options.entry.bounds : null;
+    const initialBounds =
+      restoredSecondaryBounds !== null
+        ? resolveInitialMainWindowBounds(restoredSecondaryBounds, displayBounds)
+        : Option.isSome(openerWindow)
+          ? resolveCascadedWindowBounds(openerWindow.value.getNormalBounds(), displayBounds)
+          : resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (
       Option.isNone(openerWindow) &&
@@ -458,6 +558,16 @@ export const make = Effect.gen(function* () {
     }
 
     yield* rendererHistory.register(window.webContents, { surface: "main" });
+    const contentsId = window.webContents.id;
+    windowById.set(layoutId, window);
+    windowIdByContentsId.set(contentsId, layoutId);
+    // Registered before the renderer loads, so its first layout read finds itself.
+    if (!options.restored) {
+      yield* updateWindowLayout(
+        (layout) => DesktopAppSettings.addLayoutWindow(layout, options.entry),
+        { skipWindowId: layoutId },
+      );
+    }
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
@@ -489,15 +599,30 @@ export const make = Effect.gen(function* () {
       if (bounds === null) {
         return pendingBoundsPersistFiber;
       }
+      const isMaximized = window.isMaximized();
       pendingBoundsPersistFiber = runFork(
-        desktopSettings.setMainWindowBounds(bounds, window.isMaximized()).pipe(
-          Effect.asVoid,
-          Effect.catch((error) =>
-            logWindowWarning("failed to persist main window bounds", {
-              message: error.message,
-            }),
-          ),
-        ),
+        Effect.gen(function* () {
+          yield* updateWindowLayout(
+            (layout) =>
+              DesktopAppSettings.updateLayoutWindow(layout, layoutId, {
+                bounds,
+                maximized: isMaximized,
+              }),
+            { broadcast: false },
+          );
+          // Only home writes the main bounds, so a second window cannot move it.
+          const { windowLayout } = yield* desktopSettings.get;
+          const homeId = windowLayout.windows[0]?.id;
+          if (homeId !== undefined && homeId !== layoutId) return;
+          yield* desktopSettings.setMainWindowBounds(bounds, isMaximized).pipe(
+            Effect.asVoid,
+            Effect.catch((error) =>
+              logWindowWarning("failed to persist main window bounds", {
+                message: error.message,
+              }),
+            ),
+          );
+        }),
       );
       return pendingBoundsPersistFiber;
     };
@@ -761,7 +886,7 @@ export const make = Effect.gen(function* () {
       if (window.isDestroyed()) {
         return;
       }
-      void window.loadURL(windowUrl).catch(() => undefined);
+      void window.loadURL(applicationUrl).catch(() => undefined);
     };
     const scheduleDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
@@ -876,7 +1001,10 @@ export const make = Effect.gen(function* () {
       }
       // Reveal the real window, then close the connecting splash (if any) so the
       // two don't overlap and there's no blank gap between them.
-      if (Option.isNone(openerWindow) && persistedSettings.mainWindowMaximized) {
+      if (
+        (Option.isNone(openerWindow) && persistedSettings.mainWindowMaximized) ||
+        (restoredSecondaryBounds !== null && options.entry.maximized)
+      ) {
         window.maximize();
       }
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
@@ -890,7 +1018,19 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      windowById.delete(layoutId);
+      windowIdByContentsId.delete(contentsId);
       void runPromise(electronWindow.clearMain(Option.some(window)));
+      void runPromise(
+        Effect.gen(function* () {
+          // Quitting keeps every window for the next launch. So does closing the
+          // last one, which reopens as it was from the dock or taskbar.
+          if ((yield* Ref.get(desktopState.quitting)) || windowById.size === 0) return;
+          yield* updateWindowLayout((layout) =>
+            DesktopAppSettings.removeLayoutWindow(layout, layoutId),
+          );
+        }),
+      );
     });
     // The focused window becomes main, so app-level actions and the quit-time
     // bounds flush follow the window the user is working in.
@@ -904,12 +1044,41 @@ export const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const window = yield* createWindow();
+    const [home, ...others] = (yield* desktopSettings.get).windowLayout.windows;
+    const window = yield* createWindow(
+      home === undefined
+        ? { entry: yield* newLayoutEntry(null), restored: false }
+        : { entry: home, restored: true },
+    );
     if (Option.isSome(window)) {
       yield* logWindowInfo("main window created");
+      for (const entry of others) {
+        if (windowById.has(entry.id)) continue;
+        const restored = yield* createWindow({ entry, restored: true }).pipe(
+          Effect.catch((error) =>
+            logWindowWarning("failed to restore window", { message: error.message }).pipe(
+              Effect.as(Option.none<Electron.BrowserWindow>()),
+            ),
+          ),
+        );
+        // A window that did not reopen must not keep threads routed to it.
+        if (Option.isNone(restored) && !(yield* Ref.get(desktopState.quitting))) {
+          yield* updateWindowLayout((layout) =>
+            DesktopAppSettings.removeLayoutWindow(layout, entry.id),
+          );
+        }
+      }
     }
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
+
+  const openNewWindow = Effect.fn("desktop.window.openNewWindow")(function* (
+    projectScopeKey: string | null,
+  ) {
+    const entry = yield* newLayoutEntry(projectScopeKey);
+    const window = yield* createWindow({ entry, restored: false });
+    return Option.map(window, () => entry.id);
+  });
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
@@ -1054,11 +1223,74 @@ export const make = Effect.gen(function* () {
       // Before the backend is up the first window is still on its way; a
       // second one would only race it.
       if (yield* waitingForBackend) return;
-      yield* createWindow(options);
+      let projectScopeKey = options.projectScopeKey ?? null;
+      if (options.projectScopeKey === undefined) {
+        const focused = yield* electronWindow.main;
+        if (Option.isSome(focused)) {
+          projectScopeKey = (yield* layoutEntryOf(focused.value))?.projectScopeKey ?? null;
+        }
+      }
+      yield* openNewWindow(projectScopeKey);
       yield* logWindowInfo("additional window created", {
-        projectScoped: options.projectScopeKey !== undefined,
+        projectScoped: projectScopeKey !== null,
       });
     }),
+    windowLayoutFor: Effect.fn("desktop.window.windowLayoutFor")(function* (webContentsId) {
+      const windowId = windowIdByContentsId.get(webContentsId);
+      if (windowId === undefined) return null;
+      const { windowLayout } = yield* desktopSettings.get;
+      return { windowId, layout: toPublicWindowLayout(windowLayout) };
+    }),
+    setWindowProjectScope: Effect.fn("desktop.window.setWindowProjectScope")(
+      function* (webContentsId, projectScopeKey) {
+        const windowId = windowIdByContentsId.get(webContentsId);
+        if (windowId === undefined) return;
+        yield* updateWindowLayout((layout) =>
+          DesktopAppSettings.updateLayoutWindow(layout, windowId, { projectScopeKey }),
+        );
+      },
+    ),
+    moveThreadsToWindow: Effect.fn("desktop.window.moveThreadsToWindow")(
+      function* (webContentsId, threadKeys, target) {
+        const sourceId = windowIdByContentsId.get(webContentsId);
+        let targetId: string | undefined;
+        if (target === "new-window") {
+          if (yield* waitingForBackend) return false;
+          const source = sourceId === undefined ? undefined : windowById.get(sourceId);
+          const sourceEntry = source === undefined ? undefined : yield* layoutEntryOf(source);
+          targetId = Option.getOrUndefined(
+            yield* openNewWindow(sourceEntry?.projectScopeKey ?? null),
+          );
+        } else if (target === "window-at-cursor") {
+          const point = Electron.screen.getCursorScreenPoint();
+          // ponytail: Electron has no z-order API, so overlapping windows resolve to the first match.
+          targetId = [...windowById].find(
+            ([id, window]) =>
+              id !== sourceId &&
+              !window.isDestroyed() &&
+              window.isVisible() &&
+              !window.isMinimized() &&
+              containsPoint(window.getBounds(), point),
+          )?.[0];
+        } else {
+          targetId = windowById.has(target.windowId) ? target.windowId : undefined;
+        }
+        if (targetId === undefined || threadKeys.length === 0) return false;
+        const windowId = targetId;
+        yield* updateWindowLayout((layout) =>
+          DesktopAppSettings.assignLayoutThreads(layout, threadKeys, windowId),
+        );
+        return true;
+      },
+    ),
+    mergeWindows: Effect.gen(function* () {
+      const homeId = (yield* desktopSettings.get).windowLayout.windows[0]?.id;
+      if (homeId === undefined || !windowById.has(homeId)) return;
+      yield* updateWindowLayout(DesktopAppSettings.mergeLayoutWindows);
+      for (const [id, window] of windowById) {
+        if (id !== homeId && !window.isDestroyed()) window.close();
+      }
+    }).pipe(Effect.withSpan("desktop.window.mergeWindows")),
     showConnectingSplash,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);

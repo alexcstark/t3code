@@ -271,6 +271,13 @@ function layerTest(input: {
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    updateWindowLayout: (update) =>
+      Effect.sync(() => {
+        const windowLayout = update(desktopSettings.windowLayout);
+        const changed = windowLayout !== desktopSettings.windowLayout;
+        desktopSettings = { ...desktopSettings, windowLayout };
+        return { settings: desktopSettings, changed };
+      }),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
   const layerElectronWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
@@ -316,6 +323,7 @@ function layerTest(input: {
           shutdown: Effect.void,
         }),
         layerDesktopEnvironment,
+        NodeServices.layer,
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
@@ -446,6 +454,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             shutdown: Effect.void,
           }),
           layerDesktopEnvironment,
+          NodeServices.layer,
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,
           layerDesktopServerExposure,

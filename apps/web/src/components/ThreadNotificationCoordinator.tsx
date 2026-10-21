@@ -1,4 +1,9 @@
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   type PendingSubagentRequest,
   presentThreadShell,
@@ -16,6 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 
+import { createWindowThreadFilter, useDesktopWindowLayoutStore } from "../desktopWindowLayout";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { buildProjectGroups, selectProjectGroupingSettings } from "../logicalProject";
 import { useProjects } from "../state/entities";
@@ -42,13 +48,23 @@ export function ThreadNotificationCoordinator() {
   const inAppNotificationsEnabled = useClientSettings(
     (settings) => settings.inAppNotificationsEnabled,
   );
+  const windowLayout = useDesktopWindowLayoutStore((store) => store.view);
+  const projectGroups = buildProjectGroups({ projects, settings: projectGroupingSettings });
   const notificationProjectKeys = (() => {
     if (projectScopeKey === null) return null;
-    const projectGroup = buildProjectGroups({ projects, settings: projectGroupingSettings }).find(
-      (group) => group.key === projectScopeKey,
-    );
+    const projectGroup = projectGroups.find((group) => group.key === projectScopeKey);
     return new Set(projectGroup?.memberProjectRefs.map(scopedProjectKey) ?? []);
   })();
+  // Split windows notify only for the threads each one shows.
+  const notifiesInThisWindow = createWindowThreadFilter({
+    view: windowLayout,
+    projectKeyByProjectRef: new Map(
+      projectGroups.flatMap((group) =>
+        group.memberProjectRefs.map((ref) => [scopedProjectKey(ref), group.key] as const),
+      ),
+    ),
+    scopedProjectKeys: notificationProjectKeys,
+  });
   const pending = useRef(
     new Map<
       string,
@@ -114,6 +130,7 @@ export function ThreadNotificationCoordinator() {
       key={environmentId}
       environmentId={environmentId}
       notificationProjectKeys={notificationProjectKeys}
+      notifiesInThisWindow={notifiesInThisWindow}
       onNotification={onNotification}
     />
   ));
@@ -129,10 +146,12 @@ interface NotificationState {
 function EnvironmentNotifications({
   environmentId,
   notificationProjectKeys,
+  notifiesInThisWindow,
   onNotification,
 }: {
   environmentId: EnvironmentId;
   notificationProjectKeys: ReadonlySet<string> | null;
+  notifiesInThisWindow: ((threadKey: string, projectKey: string) => boolean) | null;
   onNotification: (
     environmentId: EnvironmentId,
     projectKey: string,
@@ -183,7 +202,15 @@ function EnvironmentNotifications({
           : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
       const projectKey = scopedProjectKey(scopeProjectRef(environmentId, thread.projectId));
-      if (notificationProjectKeys !== null && !notificationProjectKeys.has(projectKey)) continue;
+      if (
+        notifiesInThisWindow === null
+          ? notificationProjectKeys !== null && !notificationProjectKeys.has(projectKey)
+          : !notifiesInThisWindow(
+              scopedThreadKey(scopeThreadRef(environmentId, thread.id)),
+              projectKey,
+            )
+      )
+        continue;
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
@@ -279,6 +306,7 @@ function EnvironmentNotifications({
     mode,
     navigate,
     notificationProjectKeys,
+    notifiesInThisWindow,
     onNotification,
     threads,
   ]);

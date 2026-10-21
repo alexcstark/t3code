@@ -326,6 +326,7 @@ describe("DesktopServerExposure", () => {
       setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
       applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
       applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+      updateWindowLayout: () => Effect.die("unexpected window layout update"),
     } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
     return withHarness(

@@ -183,6 +183,17 @@ import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
+import {
+  buildMoveToWindowMenuItem,
+  createWindowThreadFilter,
+  type DesktopWindowLayoutView,
+  isMoveToWindowMenuId,
+  type MoveToWindowMenuId,
+  moveThreadsToWindow,
+  parseMoveToWindowMenuId,
+  useDesktopWindowLayoutStore,
+  withMoveToWindowItem,
+} from "../desktopWindowLayout";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -194,6 +205,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  type ThreadActionMenuId,
 } from "./threadActionMenu.logic";
 import {
   archiveSelectedThreadEntries,
@@ -458,12 +470,26 @@ function routeThreadOnly(
 function useSidebarThreads(input: {
   readonly projectScopeKey: string | null;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly projectKeyByProjectRef: ReadonlyMap<string, string>;
+  readonly windowLayout: DesktopWindowLayoutView | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly routeThreadRef: ScopedThreadRef | null;
 }) {
-  const { projectScopeKey, scopedProjectKeys, serverConfigs, optimisticDrop, routeThreadRef } =
-    input;
+  const {
+    projectScopeKey,
+    scopedProjectKeys,
+    projectKeyByProjectRef,
+    windowLayout,
+    serverConfigs,
+    optimisticDrop,
+    routeThreadRef,
+  } = input;
+  const inThisWindow = createWindowThreadFilter({
+    view: windowLayout,
+    projectKeyByProjectRef,
+    scopedProjectKeys,
+  });
   const shellThreads = useThreadShells();
   const automatedThreadKeys = useAutomatedThreadKeys();
   const routeThreadDetail = useThreadProjection(routeThreadRef);
@@ -528,9 +554,13 @@ function useSidebarThreads(input: {
 
   const partition = partitionSidebarThreads({
     threads: threads.filter(
-      (thread) => !automatedThreadKeys.has(`${thread.environmentId}:${thread.id}`),
+      (thread) =>
+        !automatedThreadKeys.has(`${thread.environmentId}:${thread.id}`) &&
+        (inThisWindow === null ||
+          inThisWindow(threadShellKey(thread), `${thread.environmentId}:${thread.projectId}`)),
     ),
-    scopedProjectKeys,
+    // The window filter already applied the project scope.
+    scopedProjectKeys: inThisWindow === null ? scopedProjectKeys : null,
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
@@ -811,6 +841,13 @@ function useSidebarLookups() {
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
+  const projectKeyByProjectRef = new Map(
+    projectGroups.flatMap((group) =>
+      group.memberProjects.map(
+        (project) => [`${project.environmentId}:${project.id}`, group.projectKey] as const,
+      ),
+    ),
+  );
   const projectScopeItems = [
     { value: "all", label: "All projects" },
     ...projectGroups.map((project) => ({ value: project.projectKey, label: project.displayName })),
@@ -824,6 +861,7 @@ function useSidebarLookups() {
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
+    projectKeyByProjectRef,
     projectScopeItems,
   };
 }
@@ -2797,8 +2835,10 @@ export default function Sidebar() {
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
+    projectKeyByProjectRef,
     projectScopeItems,
   } = useSidebarLookups();
+  const windowLayout = useDesktopWindowLayoutStore((store) => store.view);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2946,6 +2986,19 @@ export default function Sidebar() {
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const routeThreadKeyRef = useRef(routeThreadKey);
+  // A thread started from a draft in this window stays here, even when an
+  // earlier window on the same project would otherwise show it. Each thread is
+  // claimed once, so two windows on the same draft cannot trade it back and forth.
+  const claimedThreadKeysRef = useRef(new Set<string>());
+  const promotedDraftThreadKey = routeTarget?.kind === "draft" ? routeThreadKey : null;
+  const claimingWindowId =
+    windowLayout !== null && windowLayout.layout.windows.length > 1 ? windowLayout.windowId : null;
+  useEffect(() => {
+    if (promotedDraftThreadKey === null || claimingWindowId === null) return;
+    if (claimedThreadKeysRef.current.has(promotedDraftThreadKey)) return;
+    claimedThreadKeysRef.current.add(promotedDraftThreadKey);
+    void moveThreadsToWindow([promotedDraftThreadKey], { windowId: claimingWindowId });
+  }, [promotedDraftThreadKey, claimingWindowId]);
 
   // A selection made under one scope can hold threads the next scope hides.
   const setProjectScopeKey = (key: string | null) => {
@@ -3112,6 +3165,8 @@ export default function Sidebar() {
   } = useSidebarThreads({
     projectScopeKey,
     scopedProjectKeys,
+    projectKeyByProjectRef,
+    windowLayout,
     serverConfigs,
     optimisticDrop,
     routeThreadRef,
@@ -3479,7 +3534,18 @@ export default function Sidebar() {
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
     if (!pointerOutsideThreadList(point)) return false;
-    dropThreadContext(point, contextDragThreads());
+    const threads = contextDragThreads();
+    // Released past this window's edge: the window under the cursor takes the threads.
+    if (
+      windowLayout !== null &&
+      (point.x < 0 || point.y < 0 || point.x >= window.innerWidth || point.y >= window.innerHeight)
+    ) {
+      void moveThreadsToWindow(threads.map(scopedThreadKey), "window-at-cursor").then((moved) => {
+        if (moved) clearSelection();
+      });
+      return true;
+    }
+    dropThreadContext(point, threads);
     return true;
   };
   // useSensor memoizes on the options object; a fresh one each render rebuilds
@@ -4026,6 +4092,7 @@ export default function Sidebar() {
         pinnedCount: pinnedSelectedThreads.length,
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      const moveToWindowItem = buildMoveToWindowMenuItem(windowLayout, count);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -4069,6 +4136,7 @@ export default function Sidebar() {
                   },
                 ]
               : []),
+            ...(moveToWindowItem ? [moveToWindowItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
             {
               id: "delete",
@@ -4081,6 +4149,14 @@ export default function Sidebar() {
         ),
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
+      if (isMoveToWindowMenuId(clicked.value)) {
+        const target = parseMoveToWindowMenuId(clicked.value);
+        if (target !== null) {
+          clearSelection();
+          void moveThreadsToWindow(threadKeys, target);
+        }
+        return;
+      }
       const actionTargets =
         clicked.value === "unpin"
           ? pinnedSelectedThreads
@@ -4409,40 +4485,49 @@ export default function Sidebar() {
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const moveToWindowItem = buildMoveToWindowMenuItem(windowLayout);
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
-            buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
-                threadRef.environmentId,
-                AuthOrchestrationOperateScope,
-              ),
-              branch: thread.branch ?? null,
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
-                  }
-                : null,
-              isPinned,
-              isSettled,
-              autoSettleEnabled: thread.autoSettleDisabledAt == null,
-              isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
-              isRegeneratingTitle,
-              isRunning: !threadRuntimeCanArchive(thread.runtime),
-              supports: {
-                settlement: supportsSettlement,
-                autoSettleOptOut: supportsAutoSettleOptOut,
-                snooze: supportsSnooze,
-                pinning: supportsPinning,
-                titleRegeneration: supportsTitleRegeneration,
-              },
-              snoozePresets,
-            }),
+          api.contextMenu.show<ThreadActionMenuId | MoveToWindowMenuId>(
+            withMoveToWindowItem(
+              buildThreadActionMenuItems({
+                canOperate: readEnvironmentScope(
+                  threadRef.environmentId,
+                  AuthOrchestrationOperateScope,
+                ),
+                branch: thread.branch ?? null,
+                projectFilter: threadProjectGroup
+                  ? {
+                      label: threadProjectGroup.displayName,
+                      isActive: projectScopeKey === threadProjectGroup.projectKey,
+                    }
+                  : null,
+                isPinned,
+                isSettled,
+                autoSettleEnabled: thread.autoSettleDisabledAt == null,
+                isSnoozed,
+                canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+                isRegeneratingTitle,
+                isRunning: !threadRuntimeCanArchive(thread.runtime),
+                supports: {
+                  settlement: supportsSettlement,
+                  autoSettleOptOut: supportsAutoSettleOptOut,
+                  snooze: supportsSnooze,
+                  pinning: supportsPinning,
+                  titleRegeneration: supportsTitleRegeneration,
+                },
+                snoozePresets,
+              }),
+              moveToWindowItem,
+            ),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (isMoveToWindowMenuId(clicked.value)) {
+          const target = parseMoveToWindowMenuId(clicked.value);
+          if (target !== null) void moveThreadsToWindow([threadKey], target);
+          return;
+        }
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
