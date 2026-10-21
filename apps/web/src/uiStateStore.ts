@@ -1,6 +1,7 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
+import { readDesktopWindowLayout } from "./desktopWindowLayout";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
@@ -432,7 +433,7 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-// A desktop window opened for one project carries `?projectScope=<key>`. It
+// Older desktop shells open a project window with `?projectScope=<key>`. It
 // wins over the persisted scope, then leaves the URL so a reload keeps
 // whatever the user picks afterwards.
 function consumeWindowProjectScope(): string | null {
@@ -445,8 +446,13 @@ function consumeWindowProjectScope(): string | null {
   return projectScopeKey;
 }
 
+// Each desktop window keeps its own project scope in the window layout, which
+// outlives restarts. localStorage holds the scope only for the web app.
 function readInitialState(): UiState {
   const state = readPersistedState();
+  const view = readDesktopWindowLayout();
+  const entry = view?.layout.windows.find((window) => window.id === view.windowId);
+  if (entry !== undefined) return setSidebarProjectScopeKey(state, entry.projectScopeKey);
   const windowProjectScopeKey = consumeWindowProjectScope();
   return windowProjectScopeKey === null
     ? state
@@ -463,8 +469,11 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
-  setSidebarProjectScopeKey: (projectKey) =>
-    set((state) => setSidebarProjectScopeKey(state, projectKey)),
+  setSidebarProjectScopeKey: (projectKey) => {
+    set((state) => setSidebarProjectScopeKey(state, projectKey));
+    if (typeof window === "undefined") return;
+    void window.desktopBridge?.setWindowProjectScope?.(sanitizeOptionalKey(projectKey));
+  },
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

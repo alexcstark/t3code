@@ -134,6 +134,7 @@ describe("DesktopSettings", () => {
         updateChannelConfiguredByUser: false,
         wslBackendEnabled: false,
         wslOnly: false,
+        windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
         wslDistro: null,
       } satisfies DesktopAppSettings.DesktopSettings,
     );
@@ -164,6 +165,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
           wslOnly: false,
+          windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
 
@@ -272,6 +274,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
+          windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -329,6 +332,7 @@ describe("DesktopSettings", () => {
             updateChannelConfiguredByUser: true,
             wslBackendEnabled: false,
             wslOnly: false,
+            windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
             wslDistro: null,
           } satisfies DesktopAppSettings.DesktopSettings);
         }),
@@ -406,6 +410,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
+          windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -435,6 +440,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
           wslOnly: false,
+          windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -463,6 +469,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
+          windowLayout: DesktopAppSettings.EMPTY_WINDOW_LAYOUT,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -558,4 +565,82 @@ describe("DesktopSettings", () => {
       }),
     ),
   );
+});
+
+describe("DesktopAppSettings window layout", () => {
+  const home = { id: "home", projectScopeKey: null, bounds: null, maximized: false };
+  const second = {
+    id: "second",
+    projectScopeKey: "repo",
+    bounds: { x: 40, y: 40, width: 1100, height: 780 },
+    maximized: false,
+  };
+
+  it.effect("reopens every window with the threads moved into it", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.updateWindowLayout((layout) =>
+          DesktopAppSettings.assignLayoutThreads(
+            DesktopAppSettings.addLayoutWindow(
+              DesktopAppSettings.addLayoutWindow(layout, home),
+              second,
+            ),
+            ["env:thread-1"],
+            "second",
+          ),
+        );
+
+        const loaded = yield* settings.load;
+        assert.deepEqual(loaded.windowLayout, {
+          windows: [home, second],
+          assignments: { "env:thread-1": "second" },
+        });
+      }),
+    ),
+  );
+
+  it.effect("falls back to one window when the saved layout is unreadable", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          `{ "serverExposureMode": "network-accessible", "windowLayout": { "windows": "nope" } }\n`,
+        );
+
+        const loaded = yield* settings.load;
+        assert.deepEqual(loaded.windowLayout, DesktopAppSettings.EMPTY_WINDOW_LAYOUT);
+        assert.equal(loaded.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it("drops duplicate windows and moves that point at no window", () => {
+    assert.deepEqual(
+      DesktopAppSettings.normalizeWindowLayout({
+        windows: [home, second, { ...second, projectScopeKey: null }],
+        assignments: { "env:a": "second", "env:b": "gone" },
+      }),
+      { windows: [home, second], assignments: { "env:a": "second" } },
+    );
+  });
+
+  it("returns a closed window's threads and merges back to home", () => {
+    const split = {
+      windows: [home, second],
+      assignments: { "env:a": "second", "env:b": "home" },
+    };
+    assert.deepEqual(DesktopAppSettings.removeLayoutWindow(split, "second"), {
+      windows: [home],
+      assignments: { "env:b": "home" },
+    });
+    assert.deepEqual(DesktopAppSettings.mergeLayoutWindows(split), {
+      windows: [home],
+      assignments: {},
+    });
+  });
 });
