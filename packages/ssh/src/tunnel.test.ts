@@ -1,9 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
@@ -154,9 +148,9 @@ describe("ssh tunnel scripts", () => {
       releaseBaseUrl: "https://mirror.example/t3/",
     });
     assert.include(launch, "T3_RELEASE_BASE_URL='https://mirror.example/t3'");
-    assert.include(launch, 'RUNNER_NEXT="$STATE_ROOT/run-t3.next.$$"');
+    assert.include(launch, 'RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"');
     assert.include(launch, '"$RUNNER_NEXT" --version >/dev/null');
-    assert.include(launch, '"$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server');
+
     assert.include(
       SshTunnel.buildRemoteLaunchScript(NODE_SCRIPT),
       `T3_NODE_SCRIPT_PATH='${NODE_SCRIPT.nodeScriptPath}'`,
@@ -239,18 +233,6 @@ describe("ssh tunnel scripts", () => {
     assert.include(SshTunnel.buildRemoteLaunchScript(ARCHIVE), runner);
   });
 
-  it("delegates current stop policy and retains legacy stop escalation", () => {
-    const launch = SshTunnel.buildRemoteLaunchScript(ARCHIVE);
-    const stop = SshTunnel.buildRemoteStopScript("711bc738002d72fd");
-
-    assert.include(launch, '"$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server');
-    assert.notInclude(launch, "kill -9");
-    assert.include(stop, '"$LIFECYCLE_CONTROLLER" __ssh-helper stop-server');
-    assert.include(stop, 'if [ "$REMOTE_MANAGED" = "managed" ]');
-    assert.include(stop, 'kill -9 "$REMOTE_PID"');
-    assert.include(stop, "survived SIGKILL");
-  });
-
   it("installs the upstream release a fork build is cut from", () => {
     assert.equal(SshTunnel.resolveRemoteArchiveVersion("0.0.42-t4.0.0"), "0.0.42");
     assert.equal(SshTunnel.resolveRemoteArchiveVersion(" 0.0.41-t4.0.5 "), "0.0.41");
@@ -265,323 +247,6 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
-  it("uses one global runner and lifecycle state for probe, launch, pairing, and stop", () => {
-    const stateKey = "711bc738002d72fd";
-    const launch = SshTunnel.buildRemoteLaunchScript(ARCHIVE);
-    const devLaunch = SshTunnel.buildRemoteLaunchScript({
-      ...NODE_SCRIPT,
-      nodeEngineRange: TEST_NODE_ENGINE_RANGE,
-    });
-
-    const probe = SshTunnel.buildRemoteProbeScript();
-    const pairing = SshTunnel.buildRemotePairingScript(ARCHIVE);
-    const stop = SshTunnel.buildRemoteStopScript(stateKey);
-
-    assert.include(probe, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
-    assert.include(probe, "active_runtime_t3");
-    assert.include(probe, 'for LIFECYCLE_CONTROLLER in "$RUNNER_FILE" "$PATH_T3" "$ACTIVE_T3"');
-    assert.include(probe, '"$LIFECYCLE_CONTROLLER" __ssh-helper probe-server');
-    assert.include(probe, '{"status":"needs-ensure"}');
-    assert.include(launch, 'RUNNER_FILE="$STATE_ROOT/run-t3.sh"');
-    assert.include(launch, 'RUNNER_NEXT="$STATE_ROOT/run-t3.next.$$"');
-    assert.include(launch, 'find_lifecycle_controller "$RUNNER_NEXT" "$PATH_T3" "$ACTIVE_T3"');
-    assert.include(launch, '"$LIFECYCLE_CONTROLLER" __ssh-helper ensure-server');
-    assert.include(devLaunch, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
-    assert.include(devLaunch, "does not satisfy required range ");
-    assert.include(launch, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
-    assert.notInclude(launch, "nohup env T3CODE_NO_BROWSER=1");
-    assert.include(
-      pairing,
-      '"$PAIRING_RUNNER" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
-    );
-    assert.include(pairing, 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
-    assert.include(stop, '"$LIFECYCLE_CONTROLLER" __ssh-helper stop-server');
-    assert.include(stop, 'if [ -f "$STATE_ROOT/server-state.json" ]; then');
-    assert.include(stop, 'LEGACY_STATE_DIR="$STATE_ROOT/$STATE_KEY"');
-  });
-
-  it("uses an installed CLI as the lifecycle controller when the pinned runner is older", () => {
-    const temporaryHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-controller-"));
-    const stateRoot = NodePath.join(temporaryHome, ".t3", "ssh-launch");
-    const binDir = NodePath.join(temporaryHome, "bin");
-    const oldServer = NodePath.join(temporaryHome, "old-server.mjs");
-    NodeFS.mkdirSync(stateRoot, { recursive: true });
-    NodeFS.mkdirSync(binDir, { recursive: true });
-    NodeFS.writeFileSync(
-      oldServer,
-      [
-        'if (process.argv.includes("--version")) {',
-        '  process.stdout.write("t3 v0.0.42\\n");',
-        '} else if (process.argv[2] === "auth") {',
-        '  process.stdout.write(\'{"credential":"test-credential"}\\n\');',
-        "} else {",
-        "  process.exitCode = 1;",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    NodeFS.writeFileSync(
-      NodePath.join(binDir, "t3"),
-      [
-        "#!/bin/sh",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "--help" ]; then',
-        "  printf 'probe-server\\nensure-server\\nstop-server\\n'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "probe-server" ]; then',
-        `  printf '${JSON.stringify({
-          status: "ready",
-          remotePort: 3773,
-          serverKind: "external",
-          decision: "reuse-external",
-          remotePid: 1234,
-          serverVersion: "0.0.42-t4.0.4",
-        })}\\n'`,
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "ensure-server" ]; then',
-        '  test -x "$7"',
-        '  test -n "$8"',
-        '  mv "$7" "$8"',
-        `  printf '${JSON.stringify({
-          status: "ready",
-          remotePort: 3773,
-          serverKind: "external",
-          decision: "reuse-external",
-          remotePid: 1234,
-          serverVersion: "0.0.42-t4.0.4",
-        })}\\n'`,
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "stop-server" ]; then',
-        "  printf '{\"stopped\":true}\\n'",
-        "  exit 0",
-        "fi",
-        "exit 1",
-        "",
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-
-    const environment = {
-      ...process.env,
-      HOME: temporaryHome,
-      PATH: `${binDir}:${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
-    };
-    try {
-      // No pinned runner yet: an installed PATH CLI that speaks probe-server is
-      // enough for a warm reconnect (e.g. the boot-service install).
-      const freshProbe = NodeChildProcess.spawnSync(
-        "sh",
-        ["-s", "--", "0123456789abcdef", "0.0.42", "runner-id"],
-        { encoding: "utf8", env: environment, input: SshTunnel.buildRemoteProbeScript() },
-      );
-      assert.equal(freshProbe.status, 0, freshProbe.stderr);
-      assert.include(freshProbe.stdout, '"status":"ready"');
-
-      NodeFS.writeFileSync(
-        NodePath.join(stateRoot, "run-t3.sh"),
-        "#!/bin/sh\nprintf 'Unknown subcommand\\n' >&2\nexit 1\n",
-        { mode: 0o700 },
-      );
-      const probe = NodeChildProcess.spawnSync(
-        "sh",
-        ["-s", "--", "0123456789abcdef", "0.0.42", "runner-id"],
-        { encoding: "utf8", env: environment, input: SshTunnel.buildRemoteProbeScript() },
-      );
-      assert.equal(probe.status, 0, probe.stderr);
-      assert.include(probe.stdout, '"status":"ready"');
-
-      const launch = NodeChildProcess.spawnSync(
-        "sh",
-        ["-s", "--", "0123456789abcdef", "0.0.42", "runner-id"],
-        {
-          encoding: "utf8",
-          env: environment,
-          input: SshTunnel.buildRemoteLaunchScript({ nodeScriptPath: oldServer }),
-        },
-      );
-      assert.equal(launch.status, 0, launch.stderr);
-      assert.include(launch.stdout, '"status":"ready"');
-      assert.isTrue(NodeFS.existsSync(NodePath.join(stateRoot, "run-t3.sh")));
-
-      // The reused server is newer than the runner the old launch left behind,
-      // so pairing must mint the credential with this client's runner.
-      const newServer = NodePath.join(temporaryHome, "new-server.mjs");
-      NodeFS.writeFileSync(
-        newServer,
-        'process.stdout.write(\'{"credential":"new-runner-credential"}\\n\');\n',
-      );
-      const pairing = NodeChildProcess.spawnSync("sh", ["-s"], {
-        encoding: "utf8",
-        env: environment,
-        input: SshTunnel.buildRemotePairingScript({ nodeScriptPath: newServer }),
-      });
-      assert.equal(pairing.status, 0, pairing.stderr);
-      assert.include(pairing.stdout, '"credential":"new-runner-credential"');
-      assert.deepEqual(
-        NodeFS.readdirSync(stateRoot).filter((name) => name.startsWith("run-t3.pair.")),
-        [],
-      );
-
-      const stop = NodeChildProcess.spawnSync("sh", ["-s"], {
-        encoding: "utf8",
-        env: environment,
-        input: SshTunnel.buildRemoteStopScript("711bc738002d72fd"),
-      });
-      assert.equal(stop.status, 0, stop.stderr);
-      assert.include(stop.stdout, '"stopped":true');
-    } finally {
-      NodeFS.rmSync(temporaryHome, { recursive: true, force: true });
-    }
-  });
-
-  it("reuses the active runtime CLI when the pinned upstream runner lacks probe-server", () => {
-    const temporaryHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-active-"));
-    const stateRoot = NodePath.join(temporaryHome, ".t3", "ssh-launch");
-    const runtimeRoot = NodePath.join(temporaryHome, ".t3", "runtime");
-    const activeVersion = "0.0.46-nightly.20261011.2980-t4.0.3";
-    const activeBin = NodePath.join(runtimeRoot, "versions", activeVersion);
-    NodeFS.mkdirSync(stateRoot, { recursive: true });
-    NodeFS.mkdirSync(activeBin, { recursive: true });
-    NodeFS.writeFileSync(
-      NodePath.join(runtimeRoot, "service-state.json"),
-      JSON.stringify({ protocol: 3, activeVersion }),
-    );
-    NodeFS.writeFileSync(
-      NodePath.join(activeBin, "t3"),
-      [
-        "#!/bin/sh",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "--help" ]; then',
-        "  printf 'probe-server\\nensure-server\\nstop-server\\n'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "probe-server" ]; then',
-        `  printf '${JSON.stringify({
-          status: "ready",
-          remotePort: 3773,
-          serverKind: "external",
-          decision: "reuse-external",
-          remotePid: 99,
-          serverVersion: activeVersion,
-        })}\\n'`,
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "__ssh-helper" ] && [ "$2" = "ensure-server" ]; then',
-        '  mv "$7" "$8"',
-        `  printf '${JSON.stringify({
-          status: "ready",
-          remotePort: 3773,
-          serverKind: "external",
-          decision: "reuse-external",
-          remotePid: 99,
-          serverVersion: activeVersion,
-        })}\\n'`,
-        "  exit 0",
-        "fi",
-        "exit 1",
-        "",
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-    // Stale pinned runner: upstream archive the fork desktop resolved to, without
-    // the SSH lifecycle subcommands the current client needs.
-    NodeFS.writeFileSync(
-      NodePath.join(stateRoot, "run-t3.sh"),
-      [
-        "#!/bin/sh",
-        'if [ "$1" = "--version" ]; then',
-        '  printf "t3 v0.0.46-nightly.20261011.2980\\n"',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "__ssh-helper" ]; then',
-        "  printf 'pick-port\\nwait-ready\\nruntime-port\\n'",
-        '  printf \'ERROR Unknown subcommand "%s"\\n\' "$2" >&2',
-        "  exit 1",
-        "fi",
-        "exit 1",
-        "",
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-    const oldServer = NodePath.join(temporaryHome, "old-server.mjs");
-    NodeFS.writeFileSync(
-      oldServer,
-      'if (process.argv.includes("--version")) process.stdout.write("t3 v0.0.46\\n"); else process.exitCode = 1;\n',
-    );
-
-    const environment = {
-      ...process.env,
-      HOME: temporaryHome,
-      // No PATH t3: the boot-service install is only reachable via service-state.
-      PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
-    };
-    try {
-      const probe = NodeChildProcess.spawnSync(
-        "sh",
-        ["-s", "--", "0123456789abcdef", "0.0.46-nightly.20261011.2980", "runner-id"],
-        { encoding: "utf8", env: environment, input: SshTunnel.buildRemoteProbeScript() },
-      );
-      assert.equal(probe.status, 0, probe.stderr);
-      assert.include(probe.stdout, '"status":"ready"');
-      assert.include(probe.stdout, activeVersion);
-
-      const launch = NodeChildProcess.spawnSync(
-        "sh",
-        ["-s", "--", "0123456789abcdef", "0.0.46-nightly.20261011.2980", "runner-id"],
-        {
-          encoding: "utf8",
-          env: environment,
-          input: SshTunnel.buildRemoteLaunchScript({ nodeScriptPath: oldServer }),
-        },
-      );
-      assert.equal(launch.status, 0, launch.stderr);
-      assert.include(launch.stdout, '"status":"ready"');
-    } finally {
-      NodeFS.rmSync(temporaryHome, { recursive: true, force: true });
-    }
-  });
-
-  it("fails clearly when no remote runtime supports the lifecycle protocol", () => {
-    const temporaryHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-controller-"));
-    const oldServer = NodePath.join(temporaryHome, "old-server.mjs");
-    NodeFS.writeFileSync(
-      oldServer,
-      'if (process.argv.includes("--version")) process.stdout.write("t3 v0.0.42\\n"); else process.exitCode = 1;\n',
-    );
-    const environment = {
-      ...process.env,
-      HOME: temporaryHome,
-      PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin`,
-    };
-    try {
-      const launch = NodeChildProcess.spawnSync(
-        "sh",
-        ["-s", "--", "0123456789abcdef", "0.0.42", "runner-id"],
-        {
-          encoding: "utf8",
-          env: environment,
-          input: SshTunnel.buildRemoteLaunchScript({ nodeScriptPath: oldServer }),
-        },
-      );
-      assert.equal(launch.status, 1);
-      assert.include(launch.stderr, "does not support the SSH lifecycle protocol");
-
-      const stateRoot = NodePath.join(temporaryHome, ".t3", "ssh-launch");
-      NodeFS.writeFileSync(NodePath.join(stateRoot, "server-state.json"), "{}\n");
-      const stop = NodeChildProcess.spawnSync("sh", ["-s"], {
-        encoding: "utf8",
-        env: environment,
-        input: SshTunnel.buildRemoteStopScript("711bc738002d72fd"),
-      });
-      assert.equal(stop.status, 1);
-      assert.include(stop.stderr, "no installed t3 CLI can manage it");
-      assert.notInclude(stop.stdout, '"stopped":true');
-    } finally {
-      NodeFS.rmSync(temporaryHome, { recursive: true, force: true });
-    }
-  });
-
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",
@@ -593,9 +258,6 @@ describe("ssh tunnel scripts", () => {
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         spawnedCommands.push(commandArgs(command));
-        if (spawnedCommands.length === 1) {
-          return makeSuccessfulProcess('loaded nvm default\n{"status":"needs-ensure"}\n');
-        }
         return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
       }),
     );
@@ -605,82 +267,8 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
-      assert.equal(spawnedCommands.length, 2);
-      assert.deepEqual(spawnedCommands[0]?.slice(-7, -3), ["sh", "-l", "-s", "--"]);
-      assert.equal(spawnedCommands[0]?.at(-2), ARCHIVE.archiveVersion);
-      assert.deepEqual(spawnedCommands[0], spawnedCommands[1]);
-    }).pipe(Effect.provide(layerProcess));
-  });
-
-  it.effect("preserves the no-version argument when SSH joins a node-script command", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
-    const spawnedCommands: Array<ReadonlyArray<string>> = [];
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        spawnedCommands.push(commandArgs(command));
-        return makeSuccessfulProcess(
-          '{"status":"ready","remotePort":3774,"serverKind":"managed","decision":"reuse-managed","remotePid":1234,"serverVersion":"dev"}\n',
-        );
-      }),
-    );
-    const layerProcess = Layer.merge(
-      NodeServices.layer,
-      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
-    return Effect.gen(function* () {
-      yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, NODE_SCRIPT);
-      const remoteCommandArgs = spawnedCommands[0]?.slice(-7);
-      assert.isDefined(remoteCommandArgs);
-      assert.notInclude(remoteCommandArgs, "");
-
-      const temporaryHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-probe-"));
-      try {
-        const executed = NodeChildProcess.spawnSync("sh", ["-c", remoteCommandArgs.join(" ")], {
-          encoding: "utf8",
-          env: { ...process.env, HOME: temporaryHome },
-          input: SshTunnel.buildRemoteProbeScript(),
-        });
-        assert.equal(executed.status, 0, executed.stderr);
-        assert.equal(executed.stdout.trim(), '{"status":"needs-ensure"}');
-      } finally {
-        NodeFS.rmSync(temporaryHome, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layerProcess));
-  });
-
-  it.effect("reuses a healthy warm server without entering the cold launch path", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
-    let commandCount = 0;
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.sync(() => {
-        commandCount += 1;
-        return makeSuccessfulProcess(
-          '{"status":"ready","remotePort":3774,"serverKind":"managed","decision":"reuse-managed","remotePid":1234,"serverVersion":"1.2.3-preview.20260911.4"}\n',
-        );
-      }),
-    );
-    const layerProcess = Layer.merge(
-      NodeServices.layer,
-      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
-    return Effect.gen(function* () {
-      const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE);
-      assert.equal(commandCount, 1);
-      assert.equal(result.remotePort, 3774);
-      assert.equal(result.lifecycleDecision, "reuse-managed");
-      assert.equal(result.remotePid, 1234);
+      assert.equal(spawnedCommands.length, 1);
+      assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
     }).pipe(Effect.provide(layerProcess));
   });
 
@@ -695,9 +283,7 @@ describe("ssh tunnel scripts", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.sync(() => {
         commandCount += 1;
-        return commandCount === 1
-          ? makeSuccessfulProcess('{"status":"needs-ensure"}\n')
-          : makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 75_000);
+        return makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 75_000);
       }),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
@@ -712,7 +298,7 @@ describe("ssh tunnel scripts", () => {
 
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
-      assert.equal(commandCount, 2);
+      assert.equal(commandCount, 1);
     }).pipe(Effect.provide(layerProcess));
   });
 
@@ -727,9 +313,7 @@ describe("ssh tunnel scripts", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.sync(() => {
         commandCount += 1;
-        return commandCount === 1
-          ? makeSuccessfulProcess('{"status":"needs-ensure"}\n')
-          : makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 800_000);
+        return makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 800_000);
       }),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
@@ -744,7 +328,7 @@ describe("ssh tunnel scripts", () => {
 
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
-      assert.equal(commandCount, 2);
+      assert.equal(commandCount, 1);
     }).pipe(Effect.provide(layerProcess));
   });
 

@@ -132,7 +132,7 @@ server.listen(Number(process.env.T3_TEST_PORT ?? 0), "127.0.0.1", () => {
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "remote stop process ownership",
   () => {
-    it.live.each(["graceful", "timeout", "external"] as const)(
+    it.live.each(["graceful", "timeout", "external", "reused-pid", "legacy"] as const)(
       "confirms the stop result for a %s server",
       (mode) =>
         Effect.gen(function* () {
@@ -177,10 +177,31 @@ server.listen(0, "127.0.0.1", () => {
             ),
           );
           assert.equal(started.pid, child.pid);
+          const platform = yield* HostProcess.Platform;
+          const token =
+            platform === "linux"
+              ? (yield* fs.readFileString(`/proc/${child.pid}/stat`))
+                  .replace(/^.*\) /u, "")
+                  .split(" ")[19]
+              : yield* spawner
+                  .spawn(
+                    ChildProcess.make("ps", ["-o", "lstart=", "-p", String(child.pid)], {
+                      env: { LC_ALL: "C" },
+                    }),
+                  )
+                  .pipe(
+                    Effect.flatMap((process) =>
+                      process.stdout.pipe(Stream.decodeText(), Stream.mkString),
+                    ),
+                    Effect.map((output) => output.replace(/\n+$/u, "")),
+                  );
           const savedState = {
             pid: `${child.pid}\n`,
             port: `${started.port}\n`,
             managed: mode === "external" ? "external\n" : "managed\n",
+            ...(mode === "legacy"
+              ? {}
+              : { "start-token": mode === "reused-pid" ? "different-process\n" : `${token}\n` }),
           };
           const target = {
             alias: "fixture",
@@ -188,7 +209,7 @@ server.listen(0, "127.0.0.1", () => {
             username: null,
             port: null,
           };
-          const stateRoot = path.join(fixture, "ssh-state");
+          const stateRoot = path.join(fixture, ".t3", "ssh-launch");
           const stateKey = yield* remoteStateKey(target);
           const legacyStateDir = path.join(stateRoot, stateKey);
           yield* fs.makeDirectory(legacyStateDir, { recursive: true });
@@ -196,20 +217,12 @@ server.listen(0, "127.0.0.1", () => {
             yield* fs.writeFileString(path.join(legacyStateDir, name), contents);
           }
           const script = buildRemoteStopScript(stateKey);
-          // Exercise legacy ownership in the fixture without a host CLI or home.
-          const isolatedScript = script
-            .replace(/^STATE_ROOT=.*$/mu, 'STATE_ROOT="$T3_TEST_STATE_ROOT"')
-            .replace(/^DEFAULT_SERVER_HOME=.*$/mu, 'DEFAULT_SERVER_HOME="$T3_TEST_STATE_ROOT/home"')
-            .replace(/^PATH_T3=.*$/mu, 'PATH_T3=""');
-          assert.include(isolatedScript, 'STATE_ROOT="$T3_TEST_STATE_ROOT"');
-          assert.include(isolatedScript, 'DEFAULT_SERVER_HOME="$T3_TEST_STATE_ROOT/home"');
-          assert.include(isolatedScript, 'PATH_T3=""');
           const runStop = Effect.fn("test.remoteStop")(function* () {
             const stop = yield* spawner.spawn(
               ChildProcess.make("/bin/sh", ["-s"], {
                 cwd: fixture,
-                env: { T3_TEST_STATE_ROOT: stateRoot },
-                stdin: Stream.make(new TextEncoder().encode(isolatedScript)),
+                env: { HOME: fixture },
+                stdin: Stream.make(new TextEncoder().encode(script)),
               }),
             );
             return yield* Effect.all(
@@ -222,7 +235,7 @@ server.listen(0, "127.0.0.1", () => {
             );
           }, Effect.scoped);
           const result = yield* runStop();
-          if (mode === "external") {
+          if (mode === "external" || mode === "reused-pid" || mode === "legacy") {
             // An external server is never signaled by the stop script.
             assert.isTrue(yield* child.isRunning);
             yield* Effect.callback<void, Error>((resume) => {
@@ -232,19 +245,28 @@ server.listen(0, "127.0.0.1", () => {
               return Effect.sync(() => connection.destroy());
             });
           }
-          assert.equal(result.exitCode, 0, result.stderr);
-          assert.equal(result.stdout, '{"stopped":true}\n');
-          assert.equal(result.stderr, "");
+          if (mode === "timeout") {
+            assert.equal(result.exitCode, 1);
+            assert.include(result.stderr, "Its ownership files were kept.");
+            assert.isTrue(yield* child.isRunning);
+            for (const [name, contents] of Object.entries(savedState)) {
+              assert.equal(yield* fs.readFileString(path.join(legacyStateDir, name)), contents);
+            }
+            const retry = yield* runStop();
+            assert.equal(retry.exitCode, 0, retry.stderr);
+          } else {
+            assert.equal(result.exitCode, 0, result.stderr);
+            assert.equal(result.stdout, '{"stopped":true}\n');
+            assert.equal(result.stderr, "");
+          }
           for (const name of Object.keys(savedState)) {
             assert.isFalse(yield* fs.exists(path.join(legacyStateDir, name)));
           }
-          if (mode === "external") {
+          if (mode === "external" || mode === "reused-pid" || mode === "legacy") {
             assert.isFalse(yield* fs.exists(signalPath));
           } else if (mode === "timeout") {
-            // A server that ignores TERM is killed rather than leaked as an
-            // untracked orphan; its ownership files are gone after one stop.
             assert.isFalse(yield* child.isRunning);
-            assert.equal(yield* fs.readFileString(signalPath), "1");
+            assert.equal(yield* fs.readFileString(signalPath), "2");
           } else {
             assert.equal(yield* child.exitCode, 0);
             assert.equal(yield* fs.readFileString(signalPath), "1");
