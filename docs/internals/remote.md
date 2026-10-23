@@ -84,9 +84,8 @@ renderer uses the forwarded endpoint through the shared connection runtime.
 the user explicitly disconnects the environment, and only one the launcher owns:
 a server it discovered already running is never stopped. Closing a tunnel for any
 other reason — quitting the app, replacing a stale forward, waking the laptop —
-leaves the server up, because a cold launch costs tens of seconds and the launch
-script already restarts a server that no longer answers. Reconnection restores
-the forward before opening the application transport.
+leaves the server up so a client disconnect does not interrupt running agents.
+Reconnection restores the forward before opening the application transport.
 
 Remote servers can outlive several client releases. Clients must use advertised
 capabilities and handle their absence, rather than assume their own version
