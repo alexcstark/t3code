@@ -817,6 +817,8 @@ fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
+// Pair with this client's runner; an older connection's runner may target a
+// credential format the current server no longer reads.
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -955,7 +957,7 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   });
 }
 
-export function buildRemotePairingScript(runner: RemoteT3RunnerOptions | undefined): string {
+function buildRemotePairingScript(runner: RemoteT3RunnerOptions | undefined): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_RUNNER_SCRIPT: buildRemoteT3RunnerScript(runner),
   });
