@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -36,6 +37,12 @@ vi.mock(import("~/hooks/useSettings"), async (original) => ({
     };
   },
 }));
+
+// No connected environments: capacity rows fall back to unknown usage and activity.
+vi.mock(import("~/state/providerCapacity"), async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { providerCapacityEnvironmentsAtom: Atom.make([]) };
+});
 
 function providerEntry(instanceId: string, driver: string) {
   const provider: ServerProvider = {
@@ -169,6 +176,38 @@ describe("ProviderModelPicker", () => {
       .not.toBeInTheDocument();
     await click(page.getByRole("option", { name: /Legacy models/ }));
     await expect.element(page.getByRole("option", { name: /Other legacy/ })).toBeVisible();
+  });
+
+  it("opens on provider capacity and narrows to the chosen provider's models", async () => {
+    const codex = providerEntry("codex", "codex");
+    const claude = providerEntry("claude", "claudeAgent");
+    await using _screen = await renderUi(
+      <ProviderModelPicker
+        environmentId={EnvironmentId.make("local")}
+        activeInstanceId={codex.instanceId}
+        model="gpt-5"
+        lockedProvider={null}
+        instanceEntries={[codex, claude]}
+        modelOptionsByInstance={
+          new Map([
+            [codex.instanceId, [{ slug: "gpt-5", name: "GPT 5" }]],
+            [claude.instanceId, [{ slug: "opus", name: "Opus" }]],
+          ])
+        }
+        onInstanceModelChange={() => {}}
+      />,
+    );
+    await click(document.querySelector("button")!);
+
+    await expect.element(page.getByText("Provider capacity")).toBeVisible();
+    await expect.element(page.getByRole("option", { name: /GPT 5/ })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: /Opus/ })).not.toBeInTheDocument();
+
+    await click(page.getByRole("button", { name: new RegExp(`${claude.displayName}.*Unknown`) }));
+
+    await expect.element(page.getByRole("option", { name: /Opus/ })).toBeVisible();
+    await expect.element(page.getByRole("option", { name: /GPT 5/ })).not.toBeInTheDocument();
+    await expect.element(page.getByText("Provider capacity")).not.toBeInTheDocument();
   });
 
   it("shows a neutral aggregate value without a representative model or availability badge", async () => {

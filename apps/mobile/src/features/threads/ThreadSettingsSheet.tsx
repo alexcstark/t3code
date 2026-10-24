@@ -84,7 +84,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
-import { ProviderCapacitySection } from "./ProviderCapacitySection";
+import { ProviderCapacitySection, useProviderCapacity } from "./ProviderCapacitySection";
 import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
@@ -321,6 +321,8 @@ type ThreadSettingsSessionValue = {
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
   readonly providerFilter: string | null;
+  /** Provider capacity leads the sheet until a provider filter is chosen. */
+  readonly capacityOpen: boolean;
   readonly searchQuery: string;
   readonly showLegacy: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
@@ -490,6 +492,11 @@ function ThreadSettingsSessionProvider(
   };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [capacityOpen, setCapacityOpen] = useState(true);
+  const chooseProviderFilter = (providerKey: string | null) => {
+    setCapacityOpen(false);
+    setProviderFilter(providerKey);
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -599,6 +606,7 @@ function ThreadSettingsSessionProvider(
     hasLegacyModels,
     pendingModel,
     providerFilter,
+    capacityOpen,
     searchQuery,
     showLegacy: showLegacyToggle,
     applyOptionChange,
@@ -606,7 +614,7 @@ function ThreadSettingsSessionProvider(
     isApplied,
     isDisplayed,
     pressModel,
-    setProviderFilter,
+    setProviderFilter: chooseProviderFilter,
     setSearchQuery,
     setShowLegacy: setShowLegacyToggle,
     toggleProvider,
@@ -915,11 +923,19 @@ function ThreadSettingsMainContent(props: {
     });
   };
   const [animationsReady, setAnimationsReady] = useState(false);
-  const catalogItems = buildThreadSettingsCatalogItems(session);
+  const capacity = useProviderCapacity({
+    environmentId: session.environmentId,
+    currentThreadId: session.currentThreadId ?? null,
+    providerGroups: session.providerGroups,
+  });
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
+  const showCapacity = session.capacityOpen && !hasActiveCatalogFilter && capacity.length > 0;
+  const catalogItems = showCapacity ? [] : buildThreadSettingsCatalogItems(session);
   const listItems = [
-    ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
+    ...(catalogItems.length === 0 && !showCapacity
+      ? ([{ kind: "empty", key: "empty" }] as const)
+      : catalogItems),
     { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
   const renderCatalogItem = (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
@@ -994,10 +1010,9 @@ function ThreadSettingsMainContent(props: {
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
       ListHeaderComponent={
         <>
-          {session.environmentId && !session.searchQuery.trim() ? (
+          {showCapacity ? (
             <ProviderCapacitySection
-              environmentId={session.environmentId}
-              currentThreadId={session.currentThreadId ?? null}
+              capacity={capacity}
               providerGroups={session.providerGroups}
               onSelectProvider={session.setProviderFilter}
             />

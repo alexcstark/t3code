@@ -35,7 +35,7 @@ const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
 
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
-  selectedInstanceId: ProviderInstanceId | "favorites";
+  selectedInstanceId: ProviderInstanceId | "favorites" | "capacity";
   onSelectInstance: (instanceId: ProviderInstanceId | "favorites") => void;
   onFocusSearch: () => void;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
