@@ -131,13 +131,11 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Choose a provider with spare capacity
 
-Open **Provider capacity** in the model picker on web or desktop, or in thread settings on
-mobile, to compare selectable provider instances in the current environment. Providers with
-the most allowance remaining appear first; selecting one opens its model list.
+The model picker on web and desktop, and thread settings on mobile, open on **Provider capacity**, which compares selectable provider instances in the current environment. Providers with the most allowance remaining appear first. Selecting a provider, from the list or the provider sidebar or filter, shows only that provider's models until you close the picker. Searching covers every provider.
 
 The percentage uses the reported quota window with the least allowance remaining. Missing or
 unavailable limits, or a reading whose reset time has passed, show as unknown and sort after
-known percentages. Opening this section uses the last reported limits without refreshing them.
+known percentages. The capacity list uses the last reported limits without refreshing them.
 To get a fresh reading, [refresh Limits](#track-subscription-limits).
 
 Activity counts other active T3 threads, including threads preparing to run or waiting for input,
