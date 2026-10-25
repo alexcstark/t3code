@@ -549,7 +549,8 @@ export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabiliti
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
   prompt: OrchestratorMcpPrompt.annotate({
-    description: "Prompt executed on every scheduled run.",
+    description:
+      "Prompt executed on every scheduled run. Use 1–3 short sentences (aim under 100 words): action, essential constraints/references, and when to disable a temporary task. Reference an existing checkpoint/status file for detailed state; omit transcripts, logs, and progress history.",
   }),
   schedule: OrchestratorMcpSchedule,
   title: Schema.optional(OrchestratorMcpTitle),
@@ -608,7 +609,12 @@ export type OrchestratorMcpListScheduledTasksResult =
 
 export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
-  prompt: Schema.optional(OrchestratorMcpPrompt),
+  prompt: Schema.optional(
+    OrchestratorMcpPrompt.annotate({
+      description:
+        "Replacement prompt. Use 1–3 short sentences (aim under 100 words), preserving essential constraints/references and when to disable a temporary task. Replace stale instructions instead of appending progress history; reference an existing checkpoint/status file for detailed state.",
+    }),
+  ),
   title: Schema.optional(OrchestratorMcpTitle),
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
