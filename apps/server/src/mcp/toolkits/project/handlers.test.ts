@@ -26,6 +26,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { idleThreadProjection } from "../../McpToolAccess.testkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -46,7 +47,8 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       archivedAt: null,
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
-    let launchedSender: ThreadId | undefined;
+    const systemPrompt = { id: "review", name: "Review", content: "Use our review checklist." };
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const layerDependencies = Layer.mergeAll(
       ServerSettings.layerTest(),
       NodeCrypto.layer,
@@ -64,10 +66,17 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(caller),
+        getThreadRecords: () => {
+          const projection = idleThreadProjection(caller);
+          return Effect.succeed({
+            ...projection,
+            thread: { ...projection.thread, systemPrompt },
+          });
+        },
       }),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
-          launchedSender = input.initialMessage?.senderThreadId;
+          launched.push(input);
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
@@ -97,7 +106,19 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       .handle("t3_thread_launch", { title: "Audit", message: "Review the change" })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
-    expect(launchedSender).toBe(sourceThreadId);
+    expect(launched[0]?.initialMessage?.senderThreadId).toBe(sourceThreadId);
+    expect(launched[0]?.systemPrompt).toEqual(systemPrompt);
+    const emptyPrompt = { id: "empty", name: "Empty", content: "" };
+    for (const systemPrompt of [emptyPrompt, null]) {
+      yield* toolkit
+        .handle("t3_thread_launch", { title: "Audit", systemPrompt })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    }
+    expect(launched.map((input) => input.systemPrompt)).toEqual([
+      systemPrompt,
+      emptyPrompt,
+      undefined,
+    ]);
   }),
 );
 
@@ -136,6 +157,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(caller),
+        getThreadRecords: () => Effect.succeed(idleThreadProjection(caller)),
       }),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
@@ -234,6 +256,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(caller),
+        getThreadRecords: () => Effect.succeed(idleThreadProjection(caller)),
       }),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
       Layer.mock(Project.ProjectService)({

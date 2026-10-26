@@ -98,6 +98,35 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists creating, editing, and deleting saved system prompts", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      assert.deepEqual((yield* service.getSettings).systemPrompts, []);
+      const review = {
+        id: "review",
+        name: "Review",
+        content: "Review changes carefully.\nBe concise.",
+      };
+      const empty = { id: "empty", name: "No T3 guidance", content: "" };
+      const edited = {
+        ...review,
+        name: "Code review",
+        content: "Use the team's review checklist.",
+      };
+      for (const systemPrompts of [[review, empty], [edited, empty], [empty], []]) {
+        const patch = yield* decodeSettingsPatch({ systemPrompts });
+        assert.deepEqual((yield* service.updateSettings(patch)).systemPrompts, systemPrompts);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.systemPrompts, systemPrompts);
+        assert.deepEqual((yield* service.getSettings).systemPrompts, systemPrompts);
+      }
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

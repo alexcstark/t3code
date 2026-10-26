@@ -207,14 +207,20 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
+  systemPrompt?: string,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const sections =
+    systemPrompt === undefined
+      ? T3_CODE_ORCHESTRATION_SECTIONS
+      : splitCodexSystemPrompt(systemPrompt);
+  const sectionNumberWidth = Math.max(2, String(sections.length).length);
   // Separate keys keep each value under Codex's per-entry cap. Codex emits
   // entries in key order, so the numbering preserves the authored order.
   return {
     ...Object.fromEntries(
-      T3_CODE_ORCHESTRATION_SECTIONS.map((section, index) => [
-        `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
+      sections.map((section, index) => [
+        `t3_code_orchestration_${String(index + 1).padStart(sectionNumberWidth, "0")}`,
         { kind: "application" as const, value: section },
       ]),
     ),
@@ -224,4 +230,23 @@ export function buildCodexAdditionalContext(
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
   };
+}
+
+function splitCodexSystemPrompt(prompt: string): ReadonlyArray<string> {
+  const sections: string[] = [];
+  const encoder = new TextEncoder();
+  let section = "";
+  let sectionBytes = 0;
+  for (const character of prompt) {
+    const characterBytes = encoder.encode(character).byteLength;
+    if (sectionBytes + characterBytes > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
+      sections.push(section);
+      section = "";
+      sectionBytes = 0;
+    }
+    section += character;
+    sectionBytes += characterBytes;
+  }
+  sections.push(section);
+  return sections;
 }

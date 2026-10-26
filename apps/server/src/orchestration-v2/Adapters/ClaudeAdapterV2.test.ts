@@ -788,6 +788,35 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
 });
 
 describe("ClaudeAdapterV2 native protocol logging", () => {
+  it.each(["Follow the team's review checklist.", ""])(
+    "replaces T3 orchestration instructions while preserving the Claude preset: %j",
+    (systemPrompt) => {
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        },
+        nativeThreadId: "native-thread-custom-prompt",
+        resume: false,
+        cwd: "/workspace",
+        mcpServers: {},
+        systemPrompt,
+      });
+      assert.isObject(options.systemPrompt);
+      if (
+        typeof options.systemPrompt !== "object" ||
+        Array.isArray(options.systemPrompt) ||
+        options.systemPrompt.type !== "preset"
+      ) {
+        return assert.fail("Expected Claude preset");
+      }
+      assert.equal(options.systemPrompt.preset, "claude_code");
+      assert.include(options.systemPrompt.append ?? "", "Claude Code harness");
+      assert.include(options.systemPrompt.append ?? "", systemPrompt);
+      assert.notInclude(options.systemPrompt.append ?? "", "Use `delegate_task`");
+    },
+  );
+
   it("injects thread-scoped MCP configuration without logging the credential", () => {
     const threadId = ThreadId.make("thread-claude-mcp");
     const mcpSession = {

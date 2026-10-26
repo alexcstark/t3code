@@ -763,13 +763,14 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ]),
     );
     const t3Context =
-      input.hasT3Mcp === true
+      input.hasT3Mcp === true || input.runtimePolicy.systemPrompt !== undefined
         ? buildCodexAdditionalContext(
             { model: input.modelSelection.model, reasoningEffort: effort ?? undefined },
             {
-              browser: input.browserToolsAvailable ?? true,
-              device: input.deviceToolsAvailable ?? false,
+              browser: input.hasT3Mcp === true && (input.browserToolsAvailable ?? true),
+              device: input.hasT3Mcp === true && (input.deviceToolsAvailable ?? false),
             },
+            input.runtimePolicy.systemPrompt,
           )
         : undefined;
     const additionalContext =

@@ -11,6 +11,7 @@ import type {
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
+  SystemPrompt,
   ServerProvider,
 } from "@t3tools/contracts";
 import {
@@ -186,6 +187,9 @@ type NewTaskFlowContextValue = {
   readonly hasMoreBranches: boolean;
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly currentCheckoutBranchName: string | null;
+  readonly systemPrompt: SystemPrompt | null;
+  readonly systemPrompts: ReadonlyArray<SystemPrompt>;
+  readonly setSystemPrompt: (prompt: SystemPrompt | null) => void;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
@@ -898,6 +902,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     workspaceMode,
   ]);
 
+  const systemPrompt = selectedProjectDraft.systemPrompt ?? null;
+  const systemPrompts = selectedEnvironmentServerConfig?.settings.systemPrompts ?? [];
+  const setSystemPrompt = (prompt: SystemPrompt | null) => {
+    if (selectedProjectDraftKey)
+      updateComposerDraftSettings(selectedProjectDraftKey, { systemPrompt: prompt });
+  };
+
   const setRuntimeMode = (value: RuntimeMode) => {
     if (selectedProjectDraftKey) {
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
@@ -922,6 +933,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setComposerDraftContext(draftKey, message.context);
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
+        systemPrompt: message.creation.systemPrompt ?? null,
         modelSelection: message.modelSelection,
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
@@ -1004,6 +1016,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         ),
       }),
       creation: {
+        ...(draft.systemPrompt ? { systemPrompt: draft.systemPrompt } : {}),
         projectId: selectedProject.id,
         ...(projectTitle !== undefined ? { projectTitle } : {}),
         ...(projectCwd !== undefined ? { projectCwd } : {}),
@@ -1148,6 +1161,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     hasMoreBranches,
     availableBranches,
     currentCheckoutBranchName,
+    systemPrompt,
+    systemPrompts,
+    setSystemPrompt,
     runtimeMode,
     interactionMode,
     planModeEnabled,

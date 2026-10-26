@@ -8,6 +8,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   RuntimeMode,
+  SystemPrompt,
   ProviderInteractionMode,
   Project,
   ProjectCreatePayload,
@@ -117,6 +118,12 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
+    systemPrompt: Schema.optional(
+      Schema.NullOr(SystemPrompt).annotate({
+        description:
+          "T3 instruction snapshot for the new thread. Omit to inherit the calling thread's prompt; pass null for the T3 default, or a named prompt with content (which may be empty) to override it.",
+      }),
+    ),
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
         description:

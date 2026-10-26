@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  SystemPrompt,
   ThreadId,
   type ModelSelection as ModelSelectionType,
   type ProjectId as ProjectIdType,
@@ -34,6 +35,7 @@ const THREAD_OUTBOX_SCHEMA_VERSION = 3;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
+  systemPrompt: Schema.optional(SystemPrompt),
   projectId: ProjectId,
   projectTitle: Schema.optional(Schema.String),
   projectCwd: Schema.optional(Schema.String),
@@ -65,6 +67,7 @@ const decodeStoredQueuedThreadMessage = Schema.decodeUnknownSync(QueuedThreadMes
 const encodeStoredQueuedThreadMessage = Schema.encodeUnknownSync(QueuedThreadMessageSchema);
 
 export interface QueuedThreadCreation {
+  readonly systemPrompt?: SystemPrompt;
   readonly projectId: ProjectIdType;
   readonly projectTitle?: string;
   readonly projectCwd?: string;

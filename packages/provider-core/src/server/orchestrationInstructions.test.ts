@@ -51,6 +51,48 @@ describe("T3 orchestration provider instructions", () => {
     assert.equal(t3OrchestrationSystemPrompt(true), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
+  it.each([true, false])(
+    "replaces orchestration guidance with a saved prompt, MCP=%s",
+    (hasT3Mcp) => {
+      const systemPrompt = "Use the team's review checklist.";
+      assert.equal(t3OrchestrationSystemPrompt(hasT3Mcp, systemPrompt), systemPrompt);
+      assert.equal(t3OrchestrationSystemPrompt(hasT3Mcp, ""), "");
+      const injected = t3OrchestrationPromptForFirstRun({
+        prompt: "Review this change.",
+        runOrdinal: 1,
+        hasT3Mcp,
+        systemPrompt,
+      });
+      assert.include(injected, systemPrompt);
+      assert.notInclude(injected, "Use `delegate_task`");
+      assert.equal(
+        t3OrchestrationPromptForFirstRun({
+          prompt: "Continue.",
+          runOrdinal: 2,
+          hasT3Mcp,
+          systemPrompt,
+        }),
+        "Continue.",
+      );
+    },
+  );
+
+  it("keeps ACP mode and browser instructions when replacing the orchestration prompt", () => {
+    const previousState = { interactionMode: "plan", hasT3Mcp: true, systemPrompt: "" } as const;
+    const disabled = t3AcpPromptWithInstructions({ prompt: "Review.", state: previousState });
+    assert.include(disabled, "T3 Code interaction mode: Plan");
+    assert.include(disabled, "T3 Code collaborative browser");
+    assert.notInclude(disabled, "Use `delegate_task`");
+
+    const changed = t3AcpPromptWithInstructions({
+      prompt: "Review.",
+      state: { ...previousState, systemPrompt: "Use the review checklist." },
+      previousState,
+    });
+    assert.include(changed, "Use the review checklist.");
+    assert.notInclude(changed, "Use `delegate_task`");
+  });
+
   it("gives ACP sessions provider-neutral mode, browser, and orchestration guidance", () => {
     const injected = t3AcpPromptWithInstructions({
       prompt: "Inspect the repository.",

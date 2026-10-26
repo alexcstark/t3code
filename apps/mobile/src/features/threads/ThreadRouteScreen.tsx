@@ -818,6 +818,9 @@ function ThreadRouteContent(
         text: setupMessage.text,
         titleText: selectedThread.title,
         ...(setupMessage.context ? { context: setupMessage.context } : {}),
+        ...(selectedThreadDetail?.thread.systemPrompt
+          ? { systemPrompt: selectedThreadDetail.thread.systemPrompt }
+          : {}),
         uploadedAttachments: setupMessage.attachments,
         modelSelection: selectedThread.modelSelection,
         runtimeMode: selectedThread.runtimeMode,
@@ -888,6 +891,7 @@ function ThreadRouteContent(
 
       <ThreadPane>
         <ThreadDetailScreen
+          systemPrompt={selectedThreadDetail?.thread.systemPrompt}
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}

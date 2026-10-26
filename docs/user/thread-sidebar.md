@@ -13,6 +13,20 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+### Choose a system prompt
+
+Save named prompts in **Settings → General → System prompts** on web and desktop,
+or **Settings → New threads → System prompts** on mobile. Select one environment
+to manage its library. New prompts start with T3’s default guidance so you can edit
+it, or replace it with your own text. An empty prompt removes that guidance.
+
+Choose **System prompt** in a new thread before sending its first message. Each
+thread keeps the chosen text, including when you later edit or delete the saved
+prompt. **T3 default** uses the built-in guidance. Provider, mode, and tool
+instructions still apply. Delegated tasks inherit the thread’s prompt. Scheduled
+runs bound to that thread keep it too; schedules that create a fresh thread use
+T3 default.
+
 ### Start without a project
 
 A thread does not need a project. To start one without a project, click **or

@@ -459,6 +459,7 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
       ...(queuedMessage.creation
         ? {
+            systemPrompt: queuedMessage.creation.systemPrompt ?? null,
             workspaceSelection: {
               mode: queuedMessage.creation.workspaceMode,
               branch: queuedMessage.creation.branch,
@@ -983,6 +984,12 @@ export function useThreadOutboxDrain(): void {
         currentConfig.providers,
       );
       if (!hasAccess()) return true;
+      if (creation.systemPrompt && currentConfig.environment.capabilities.systemPrompts !== true) {
+        return restoreQueuedMessage(
+          persistedMessage,
+          "Update this environment’s server to use a saved system prompt, or choose T3 default.",
+        );
+      }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
       let workspace = creation;
       if (creation.pullRequestReference) {
@@ -1033,6 +1040,7 @@ export function useThreadOutboxDrain(): void {
           modelSelection: sendSettings.modelSelection,
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
+          ...(creation.systemPrompt ? { systemPrompt: creation.systemPrompt } : {}),
           workspaceMode: workspace.workspaceMode,
           branch: workspace.branch,
           worktreePath: workspace.worktreePath,

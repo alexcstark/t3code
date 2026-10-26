@@ -1,5 +1,6 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { ThreadSystemPromptPicker } from "./chat/ThreadSystemPromptPicker";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -6267,6 +6268,17 @@ export default function ChatView(props: ChatViewProps) {
   ) => {
     e?.preventDefault();
     if (
+      isLocalDraftThread &&
+      draftThread?.systemPrompt &&
+      serverConfig?.environment.capabilities.systemPrompts !== true
+    ) {
+      setThreadError(
+        activeThreadId,
+        "Update this environment’s server to use a saved system prompt, or choose T3 default.",
+      );
+      return;
+    }
+    if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
@@ -6955,6 +6967,9 @@ export default function ChatView(props: ChatViewProps) {
                     interactionMode: target.interactionMode,
                     bootstrap: {
                       createThread: {
+                        ...(draftThread?.systemPrompt
+                          ? { systemPrompt: draftThread.systemPrompt }
+                          : {}),
                         projectId: activeProject.id,
                         title,
                         modelSelection: target.selection,
@@ -7231,6 +7246,9 @@ export default function ChatView(props: ChatViewProps) {
               ...(isLocalDraftThread
                 ? {
                     createThread: {
+                      ...(draftThread?.systemPrompt
+                        ? { systemPrompt: draftThread.systemPrompt }
+                        : {}),
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
@@ -7671,6 +7689,9 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       input: {
         threadId: nextThreadId,
+        ...(serverProjection?.thread.systemPrompt
+          ? { systemPrompt: serverProjection.thread.systemPrompt }
+          : {}),
         projectId: activeProject.id,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
@@ -8523,6 +8544,27 @@ export default function ChatView(props: ChatViewProps) {
                                   ? () => onOpenRelatedThread(parentThreadLink.threadId)
                                   : null
                               }
+                            />
+                          ) : null}
+                          {(isLocalDraftThread &&
+                            (serverConfig?.environment.capabilities.systemPrompts === true ||
+                              draftThread?.systemPrompt)) ||
+                          serverProjection?.thread.systemPrompt ? (
+                            <ThreadSystemPromptPicker
+                              environmentId={environmentId}
+                              prompts={settings.systemPrompts}
+                              selected={
+                                draftThread?.systemPrompt ??
+                                serverProjection?.thread.systemPrompt ??
+                                null
+                              }
+                              disabled={!canOperateThread || isSendInFlight}
+                              {...(isLocalDraftThread
+                                ? {
+                                    onChange: (systemPrompt) =>
+                                      setDraftThreadContext(composerDraftTarget, { systemPrompt }),
+                                  }
+                                : {})}
                             />
                           ) : null}
                           {!composerMounted ? null : (

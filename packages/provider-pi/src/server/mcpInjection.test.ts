@@ -9,6 +9,7 @@ import {
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
+  T3_PI_SYSTEM_PROMPT_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
 import {
@@ -30,6 +31,22 @@ const mcpSession = {
 };
 
 describe("pi T3 MCP injection", () => {
+  it("passes only the current thread's system prompt to Pi", () => {
+    const input = {
+      launchArgs: [],
+      environment: { [T3_PI_SYSTEM_PROMPT_ENV]: "Inherited thread prompt" },
+      mcpSession: undefined,
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    };
+    assert.isUndefined(buildPiRpcLaunch(input).env[T3_PI_SYSTEM_PROMPT_ENV]);
+    for (const systemPrompt of ["Use our review checklist.", ""]) {
+      assert.equal(
+        buildPiRpcLaunch({ ...input, systemPrompt }).env[T3_PI_SYSTEM_PROMPT_ENV],
+        systemPrompt,
+      );
+    }
+  });
+
   it("always adds the permission bridge and configures MCP when available", () => {
     const resolvedArgs = resolvePiLaunchArgs(
       "--extension=/home/user/.pi/agent/extensions/demo.ts --session-dir=/tmp/pi-sessions --provider=anthropic --model=claude-sonnet --tools='' --name=-review --extension-flag=kept",

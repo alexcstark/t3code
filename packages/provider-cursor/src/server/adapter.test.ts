@@ -74,6 +74,7 @@ describe("CursorAdapterV2", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           cwd: workspace,
+          systemPrompt: "Use our review checklist.",
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
@@ -90,6 +91,10 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    const message =
+                      typeof input.message === "string" ? input.message : input.message.text;
+                    assert.include(message, "Use our review checklist.");
+                    assert.notInclude(message, "Use `delegate_task`");
                     // Recorded Cursor task calls (see fixtures/subagent) stream a
                     // partial-tool-call before tool-call-started with the same args.
                     // The run then ends without tool-call-completed, which a live
@@ -160,7 +165,7 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
           runId: RunId.make("cursor-lifecycle-run"),
-          runOrdinal: 1,
+          runOrdinal: 7,
           providerTurnOrdinal: 1,
           attemptId: RunAttemptId.make("cursor-lifecycle-attempt"),
           rootNodeId: NodeId.make("cursor-lifecycle-root"),
