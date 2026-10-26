@@ -130,6 +130,13 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "system-prompts",
+    title: "System prompts",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["injected instructions prompt presets saved system developer agent"],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",

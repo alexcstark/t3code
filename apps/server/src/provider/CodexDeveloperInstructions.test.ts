@@ -13,6 +13,27 @@ import {
 } from "./CodexDeveloperInstructions.ts";
 
 describe("buildCodexAdditionalContext", () => {
+  it.each([
+    "Follow the checklist. 🦊\n".repeat(1_000),
+    "x".repeat(CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES * 100 + 1),
+  ])(
+    "delivers a long saved prompt in full without splitting Unicode characters",
+    (systemPrompt) => {
+      const context = buildCodexAdditionalContext({ model: "test" }, false, systemPrompt);
+      const sections = Object.keys(context)
+        .filter((key) => key.startsWith("t3_code_orchestration_"))
+        .sort()
+        .map((key) => context[key]!.value);
+      NodeAssert.equal(sections.join(""), systemPrompt);
+      for (const section of sections) {
+        NodeAssert.ok(
+          Buffer.byteLength(section, "utf8") <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+        );
+        NodeAssert.equal(Buffer.from(section).toString("utf8"), section);
+      }
+    },
+  );
+
   describe.each([
     { model: "gpt-5.3-codex", reasoningEffort: "high" },
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
@@ -126,6 +147,16 @@ describe("buildCodexDeveloperInstructions", () => {
 
 describe("T3 browser developer instructions", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+
+  it.each(["Use our review checklist.", ""])(
+    "replaces orchestration guidance while retaining runtime and tool instructions: %j",
+    (systemPrompt) => {
+      const context = buildCodexAdditionalContext(runtime, true, systemPrompt);
+      NodeAssert.equal(context.t3_code_orchestration_01?.value, systemPrompt);
+      NodeAssert.match(context.t3_code_runtime!.value, /Codex harness/);
+      NodeAssert.match(context.t3_code_tools!.value, /preview_open/);
+    },
+  );
 
   it("prefers the product-native preview tools in both collaboration modes", () => {
     {

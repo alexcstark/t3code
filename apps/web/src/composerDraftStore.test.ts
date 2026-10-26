@@ -1608,6 +1608,23 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("keeps a chosen prompt through reload and can switch back to T3 default", () => {
+    const systemPrompt = { id: "review", name: "Review", content: "  Review only.\n" };
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, { systemPrompt });
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const reloaded = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(reloaded.draftThreadsByThreadKey[draftId]?.systemPrompt).toEqual(systemPrompt);
+    store.setDraftThreadContext(draftId, { systemPrompt: null });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.systemPrompt).toBeNull();
+  });
+
   it("marks a promoted draft by scoped ref without deleting composer state", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

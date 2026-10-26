@@ -2201,8 +2201,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               attachments: turnInput.message.attachments,
               resolveAttachmentPath: host.resolveAttachmentPath,
             }),
-            runOrdinal: turnInput.runOrdinal,
+            runOrdinal: turnInput.providerTurnOrdinal,
             hasT3Mcp: mcpServers !== undefined,
+            ...(turnInput.runtimePolicy.systemPrompt === undefined
+              ? {}
+              : { systemPrompt: turnInput.runtimePolicy.systemPrompt }),
           });
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),

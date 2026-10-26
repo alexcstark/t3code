@@ -9,6 +9,7 @@ import {
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
+  T3_PI_SYSTEM_PROMPT_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
 
@@ -250,6 +251,7 @@ export function buildPiRpcLaunch(input: {
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+  readonly systemPrompt?: string;
 }): {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
@@ -290,11 +292,15 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_PI_SYSTEM_PROMPT_ENV];
 
   return {
     args,
     env: {
       ...environment,
+      ...(hasT3Extension && input.systemPrompt !== undefined
+        ? { [T3_PI_SYSTEM_PROMPT_ENV]: input.systemPrompt }
+        : {}),
       ...(hasT3Extension && input.extensionPath !== undefined
         ? { [T3_PI_MCP_EXTENSION_PATH_ENV]: input.extensionPath }
         : {}),

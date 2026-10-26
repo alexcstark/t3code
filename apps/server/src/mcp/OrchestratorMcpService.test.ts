@@ -890,6 +890,57 @@ describe("OrchestratorMcpService provider resolution", () => {
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
+  it.effect("inherits the calling thread's prompt when creating top-level threads", () =>
+    Effect.gen(function* () {
+      for (const content of ["Use our review checklist.", ""]) {
+        const systemPrompt = { id: "review", name: "Review", content };
+        const parent = parentProjection([]);
+        const child = {
+          ...childProjection,
+          thread: { ...childProjection.thread, modelSelection: parent.thread.modelSelection },
+        };
+        let inheritedPrompt: typeof systemPrompt | undefined;
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? { ...parent, thread: { ...parent.thread, systemPrompt } }
+                  : child,
+              ),
+            dispatch: (command) => {
+              if (command.type === "thread.create") inheritedPrompt = command.systemPrompt;
+              return Effect.succeed({ sequence: 1, storedEvents: [] });
+            },
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.createThreads(scope, {
+            threads: [{ title: "Review" }],
+            clientRequestId: `prompt-${content.length}`,
+          });
+          assert.deepEqual(inheritedPrompt, systemPrompt);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }
+    }),
+  );
+
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",
     () =>

@@ -2986,3 +2986,14 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
   });
 });
+
+describe("saved system prompt drafts", () => {
+  it("reloads a prompt-only draft and preserves the chosen text", () => {
+    const systemPrompt = { id: "review", name: "Review", content: "  Review only.\n" };
+    const restored = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: { "new-task:prompt": { text: "", attachments: [], systemPrompt } },
+    });
+    expect(restored.drafts["new-task:prompt"]?.systemPrompt).toEqual(systemPrompt);
+  });
+});

@@ -44,6 +44,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { SystemPrompt } from "./systemPrompts.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -378,6 +379,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  systemPrompt: Schema.optional(SystemPrompt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2576,6 +2578,7 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
+    systemPrompt: Schema.optional(SystemPrompt),
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     importedNativeThread: Schema.optional(
@@ -2692,6 +2695,7 @@ export const OrchestrationV2Command = Schema.Union([
     expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
+    systemPrompt: Schema.optional(Schema.NullOr(SystemPrompt)),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -3162,6 +3166,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  systemPrompt: Schema.optional(SystemPrompt),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   initialMessage: Schema.optional(
     Schema.Struct({

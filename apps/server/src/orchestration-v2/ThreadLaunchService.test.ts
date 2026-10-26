@@ -324,6 +324,65 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
   });
 }
 
+it.effect("persists the prompt snapshot and allows changes only before the first message", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const systemPrompt = { id: "review", name: "Review", content: "Use our review checklist." };
+    const launched = yield* launches.launch({
+      ...launchInput({ command: "command:prompt:create", thread: "thread:prompt:create" }),
+      systemPrompt,
+    });
+    assert.deepEqual(launched.projection.thread.systemPrompt, systemPrompt);
+    const saved = yield* threads.getThreadProjection(launched.threadId);
+    const wire = yield* encodeThreadProjection(saved);
+    assert.deepEqual(wire.thread.systemPrompt, systemPrompt);
+
+    yield* threads.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("command:prompt:clear"),
+      threadId: launched.threadId,
+      systemPrompt: null,
+    });
+    assert.equal(
+      (yield* threads.getThreadProjection(launched.threadId)).thread.systemPrompt,
+      undefined,
+    );
+
+    yield* threads.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("command:prompt:select"),
+      threadId: launched.threadId,
+      systemPrompt,
+    });
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("command:prompt:message"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:prompt:first"),
+      text: "Review this change.",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const rejected = yield* Effect.exit(
+      threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:prompt:replace-started"),
+        threadId: launched.threadId,
+        systemPrompt: { ...systemPrompt, content: "A different review checklist." },
+      }),
+    );
+    assert.equal(rejected._tag, "Failure");
+    assert.deepEqual(
+      (yield* threads.getThreadProjection(launched.threadId)).thread.systemPrompt,
+      systemPrompt,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
     (["user", "agent"] as const).map((createdBy) => ({ target, createdBy })),

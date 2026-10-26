@@ -1,6 +1,7 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
+import { ThreadSystemPromptPicker } from "./ThreadSystemPromptPicker";
 import { useAtomValue } from "@effect/atom-react";
 import {
   useChildThreadInputs,
@@ -26,6 +27,7 @@ import { HeaderHeightContext } from "@react-navigation/elements";
 import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
 import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/reserved-regions";
 import type {
+  SystemPrompt,
   EnvironmentId,
   MessageId,
   ModelSelection,
@@ -158,6 +160,7 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface ThreadDetailScreenProps {
+  readonly systemPrompt?: SystemPrompt;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
@@ -1404,6 +1407,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                     </View>
                   ) : (
                     <>
+                      {props.systemPrompt ? (
+                        <ThreadSystemPromptPicker
+                          selected={props.systemPrompt}
+                          prompts={[]}
+                          disabled={false}
+                        />
+                      ) : null}
                       <ThreadComposer
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}

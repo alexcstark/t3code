@@ -1,3 +1,4 @@
+import { SystemPromptsSettings } from "./components/SystemPromptsSettings";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
@@ -179,7 +180,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         key: targetsKey,
         patch: queued?.key === targetsKey ? { ...queued.patch, ...patch } : patch,
       };
-      return;
+      return Promise.resolve(false);
     }
     if (
       !hasConnectedSelection ||
@@ -187,13 +188,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
       )
     )
-      return;
+      return Promise.resolve(false);
     const writes = planMobileScopedSettingsPatch(targets, projectSelected, patch);
-    if (writes.length === 0) return;
+    if (writes.length === 0) return Promise.resolve(false);
     writeInFlight.current = true;
     setPendingTargets(targets);
     setPendingWrites((count) => count + 1);
-    void writeSettings(targets, writes).finally(() => {
+    return writeSettings(targets, writes).finally(() => {
       writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
@@ -281,6 +282,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               ) : null}
               {props.page === "new-threads" ? (
                 <>
+                  <SystemPromptsSettings
+                    key={targets.map((target) => target.environment.environmentId).join(",")}
+                    prompts={reference.settings.systemPrompts}
+                    disabled={
+                      disabledFor("systemPrompts") ||
+                      targets.length !== 1 ||
+                      reference.environment.serverConfig.environment.capabilities.systemPrompts !==
+                        true
+                    }
+                    onChange={(systemPrompts) => write({ systemPrompts })}
+                  />
                   <SettingsSection
                     title="Default workspace"
                     trailing={

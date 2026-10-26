@@ -22,6 +22,7 @@ import {
   type ProviderUserInputAnswers,
   type RunId,
   type RuntimeMode,
+  type SystemPrompt,
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
@@ -68,6 +69,7 @@ export interface DeleteProjectInput extends CommandMetadata {
 }
 
 export interface CreateThreadInput extends CommandMetadata {
+  readonly systemPrompt?: SystemPrompt;
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;
@@ -119,6 +121,7 @@ export interface VisitThreadInput extends ThreadCommandInput {
 export type MarkThreadUnreadInput = ThreadCommandInput;
 
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
+  readonly systemPrompt?: SystemPrompt | null;
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecoveryUpdate | null;
   readonly title?: string;
   readonly modelSelection?: ModelSelection;
@@ -139,6 +142,7 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
 
 interface StartThreadBootstrap {
   readonly createThread?: {
+    readonly systemPrompt?: SystemPrompt;
     readonly projectId: ProjectId;
     readonly title: string;
     readonly modelSelection: ModelSelection;
@@ -388,6 +392,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 ) {
   return yield* dispatch({
     type: "thread.create",
+    ...(input.systemPrompt === undefined ? {} : { systemPrompt: input.systemPrompt }),
     commandId: yield* allocateCommandId(input),
     createdBy: "user",
     creationSource: input.creationSource ?? "web",
@@ -560,10 +565,12 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
-      input.limitRecovery !== undefined
+      input.limitRecovery !== undefined ||
+      input.systemPrompt !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
+        ...(input.systemPrompt === undefined ? {} : { systemPrompt: input.systemPrompt }),
         ...(input.limitRecovery === undefined ? {} : { limitRecovery: input.limitRecovery }),
         commandId,
         threadId: input.threadId,
@@ -665,6 +672,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
       projectId: thread.projectId,
+      ...(thread.systemPrompt === undefined ? {} : { systemPrompt: thread.systemPrompt }),
       title: input.titleSeed ?? thread.title,
       generateTitle: input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,

@@ -400,6 +400,28 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
+  it.effect("delivers saved prompts even without the T3 MCP server", () =>
+    Effect.gen(function* () {
+      for (const systemPrompt of ["Use our review checklist.", ""]) {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-custom-prompt-without-mcp",
+          codexInput: [{ type: "text", text: "Review the change." }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: null,
+            systemPrompt,
+          },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: false,
+        });
+        assert.equal(params.additionalContext?.t3_code_orchestration_01?.value, systemPrompt);
+        assert.isUndefined(params.additionalContext?.t3_code_tools);
+        assert.isUndefined(params.collaborationMode);
+      }
+    }),
+  );
+
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (

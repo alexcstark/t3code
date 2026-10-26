@@ -47,6 +47,8 @@ export async function loadMcpBridge(
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
+    readonly systemPrompt?: string;
+    readonly mcpAvailable?: boolean;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -87,10 +89,11 @@ export async function loadMcpBridge(
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {
       env: {
-        T3_MCP_URL: "http://fixture.invalid/mcp",
-        T3_MCP_BEARER_TOKEN: "fixture-token",
+        T3_MCP_URL: options.mcpAvailable === false ? undefined : "http://fixture.invalid/mcp",
+        T3_MCP_BEARER_TOKEN: options.mcpAvailable === false ? undefined : "fixture-token",
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
+        T3_PI_SYSTEM_PROMPT: options.systemPrompt,
       },
     },
     AbortSignal,

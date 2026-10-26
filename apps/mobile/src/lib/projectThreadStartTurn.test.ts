@@ -143,7 +143,9 @@ describe("new thread on an existing branch", () => {
   it.each([null, "/worktrees/existing"])(
     "reuses the selected workspace %s without preparing a new worktree",
     (worktreePath) => {
+      const systemPrompt = { id: "empty", name: "Empty", content: "" };
       const input = buildProjectThreadStartTurnInput({
+        systemPrompt,
         projectId: ProjectId.make("project"),
         projectCwd: "/workspace",
         threadId: "new-thread",
@@ -163,6 +165,7 @@ describe("new thread on an existing branch", () => {
       });
 
       expect(input.bootstrap.createThread).toMatchObject({
+        systemPrompt,
         projectId: "project",
         branch: "feature/existing",
         worktreePath,

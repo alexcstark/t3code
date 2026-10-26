@@ -9,6 +9,7 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+export const T3_PI_SYSTEM_PROMPT_ENV = "T3_PI_SYSTEM_PROMPT";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 
 /**
@@ -26,6 +27,7 @@ import { Type } from "typebox";
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
+const SYSTEM_PROMPT_ENV = ${JSON.stringify(T3_PI_SYSTEM_PROMPT_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
@@ -335,7 +337,25 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   const endpoint = env(URL_ENV);
   const token = env(TOKEN_ENV);
+  const systemPrompt = process.env[SYSTEM_PROMPT_ENV] ??
+    (endpoint !== undefined && token !== undefined ? ORCHESTRATION_INSTRUCTIONS : undefined);
+  const appendSystemPrompt = (event: {
+    systemPrompt: string;
+    systemPromptOptions?: { sections?: Record<string, string> | null; forceSystemPrompt?: string };
+  }) => {
+    if (systemPrompt === undefined) return undefined;
+    const sections = event.systemPromptOptions?.sections;
+    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
+      // A full prompt override bypasses Pi's later section rendering.
+      sections.t3_code_orchestration = systemPrompt;
+      return undefined;
+    }
+    return { systemPrompt: systemPrompt.length === 0
+      ? event.systemPrompt
+      : event.systemPrompt + "\\n\\n" + systemPrompt };
+  };
   if (endpoint === undefined || token === undefined) {
+    if (systemPrompt !== undefined) pi.on("before_agent_start", appendSystemPrompt);
     pi.on("session_start", async (_event, ctx) => {
       ctx.ui.notify(
         "t3-code MCP unavailable: T3_MCP_URL or T3_MCP_BEARER_TOKEN is missing.",
@@ -451,13 +471,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
     reconcileDiscovery(ctx);
-    const sections = event.systemPromptOptions?.sections;
-    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
-      // A full prompt override bypasses Pi's later section rendering.
-      sections.t3_code_orchestration = ORCHESTRATION_INSTRUCTIONS;
-      return undefined;
-    }
-    return { systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS };
+    return appendSystemPrompt(event);
   });
 }
 `;

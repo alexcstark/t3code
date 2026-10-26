@@ -59,6 +59,7 @@ describe("ExecutionEnvironmentDescriptor", () => {
 
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
+    expect(decodeDescriptor(descriptor).capabilities.systemPrompts).toBeUndefined();
   });
 
   it("preserves an advertised pull-request capability", () => {

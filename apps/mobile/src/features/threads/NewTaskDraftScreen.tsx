@@ -2,6 +2,7 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { ThreadSystemPromptPicker } from "./ThreadSystemPromptPicker";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -1624,6 +1625,15 @@ export function NewTaskDraftScreen(props: {
         </View>
       ) : null}
       {flow.canChooseWorkspace ? <View className="pb-1">{workspaceControls}</View> : null}
+      {selectedEnvironmentServerConfig?.environment.capabilities.systemPrompts === true ||
+      flow.systemPrompt ? (
+        <ThreadSystemPromptPicker
+          selected={flow.systemPrompt}
+          prompts={flow.systemPrompts}
+          disabled={isComposerInteractionLocked}
+          onChange={flow.setSystemPrompt}
+        />
+      ) : null}
 
       {taskPermissionReason ? (
         <Text className="px-3 py-2 text-xs text-muted-foreground">{taskPermissionReason}</Text>
