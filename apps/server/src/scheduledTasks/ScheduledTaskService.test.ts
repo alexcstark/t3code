@@ -467,7 +467,10 @@ it.effect("deletes tasks whose project or bound thread was already deleted, befo
             ScheduledTaskService.layer,
             Layer.mergeAll(
               Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-                launch: () => Ref.update(launches, (n) => n + 1),
+                launch: () =>
+                  Ref.update(launches, (n) => n + 1).pipe(
+                    Effect.andThen(Effect.die(new Error("orphaned task launched"))),
+                  ),
               }),
               Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
                 namedProjectsRoot: "/projects",
