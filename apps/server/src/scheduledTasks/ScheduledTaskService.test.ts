@@ -41,6 +41,8 @@ const insertRow = (
     status: string;
     scheduleJson?: string;
     prompt?: string;
+    projectId?: string;
+    threadId?: string | null;
   },
   now: string,
 ) =>
@@ -50,8 +52,8 @@ const insertRow = (
     prompt: row.prompt ?? "Run task",
     enabled: row.enabled,
     schedule_json: row.scheduleJson ?? '{"type":"interval","everyMs":60000}',
-    project_id: "project:test",
-    thread_id: null,
+    project_id: row.projectId ?? "project:test",
+    thread_id: row.threadId ?? null,
     workspace_strategy_json: '{"type":"root"}',
     model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
     runtime_mode: "full-access",
@@ -403,5 +405,110 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
       yield* Fiber.join(run);
       assert.lengthOf((yield* service.list()).tasks, 0);
     }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("deletes tasks whose project or bound thread was already deleted, before they run", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    yield* sql`
+      INSERT INTO projection_projects (
+        project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+      ) VALUES
+        ('project-live', 'Live', '/tmp/live', '[]', ${now}, ${now}, NULL),
+        ('project-gone', 'Gone', '/tmp/gone', '[]', ${now}, ${now}, ${now})
+    `;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_threads (
+        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+        created_at, updated_at, archived_at, deleted_at, payload_json
+      ) VALUES
+        ('thread-live', 'project-live', 'Live', 'codex', 'full-access', 'default', ${now}, ${now}, NULL, NULL, '{}'),
+        ('thread-gone', 'project-live', 'Gone', 'codex', 'full-access', 'default', ${now}, ${now}, NULL, ${now}, '{}'),
+        ('thread-archived', 'project-live', 'Archived', 'codex', 'full-access', 'default', ${now}, ${now}, ${now}, NULL, '{}')
+    `;
+    for (const row of [
+      { id: "keep-unbound", projectId: "project-live", threadId: null, enabled: 0 },
+      { id: "keep-bound", projectId: "project-live", threadId: "thread-live", enabled: 1 },
+      { id: "keep-archived", projectId: "project-live", threadId: "thread-archived", enabled: 0 },
+      { id: "keep-missing-project", projectId: "project-missing", threadId: null, enabled: 0 },
+      {
+        id: "keep-missing-thread",
+        projectId: "project-live",
+        threadId: "thread-missing",
+        enabled: 0,
+      },
+      { id: "drop-thread", projectId: "project-live", threadId: "thread-gone", enabled: 1 },
+      { id: "drop-project", projectId: "project-gone", threadId: null, enabled: 1 },
+      { id: "drop-project-bound", projectId: "project-gone", threadId: "thread-live", enabled: 1 },
+    ]) {
+      yield* insertRow(sql, { ...row, next: now, status: "never" }, now);
+    }
+    yield* sql`
+      INSERT INTO scheduled_task_webhook_deliveries (
+        delivery_id, task_id, received_at, method, query, headers_json, body,
+        body_bytes, body_truncated, outcome, signature_verified, missing_fields_json
+      ) VALUES
+        ('delivery-drop', 'drop-thread', ${now}, 'POST', '', '{}', '', 0, 0, 'accepted', 0, '[]'),
+        ('delivery-keep', 'keep-unbound', ${now}, 'POST', '', '{}', '', 0, 0, 'accepted', 0, '[]')
+    `;
+
+    yield* TestClock.setTime(Date.parse(now) + 1_000);
+    const launches = yield* Ref.make(0);
+    const taskIds = () =>
+      sql<{ task_id: string }>`SELECT task_id FROM scheduled_tasks ORDER BY task_id`.pipe(
+        Effect.map((rows) => rows.map((row) => row.task_id)),
+      );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          Layer.provideMerge(
+            ScheduledTaskService.layer,
+            Layer.mergeAll(
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: () => Ref.update(launches, (n) => n + 1),
+              }),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              NodeCrypto.layer,
+              Scheduler.layer,
+            ),
+          ),
+        );
+        assert.deepEqual(yield* taskIds(), [
+          "keep-archived",
+          "keep-bound",
+          "keep-missing-project",
+          "keep-missing-thread",
+          "keep-unbound",
+        ]);
+        const deliveries = yield* sql<{
+          delivery_id: string;
+        }>`SELECT delivery_id FROM scheduled_task_webhook_deliveries ORDER BY delivery_id`;
+        assert.deepEqual(
+          deliveries.map((row) => row.delivery_id),
+          ["delivery-keep"],
+        );
+
+        yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET deleted_at = ${now}
+          WHERE thread_id = 'thread-live'
+        `;
+        yield* TestClock.adjust("6 seconds");
+        assert.deepEqual(yield* taskIds(), [
+          "keep-archived",
+          "keep-missing-project",
+          "keep-missing-thread",
+          "keep-unbound",
+        ]);
+        assert.equal(yield* Ref.get(launches), 0);
+      }),
+    );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

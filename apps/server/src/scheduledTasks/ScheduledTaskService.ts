@@ -956,6 +956,7 @@ export const layer = Layer.effect(
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
+      yield* reapOrphanedTasks();
       const now = yield* localNow;
       const tasks = yield* listDueTasks(now).pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
@@ -1279,6 +1280,55 @@ export const layer = Layer.effect(
       });
       if (removed.length > 0) yield* notifyChanged;
     });
+
+    // Thread deletion already removes tasks bound to that thread. This catches
+    // tasks left behind, and tasks whose project was deleted. A missing
+    // projection row is not deletion: a rebuild drops every thread row, then
+    // replays it.
+    const reapOrphanedTasks = Effect.fn("ScheduledTaskService.reapOrphanedTasks")(function* () {
+      const removed = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const orphaned = () => sql`
+              EXISTS (
+                SELECT 1 FROM projection_projects
+                WHERE project_id = scheduled_tasks.project_id
+                  AND deleted_at IS NOT NULL
+              )
+              OR (
+                scheduled_tasks.thread_id IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads
+                  WHERE thread_id = scheduled_tasks.thread_id
+                    AND deleted_at IS NOT NULL
+                )
+              )
+            `;
+            yield* sql`
+              DELETE FROM scheduled_task_webhook_deliveries
+              WHERE task_id IN (SELECT task_id FROM scheduled_tasks WHERE ${orphaned()})
+            `;
+            return yield* sql<{ task_id: ScheduledTaskId }>`
+              DELETE FROM scheduled_tasks WHERE ${orphaned()} RETURNING task_id
+            `;
+          }),
+        )
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not delete orphaned schedule tasks", { cause }).pipe(
+              Effect.as([] as ReadonlyArray<{ task_id: ScheduledTaskId }>),
+            ),
+          ),
+        );
+      yield* Effect.forEach(removed, ({ task_id }) => forgetWebhookTask(task_id), {
+        discard: true,
+      });
+      if (removed.length === 0) return;
+      yield* Effect.logInfo("Deleted orphaned schedule tasks", { count: removed.length });
+      yield* notifyChanged;
+    });
+
+    yield* reapOrphanedTasks();
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
