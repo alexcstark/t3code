@@ -28,9 +28,12 @@ const linuxPlan = {
   logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
   unitPath: "/home/theo/.config/systemd/user/t3code.service",
 };
+const linuxRenderOptions = {
+  environmentPath: "/home/theo/.local/bin:/usr/local/bin:/usr/bin:/bin",
+};
 
 it("runs the pinned runtime's own executable as the systemd launcher", () => {
-  const unit = BootService.renderBootServiceUnit(linuxPlan);
+  const unit = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
 
   expect(unit).toContain(`ExecStart=${linuxRuntime} __service-launcher`);
   expect(unit).toContain("KillMode=mixed");
@@ -46,11 +49,13 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   });
 
   expect(
-    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.t3"))),
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServiceUnit(plan("/home/theo/.t3"), linuxRenderOptions),
+    ),
   ).toBe("/home/theo/.t3");
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
+      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%"), linuxRenderOptions),
     ),
   ).toBe("/home/theo/T3 Data/100%");
   expect(
@@ -65,7 +70,12 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
 });
 
 it.each([
-  ["a unit", '/home/theo/T3 "Data"/100%\\x', BootService.renderBootServiceUnit],
+  [
+    "a unit",
+    '/home/theo/T3 "Data"/100%\\x',
+    (plan: BootService.BootServicePlan) =>
+      BootService.renderBootServiceUnit(plan, linuxRenderOptions),
+  ],
   [
     "a plist",
     "/Users/theo/a&b <c>",
@@ -82,9 +92,15 @@ it.each([
 });
 
 it("survives the kernel OOM-killing a greedy agent child", () => {
-  const unit = BootService.renderBootServiceUnit(linuxPlan);
+  const unit = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
 
   expect(unit).toContain("OOMPolicy=continue");
+});
+
+it("keeps provider CLIs on the systemd service PATH", () => {
+  const unit = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
+
+  expect(unit).toContain("Environment=PATH=/home/theo/.local/bin:/usr/local/bin:/usr/bin:/bin");
 });
 
 const macRuntime = "/Users/theo/.t3/runtime/versions/1.2.3/t3";
@@ -921,6 +937,19 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         `launchctl bootstrap gui/501 ${plistPath}`,
         `launchctl bootstrap gui/501 ${plistPath}`,
       ]);
+    }),
+  );
+
+  it.effect("records the user provider bin directory in the systemd unit", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", "/usr/bin:/bin");
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+      const home = plan.baseDir.slice(0, -"/.t3".length);
+
+      expect(unit).toContain(
+        `Environment=PATH=${home}/.local/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin`,
+      );
     }),
   );
 

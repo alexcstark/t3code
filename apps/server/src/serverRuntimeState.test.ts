@@ -77,7 +77,7 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
         ]
       : [
           path.join(root, ".config", "systemd", "user", "t3code.service"),
-          renderBootServiceUnit(plan),
+          renderBootServiceUnit(plan, { environmentPath: "" }),
         ];
   yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
   yield* fs.writeFileString(unitPath, unit);

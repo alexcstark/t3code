@@ -89,7 +89,10 @@ export interface BootServicePlan {
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
-export function renderBootServiceUnit(plan: BootServicePlan): string {
+export function renderBootServiceUnit(
+  plan: BootServicePlan,
+  options: { readonly environmentPath: string },
+): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
@@ -102,6 +105,9 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    // systemd's default PATH stops at /usr/bin. Provider CLIs (claude, cursor-agent)
+    // are installed under ~/.local/bin, so an unstated PATH marks them missing.
+    `Environment=PATH=${quoteSystemdValue(options.environmentPath)}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
@@ -226,6 +232,7 @@ export interface BootServiceManager {
 function systemdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
+  readonly environmentPath: string;
 }): BootServiceManager {
   const unitPath = input.path.join(
     input.homeDir,
@@ -234,6 +241,17 @@ function systemdManager(input: {
     "user",
     BOOT_SERVICE_UNIT_FILE,
   );
+  // ~/.local/bin is on a login PATH and absent from the user manager's.
+  // Keep it ahead of the installer's directories so a later service update,
+  // which runs with the unit's own PATH, does not drop it.
+  const environmentPath = Array.from(
+    new Set(
+      [
+        input.path.join(input.homeDir, ".local", "bin"),
+        ...input.environmentPath.split(":"),
+      ].filter((segment) => segment.length > 0),
+    ),
+  ).join(":");
   const prepareActivation = [
     {
       step: "reloading systemd user units",
@@ -249,7 +267,7 @@ function systemdManager(input: {
   return {
     kind: "systemd",
     unitPath,
-    render: renderBootServiceUnit,
+    render: (plan) => renderBootServiceUnit(plan, { environmentPath }),
     stop: [
       {
         step: "stopping the installed service",
@@ -385,7 +403,11 @@ function selectBootServiceManager(input: {
     return undefined;
   }
   if (input.platform === "linux") {
-    return systemdManager({ path: input.path, homeDir: input.homeDir });
+    return systemdManager({
+      path: input.path,
+      homeDir: input.homeDir,
+      environmentPath: input.environmentPath,
+    });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
     return launchdManager({
