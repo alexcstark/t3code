@@ -3172,6 +3172,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.group === undefined ? {} : { group: command.group }),
             ...(command.systemPrompt === undefined
               ? {}
               : { systemPrompt: command.systemPrompt ?? undefined }),

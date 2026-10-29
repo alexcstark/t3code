@@ -1,4 +1,4 @@
-import type { ProjectId } from "@t3tools/contracts";
+import { THREAD_GROUP_NAME_MAX_LENGTH, type ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { EnvironmentThreadShell } from "./models.ts";
 import * as Arr from "effect/Array";
@@ -345,4 +345,46 @@ export function planPinnedMove(input: {
   newOrder.splice(from, 1);
   newOrder.splice(to, 0, movedId);
   return planPinnedReorder({ orderedIds: newOrder, keysById, movedId });
+}
+
+/** Keep each thread's relative order, then gather named groups alphabetically
+    ahead of threads with no group. `grouped` is false when every thread is
+    ungrouped, so callers can leave the list alone. */
+export function orderThreadsByGroup<T extends { readonly group?: string | null }>(
+  threads: readonly T[],
+): { readonly threads: readonly T[]; readonly grouped: boolean } {
+  const buckets = new Map<string, T[]>();
+  const ungrouped: T[] = [];
+  for (const thread of threads) {
+    const name = thread.group;
+    if (name == null || name.length === 0) {
+      ungrouped.push(thread);
+      continue;
+    }
+    const bucket = buckets.get(name);
+    if (bucket) bucket.push(thread);
+    else buckets.set(name, [thread]);
+  }
+  if (buckets.size === 0) return { threads, grouped: false };
+  const groups = [...buckets.keys()].sort((left, right) => left.localeCompare(right));
+  return {
+    threads: [...groups.flatMap((name) => buckets.get(name)!), ...ungrouped],
+    grouped: true,
+  };
+}
+
+export function normalizeThreadGroupName(value: string): string | null {
+  const name = value.trim();
+  if (name.length === 0 || name.length > THREAD_GROUP_NAME_MAX_LENGTH) return null;
+  return name;
+}
+
+export function collectThreadGroupNames(
+  threads: readonly { readonly group?: string | null }[],
+): readonly string[] {
+  const names = new Set<string>();
+  for (const thread of threads) {
+    if (thread.group) names.add(thread.group);
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
 }

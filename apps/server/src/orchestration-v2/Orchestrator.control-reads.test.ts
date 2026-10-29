@@ -172,6 +172,20 @@ it.effect(
         title: "After",
       });
       yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("group-control"),
+        threadId,
+        group: "Auth",
+      });
+      assert.equal((yield* projections.getThreadShell(threadId))?.group, "Auth");
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("ungroup-control"),
+        threadId,
+        group: null,
+      });
+      assert.equal((yield* projections.getThreadShell(threadId))?.group ?? null, null);
+      yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("mode-control"),
         threadId,

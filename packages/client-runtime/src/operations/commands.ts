@@ -124,6 +124,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly systemPrompt?: SystemPrompt | null;
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecoveryUpdate | null;
   readonly title?: string;
+  /** Set or clear the thread's group. Absent leaves it unchanged. */
+  readonly group?: string | null;
   readonly modelSelection?: ModelSelection;
   readonly branch?: string | null;
   readonly worktreePath?: string | null;
@@ -561,6 +563,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
     let result = null;
     if (
       input.title !== undefined ||
+      input.group !== undefined ||
       input.branch !== undefined ||
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
@@ -575,6 +578,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         commandId,
         threadId: input.threadId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.group === undefined ? {} : { group: input.group }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
         ...(input.expectedEmpty === true ? { expectedEmpty: true } : {}),

@@ -10,7 +10,10 @@ import { withThreadDismissal } from "./thread-dismissal";
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
-import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  normalizeThreadGroupName,
+  pinOrderKeyBetween,
+} from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
@@ -231,6 +234,12 @@ export function useThreadListActions(): {
     direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
+  readonly setThreadGroup: (thread: EnvironmentThreadShell, group: string | null) => void;
+  readonly promptNewThreadGroup: (thread: EnvironmentThreadShell) => void;
+  readonly promptRenameThreadGroup: (
+    threads: readonly EnvironmentThreadShell[],
+    name: string,
+  ) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
@@ -506,6 +515,57 @@ export function useThreadListActions(): {
       onConfirm: commit,
     });
   };
+  const setThreadGroup = (thread: EnvironmentThreadShell, group: string | null) => {
+    const name = group === null ? null : normalizeThreadGroupName(group);
+    if (group !== null && name === null) {
+      Dialog.alert("Could not group thread", "Use a name up to 40 characters.");
+      return;
+    }
+    if ((thread.group ?? null) === name) return;
+    void updateThreadMetadata({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, group: name },
+    }).then((result) => {
+      if (result._tag === "Success") return;
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not group thread",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread could not be grouped.",
+      );
+    });
+  };
+  const promptGroupName = (
+    title: string,
+    initialValue: string,
+    onConfirm: (name: string) => void,
+  ) => {
+    Dialog.prompt({
+      title,
+      initialValue,
+      confirmText: "Save",
+      onConfirm: (value) => {
+        const name = normalizeThreadGroupName(value);
+        if (name === null) {
+          Dialog.alert("Could not group thread", "Use a name up to 40 characters.");
+          return;
+        }
+        onConfirm(name);
+      },
+    });
+  };
+  const promptNewThreadGroup = (thread: EnvironmentThreadShell) => {
+    promptGroupName("New group", "", (name) => setThreadGroup(thread, name));
+  };
+  const promptRenameThreadGroup = (threads: readonly EnvironmentThreadShell[], current: string) => {
+    promptGroupName("Rename group", current, (name) => {
+      if (name === current) return;
+      for (const thread of threads) {
+        if (thread.group === current) setThreadGroup(thread, name);
+      }
+    });
+  };
 
   // Plan against the complete section so filtering does not change a move.
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
@@ -678,6 +738,9 @@ export function useThreadListActions(): {
     setThreadAutoSettle,
     moveThread,
     renameThread,
+    setThreadGroup,
+    promptNewThreadGroup,
+    promptRenameThreadGroup,
     regenerateThreadTitle,
   };
 }

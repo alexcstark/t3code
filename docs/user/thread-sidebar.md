@@ -138,6 +138,18 @@ device keeps its own choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+## Group threads in a project
+
+Filter the sidebar to one project, then choose **Group** on a thread. Named groups
+become sections in the active list. Threads without a group stay below them. Pin,
+settle, and snooze keep their own sections, so a pinned or settled thread leaves its
+group section until it comes back to the active list.
+
+**New group…** names a group. **None** takes the thread out. A group disappears
+when its last thread leaves. On web and desktop, the group heading can rename
+every thread in that group or remove the group. On iOS and Android, tap the
+heading to rename it. This needs a current server; older servers hide **Group**.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
