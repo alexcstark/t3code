@@ -17,6 +17,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { use, useEffect, useRef, useState, type ComponentProps } from "react";
 import {
   Platform,
+  Pressable,
   ScrollView,
   useWindowDimensions,
   View,
@@ -50,6 +51,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+import { collectThreadGroupNames } from "@t3tools/client-runtime/state/thread-sort";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -57,6 +59,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionDivider,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -129,6 +132,9 @@ interface HomeScreenProps {
     direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSetThreadGroup: (thread: EnvironmentThreadShell, group: string | null) => void;
+  readonly onCreateThreadGroup: (thread: EnvironmentThreadShell) => void;
+  readonly onRenameThreadGroup: (threads: readonly EnvironmentThreadShell[], name: string) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -468,6 +474,7 @@ export function HomeScreen(props: HomeScreenProps) {
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
+    groupEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
@@ -562,6 +569,7 @@ export function HomeScreen(props: HomeScreenProps) {
     queuedThreadKeys,
     moveAvailability: threadMoveAvailability,
     shelfPreferencesLoading: !shelfPreferencesLoaded,
+    clusterGroups: props.selectedProjectKey !== null,
   });
 
   useThreadJumpShortcuts(threadListV2Items, props.onSelectThread);
@@ -614,6 +622,27 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-group") {
+      return (
+        <Pressable
+          onPress={() =>
+            props.onRenameThreadGroup(
+              props.threads.filter(
+                (thread) =>
+                  thread.group === item.name &&
+                  (v2ScopedProjectKeys === null ||
+                    v2ScopedProjectKeys.has(
+                      scopedProjectKey(thread.environmentId, thread.projectId),
+                    )),
+              ),
+              item.name,
+            )
+          }
+        >
+          <ThreadListV2SectionDivider label={item.name} />
+        </Pressable>
+      );
+    }
     if (item.type === "v2-settled-shelf") {
       return (
         <ThreadListV2SettledShelfHeader
@@ -664,6 +693,16 @@ export function HomeScreen(props: HomeScreenProps) {
         onDeleteThread={handleDeleteThread}
         onArchiveThread={props.onArchiveThread}
         onRenameThread={handleRenameThread}
+        groupsSupported={groupEnvironmentIds.has(thread.environmentId)}
+        groupNames={collectThreadGroupNames(
+          props.threads.filter(
+            (candidate) =>
+              candidate.environmentId === thread.environmentId &&
+              candidate.projectId === thread.projectId,
+          ),
+        )}
+        onSetThreadGroup={props.onSetThreadGroup}
+        onCreateThreadGroup={props.onCreateThreadGroup}
         onRegenerateThreadTitle={handleRegenerateThreadTitle}
         titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
         settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}

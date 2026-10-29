@@ -10,12 +10,13 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import { collectThreadGroupNames } from "@t3tools/client-runtime/state/thread-sort";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
-import { Platform, StyleSheet, TextInput, View } from "react-native";
+import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -59,6 +60,7 @@ import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionDivider,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -152,6 +154,9 @@ function ThreadNavigationSidebarPane(
     setThreadAutoSettle,
     moveThread,
     renameThread,
+    setThreadGroup,
+    promptNewThreadGroup,
+    promptRenameThreadGroup,
     regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
@@ -293,6 +298,7 @@ function ThreadNavigationSidebarPane(
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
+    groupEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
@@ -389,6 +395,7 @@ function ThreadNavigationSidebarPane(
       queuedThreadKeys,
       moveAvailability: threadMoveAvailability,
       shelfPreferencesLoading: !shelfPreferencesLoaded,
+      clusterGroups: selectedProjectKey !== null,
     });
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
@@ -587,6 +594,26 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-group":
+        return (
+          <Pressable
+            onPress={() =>
+              promptRenameThreadGroup(
+                threads.filter(
+                  (candidate) =>
+                    candidate.group === item.name &&
+                    (selectedProjectRefs === null ||
+                      selectedProjectRefs.has(
+                        scopedProjectKey(candidate.environmentId, candidate.projectId),
+                      )),
+                ),
+                item.name,
+              )
+            }
+          >
+            <ThreadListV2SectionDivider label={item.name} pane="sidebar" />
+          </Pressable>
+        );
       case "v2-thread": {
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
@@ -626,6 +653,16 @@ function ThreadNavigationSidebarPane(
             onDeleteThread={confirmDeleteThread}
             onArchiveThread={archiveThread}
             onRenameThread={renameThread}
+            groupsSupported={groupEnvironmentIds.has(thread.environmentId)}
+            groupNames={collectThreadGroupNames(
+              threads.filter(
+                (candidate) =>
+                  candidate.environmentId === thread.environmentId &&
+                  candidate.projectId === thread.projectId,
+              ),
+            )}
+            onSetThreadGroup={setThreadGroup}
+            onCreateThreadGroup={promptNewThreadGroup}
             onRegenerateThreadTitle={regenerateThreadTitle}
             titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
             settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
