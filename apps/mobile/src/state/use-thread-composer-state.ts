@@ -3,7 +3,10 @@ import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
 import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import {
+  reconcileThreadShellRuntimeFromDetail,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/shell";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
@@ -323,9 +326,15 @@ export function useThreadComposerState() {
     thread: selectedThreadShell,
     projection: selectedThreadProjection?.projection,
   });
-  const selectedThreadRuntime = selectedThreadProjection
+  const detailRuntime = selectedThreadProjection
     ? deriveThreadRuntime(selectedThreadProjection.projection)
-    : (selectedThreadShell?.runtime ?? null);
+    : null;
+  const selectedThreadRuntime =
+    detailRuntime === null
+      ? (selectedThreadShell?.runtime ?? null)
+      : selectedThreadShell === null || !threadRuntimeIsActive(detailRuntime.status)
+        ? detailRuntime
+        : reconcileThreadShellRuntimeFromDetail(selectedThreadShell, detailRuntime).runtime;
   const selectedThreadActivityRun = selectedThreadProjection
     ? deriveThreadActivityRun(selectedThreadProjection.projection)
     : (selectedThreadShell?.latestRun ?? null);

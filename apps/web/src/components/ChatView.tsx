@@ -92,7 +92,11 @@ import {
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  presentThreadShell,
+  reconcileThreadShellRuntimeFromDetail,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/shell";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
@@ -1559,6 +1563,14 @@ export default function ChatView(props: ChatViewProps) {
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
+  // The shell is the list's status. A detail snapshot that still calls a
+  // finished run live must not make the open thread look Working.
+  const presentedRuntime =
+    serverThreadShell === null ||
+    activeRuntime === null ||
+    !threadRuntimeIsActive(activeRuntime.status)
+      ? activeRuntime
+      : reconcileThreadShellRuntimeFromDetail(serverThreadShell, activeRuntime).runtime;
   const hasHeldQueuedRuns =
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
@@ -1845,9 +1857,9 @@ export default function ChatView(props: ChatViewProps) {
   ) {
     setMountedTerminalThreadKeys(reconciledMountedTerminalThreadKeys);
   }
-  const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
+  const latestRunSettled = isLatestRunSettled(activeLatestRun, presentedRuntime);
   const activePlan = deriveActivePlanState(serverProjection, activeActivityRun?.runId);
-  const activeActivityRunSettled = isLatestRunSettled(activeActivityRun, activeRuntime);
+  const activeActivityRunSettled = isLatestRunSettled(activeActivityRun, presentedRuntime);
   const composerTasksPlan = selectComposerTasksPlan(
     serverProjection,
     activePlan,
@@ -2510,7 +2522,7 @@ export default function ChatView(props: ChatViewProps) {
     canOperateThread &&
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
-  const phase = derivePhase(activeRuntime);
+  const phase = derivePhase(presentedRuntime);
   const serverThreadId = serverThread?.id;
   const serverThreadEnvironmentId = serverThread?.environmentId;
   const setThreadError = makeThreadErrorSetter({
@@ -2621,7 +2633,7 @@ export default function ChatView(props: ChatViewProps) {
       latestServerUserItem.text.trim().toLowerCase() === "/compact" &&
       latestServerUserItem.attachments.length === 0 &&
       latestServerUserItem.runId === activeActivityRun?.runId &&
-      !isLatestRunSettled(activeActivityRun, activeRuntime));
+      !isLatestRunSettled(activeActivityRun, presentedRuntime));
   const compactionSettled = serverVisibleTurnItems.some(
     ({ item }) =>
       item.type === "compaction" &&
@@ -2635,7 +2647,7 @@ export default function ChatView(props: ChatViewProps) {
     ({ item }) =>
       item.type === "compaction" &&
       item.runId !== null &&
-      item.runId === activeRuntime?.activeRunId &&
+      item.runId === presentedRuntime?.activeRunId &&
       item.status === "running",
   );
   const isCompacting =
@@ -2643,7 +2655,7 @@ export default function ChatView(props: ChatViewProps) {
     (compactionRunning || (compactRequestIsActive && !compactionSettled));
   const isWorking = deriveIsWorking({
     phase,
-    runtimeStatus: activeRuntime?.status,
+    runtimeStatus: presentedRuntime?.status,
     isSendBusy,
     isConnecting,
     isCompacting,
@@ -2681,7 +2693,7 @@ export default function ChatView(props: ChatViewProps) {
     ];
   })();
   const activeWorkStartedAt =
-    deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
+    deriveActiveWorkStartedAt(activeActivityRun, presentedRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
   const sendQueuesBehindSetup =
@@ -3472,7 +3484,8 @@ export default function ChatView(props: ChatViewProps) {
   };
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    canOperateThread &&
+    deriveCanInterruptRunningThread(activeThread !== undefined, presentedRuntime);
   const onInterrupt = async () => {
     if (
       !activeThread ||
@@ -3883,7 +3896,7 @@ export default function ChatView(props: ChatViewProps) {
         visiblePullRequests.map((link) => [link.host, link.repository, link.number]).sort(),
       )
     : linkedThreadPullRequestKey;
-  const activeRunningTurnId = activeRuntime?.activeRunId ?? null;
+  const activeRunningTurnId = presentedRuntime?.activeRunId ?? null;
   useProactivePanels({
     threadRef: isServerThread ? activeThreadRef : null,
     enabled: settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet,
@@ -8483,7 +8496,7 @@ export default function ChatView(props: ChatViewProps) {
                       activeTerminalCount={terminalUiState.terminalIds.length}
                       activityState={deriveThreadActivityState({
                         isWorking,
-                        runtime: activeRuntime,
+                        runtime: presentedRuntime,
                       })}
                       canInterrupt={canInterruptRunningThread}
                       lastAgentUpdateAt={lastAgentUpdateAt}
