@@ -333,11 +333,30 @@ export function resolveThreadWorkingStartedAt(input: {
 }
 
 /**
+ * Detail work that began after the shell's latest completion is a start the
+ * summary has not applied yet. Work that began earlier is the run the summary
+ * already finished; a detail snapshot that still calls it live is behind.
+ */
+function detailWorkStartedAfterShellCompletion(
+  thread: Pick<EnvironmentThreadShell, "latestRun">,
+  detailRuntime: Pick<ThreadRuntimeSummary, "activityStartedAt">,
+): boolean {
+  const completedAt = thread.latestRun?.completedAt;
+  const startedAt = detailRuntime.activityStartedAt;
+  if (completedAt == null || startedAt == null) return true;
+  const completedMs = Date.parse(completedAt);
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(completedMs) || !Number.isFinite(startedMs)) return true;
+  return startedMs > completedMs;
+}
+
+/**
  * Shell and detail streams are independent. When detail still shows live work
- * (composer Working / Stop / Running tools) but the shell row has already gone
- * idle — a lag that leaves the open thread without a Working badge — prefer the
- * detail runtime for list presentation. Idle detail never demotes an active
- * shell: the shell may still be catching up on a start.
+ * the shell has not finished — a start newer than the shell's latest completion —
+ * prefer that runtime so the open row matches the composer. Idle detail never
+ * demotes an active shell. A detail run that started before the shell's latest
+ * completion does not override the summary: opening the thread must not turn
+ * Done into Working.
  */
 export function reconcileThreadShellRuntimeFromDetail(
   thread: EnvironmentThreadShell,
@@ -352,6 +371,12 @@ export function reconcileThreadShellRuntimeFromDetail(
       shellRuntime.status === detailRuntime.status &&
       shellRuntime.activeRunId === detailRuntime.activeRunId &&
       shellRuntime.activityStartedAt === detailRuntime.activityStartedAt)
+  ) {
+    return thread;
+  }
+  if (
+    (shellRuntime === null || !threadRunStatusIsActive(shellRuntime.status)) &&
+    !detailWorkStartedAfterShellCompletion(thread, detailRuntime)
   ) {
     return thread;
   }

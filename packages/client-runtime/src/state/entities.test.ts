@@ -398,6 +398,32 @@ describe("V2 client presentation", () => {
     ).toBe(idleShell);
   });
 
+  it("does not revive a run the shell has already finished", () => {
+    const runId = RunId.make("run-finished");
+    const finishedShell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:05:00.000Z"),
+      activeRunId: null,
+      activityRunStatus: null,
+      status: "completed",
+      pendingBackgroundTasks: [],
+    });
+    const detailRuntime = {
+      status: "running" as const,
+      activeRunId: runId,
+      activityStartedAt: "2026-06-20T01:00:00.000Z",
+      providerInstanceId: finishedShell.modelSelection.instanceId,
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-06-20T01:40:00.000Z",
+    };
+
+    expect(reconcileThreadShellRuntimeFromDetail(finishedShell, detailRuntime)).toBe(
+      finishedShell,
+    );
+  });
+
   it("keeps an older waiting run visible over a newer cancelled run", () => {
     const shell = presentThreadShell(environmentId, {
       ...v2ThreadShell,
