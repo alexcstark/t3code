@@ -57,6 +57,18 @@ function statusWithoutLiveData(
   return Option.isSome(data) ? "cached" : "empty";
 }
 
+/**
+ * A thread opened in the same moment it is created can 404 until its row
+ * commits. Retry those misses before treating the thread as deleted.
+ * Otherwise the chat pane unsubscribes and stays blank while the sidebar
+ * still shows the thread.
+ */
+export const THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS = [
+  "100 millis",
+  "250 millis",
+  "500 millis",
+] as const;
+
 function formatThreadError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error && error.message.trim().length > 0
@@ -799,8 +811,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+          let httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
             yield* snapshotLoader.load(prepared, threadId);
+          for (const delay of THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS) {
+            if (httpResult._tag !== "missing") break;
+            yield* Effect.sleep(delay);
+            httpResult = yield* snapshotLoader.load(prepared, threadId);
+          }
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -831,6 +848,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
+              // The retries above still 404'd. Clear any stale cache and do
+              // not open a socket subscription for this attempt.
               yield* setDeleted();
               return yield* Effect.never;
             }
