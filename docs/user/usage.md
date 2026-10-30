@@ -144,6 +144,23 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Choose a provider with spare capacity
+
+The model picker on web and desktop, and thread settings on mobile, open on **Provider capacity**, which compares selectable provider instances in the current environment. Providers with the most allowance remaining appear first. Selecting a provider, from the list or the provider sidebar or filter, shows only that provider's models until you close the picker. Searching covers every provider.
+
+The percentage uses the reported quota window with the least allowance remaining. Missing or
+unavailable limits, or a reading whose reset time has passed, show as unknown and sort after
+known percentages. The capacity list uses the last reported limits without refreshing them.
+To get a fresh reading, [refresh Limits](#track-subscription-limits).
+
+Activity counts other active T3 threads, including threads preparing to run or waiting for input,
+and excludes the current thread. Matching accounts share activity across your T3 environments;
+explicitly identified workspaces stay separate. **Idle in T3** means no other active threads were
+reported by the matching environments. If a matching environment has no live activity data,
+the section shows **Activity unknown** or a count with **+**, meaning at least that many threads
+are active. Activity outside T3 Code is not counted. When percentages tie, providers with fewer
+known active threads appear first.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

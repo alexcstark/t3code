@@ -68,6 +68,7 @@ describe("CursorAdapterV2", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           cwd: workspace,
+          systemPrompt: "Use our review checklist.",
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
@@ -83,6 +84,10 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    const message =
+                      typeof input.message === "string" ? input.message : input.message.text;
+                    assert.include(message, "Use our review checklist.");
+                    assert.notInclude(message, "Use `delegate_task`");
                     // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
@@ -150,7 +155,7 @@ describe("CursorAdapterV2", () => {
           modelSelection,
           runtimePolicy,
           runId: RunId.make("cursor-lifecycle-run"),
-          runOrdinal: 1,
+          runOrdinal: 7,
           providerTurnOrdinal: 1,
           attemptId: RunAttemptId.make("cursor-lifecycle-attempt"),
           rootNodeId: NodeId.make("cursor-lifecycle-root"),

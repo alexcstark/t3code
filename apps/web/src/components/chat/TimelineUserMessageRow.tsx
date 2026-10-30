@@ -271,14 +271,17 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const bodyMounted = expanded || ctx.findActive;
 
   return (
-    <div className="group flex flex-col items-end gap-1" data-user-message-attribution="automation">
+    <div
+      className="group flex flex-col items-start gap-1"
+      data-user-message-attribution="automation"
+    >
       {row.message.inputIntent === "steer" ||
       row.message.inputIntent === "promoted_queued_to_steer" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div
         className={cn(
-          "min-w-0 max-w-[80%] rounded-2xl bg-message text-message-foreground",
+          "min-w-0 w-full rounded-xl border border-border/35 bg-message/45 text-message-foreground",
           BUBBLE_CHIP_CLASS_NAME,
           expanded && "w-full",
         )}
@@ -305,7 +308,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       </div>
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+        <div className="flex w-full items-center justify-start pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
           <div className="flex shrink-0 items-center gap-2">
             {scheduledTaskId ? (
               <Link
@@ -737,7 +740,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div
-      className="group flex flex-col items-end gap-1"
+      className="group flex flex-col items-start gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
@@ -760,7 +763,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       {mediaAboveText ? (
-        <div className="flex max-w-[80%] justify-end">
+        <div className="flex max-w-[80%] justify-start">
           {/* The heading leads the media so screen readers reach it before the images. */}
           <MessageAuthorHeading>You</MessageAuthorHeading>
           {mediaBlock}
@@ -768,13 +771,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div
         className={cn(
-          "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
+          "relative min-w-0 text-message-foreground",
           mediaAboveText && "rounded-tr-md",
           BUBBLE_CHIP_CLASS_NAME,
+          !mediaOnly && !fileCardsOnly && !audioOnly && "w-full rounded-xl border border-border/35",
+          (mediaOnly || fileCardsOnly || audioOnly) && "max-w-[80%] rounded-2xl",
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
-            : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
-          !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
+            : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message/45",
+          !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "px-2.5 py-2",
           folded && expanded && "w-full",
         )}
       >
@@ -929,7 +934,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
       <UserMessageProjectedStatus row={row} />
       {!folded || expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+        <div className="flex w-full items-center justify-start pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
           <div className="flex shrink-0 items-center gap-2">
             {folded && senderThreadId ? (
               <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">

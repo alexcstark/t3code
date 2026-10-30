@@ -208,6 +208,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),
+  openWindow: (options) => ipcRenderer.invoke(IpcChannels.OPEN_WINDOW_CHANNEL, options),
+  getWindowLayout: () => ipcRenderer.sendSync(IpcChannels.GET_WINDOW_LAYOUT_CHANNEL) ?? null,
+  onWindowLayout: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, layout: unknown) => {
+      if (typeof layout !== "object" || layout === null) return;
+      listener(layout as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(IpcChannels.WINDOW_LAYOUT_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.WINDOW_LAYOUT_CHANNEL, wrappedListener);
+    };
+  },
+  setWindowProjectScope: (projectScopeKey) =>
+    ipcRenderer.invoke(IpcChannels.SET_WINDOW_PROJECT_SCOPE_CHANNEL, { projectScopeKey }),
+  moveThreadsToWindow: (input) =>
+    ipcRenderer.invoke(IpcChannels.MOVE_THREADS_TO_WINDOW_CHANNEL, input),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;
@@ -299,6 +316,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(IpcChannels.WEB_LINK_OPEN_CHANNEL, wrappedListener);
       };
     },
+  },
+  onPowerResume: (listener) => {
+    const wrappedListener = () => {
+      listener();
+    };
+    ipcRenderer.on(IpcChannels.POWER_RESUME_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.POWER_RESUME_CHANNEL, wrappedListener);
+    };
   },
   appActivation: {
     setReady: (ready) =>

@@ -19,6 +19,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
@@ -84,8 +85,11 @@ export function ComposerControlsBar(props: {
   keybindings: ChatComposerProps["keybindings"];
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
   terminalOpen: boolean;
+  currentThreadId?: ThreadId | null;
   modelPickerOpen: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
+  reasoningPickerOpen?: boolean;
+  onReasoningPickerOpenChange?: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
 }) {
@@ -165,6 +169,10 @@ export function ComposerControlsBar(props: {
     onPromptEdit,
     planModeEnabled,
     isComposerOwned: true,
+    ...(props.reasoningPickerOpen !== undefined ? { open: props.reasoningPickerOpen } : {}),
+    ...(props.onReasoningPickerOpenChange
+      ? { onOpenChange: props.onReasoningPickerOpenChange }
+      : {}),
     effortDisplay: props.effortDisplay,
     triggerClassName: cn("ps-1.5 pe-1", TEXT_CONTROL_STATES),
     // Permissions always live in the effort menu, so the section never unmounts while open.
@@ -246,6 +254,7 @@ export function ComposerControlsBar(props: {
   const composerModelPicker = (
     <ComposerModelPicker
       environmentId={environmentId}
+      {...(props.currentThreadId !== undefined ? { currentThreadId: props.currentThreadId } : {})}
       compact={false}
       isComposerOwned
       disabled={providerCatalogPending || isSendBusy}
@@ -351,6 +360,12 @@ export function ComposerControlsBar(props: {
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
             }
+            {...(hiddenRestingBlockIds.includes("traits") && props.reasoningPickerOpen !== undefined
+              ? {
+                  open: props.reasoningPickerOpen,
+                  onOpenChange: props.onReasoningPickerOpenChange,
+                }
+              : {})}
             // Permissions join the overflow only when their normal home is in it.
             showPermissions={overflowShowsPermissions}
             onToggleInteractionMode={toggleInteractionMode}

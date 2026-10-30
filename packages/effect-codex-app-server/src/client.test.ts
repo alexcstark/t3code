@@ -2,6 +2,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -10,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexError from "./errors.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -153,6 +155,26 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       );
 
       assert.equal(initialized.userAgent, "mock-codex-app-server");
+    }),
+  );
+
+  it.effect("reports an idle child exiting to current and later observers", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle();
+      const context = yield* Layer.build(CodexClient.layerChildProcess(handle));
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(context),
+      );
+      yield* client.request("account/read", {});
+      const observer = yield* client.awaitTermination.pipe(Effect.forkScoped);
+      yield* handle.kill({ killSignal: "SIGTERM" });
+
+      const error = yield* Fiber.join(observer);
+      assert.instanceOf(error, CodexError.CodexAppServerTransportError);
+      assert.propertyVal(error, "operation", "read-process-exit-status");
+      assert.propertyVal(error, "pid", handle.pid);
+      assert.strictEqual(yield* client.awaitTermination, error);
+      assert.strictEqual(yield* client.request("account/read", {}).pipe(Effect.flip), error);
     }),
   );
 });

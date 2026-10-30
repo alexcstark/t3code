@@ -9,6 +9,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqlite from "node:sqlite";
 
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -93,6 +94,43 @@ it.effect("drops planner statistics a database already has", () => {
       );
     }).pipe(Effect.provide(persistence()));
   }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("shrinks the WAL file back to the size limit after a large write", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-wal-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const walFileSize = () => NodeFS.statSync(`${dbPath}-wal`).size;
+  // About 25% more 4 KB rows than the limit holds, in one transaction.
+  const rowCount = Math.ceil((SqlitePersistence.WAL_SIZE_LIMIT_BYTES * 1.25) / 4000);
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    assert.deepEqual(yield* sql`PRAGMA wal_autocheckpoint`, [{ wal_autocheckpoint: 0 }]);
+    yield* sql`CREATE TABLE wal_probe(payload BLOB)`;
+    yield* sql`
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${rowCount})
+      INSERT INTO wal_probe(payload) SELECT randomblob(4000) FROM n
+    `;
+    assert.isAbove(walFileSize(), SqlitePersistence.WAL_SIZE_LIMIT_BYTES);
+
+    // Crossing the admission ceiling makes the next write wait for background
+    // checkpoint/truncation. The writer itself never copies or syncs the WAL.
+    yield* sql`INSERT INTO wal_probe(payload) VALUES (x'00')`;
+    assert.isAtMost(walFileSize(), SqlitePersistence.WAL_SIZE_LIMIT_BYTES);
+    const persisted = yield* Effect.acquireRelease(
+      Effect.sync(
+        () => new NodeSqlite.DatabaseSync(`file:${dbPath}?immutable=1`, { readOnly: true }),
+      ),
+      (database) => Effect.sync(() => database.close()),
+    );
+    assert.isAtLeast(
+      Number(persisted.prepare("SELECT count(*) AS count FROM wal_probe").get()?.count),
+      rowCount,
+    );
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });

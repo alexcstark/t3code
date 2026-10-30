@@ -29,7 +29,7 @@ decides: 3 seconds on loopback and LAN routes and after a long mobile
 suspension, when the data on screen is stale; 15 seconds elsewhere, because a
 tailnet over DERP or a VPN can be slower than that on a live socket. A long
 suspension's probe that times out also replaces the socket regardless of the
-network report. The web and desktop foreground probe skips the fresh request,
+network report. A desktop OS wake from sleep also replaces a dead session. The web and desktop foreground probe skips the fresh request,
 because a busy host can answer it before a queued probe. Foregrounding also
 wakes a pending retry immediately. A long suspension restarts an in-flight
 attempt; a short one leaves it alone.

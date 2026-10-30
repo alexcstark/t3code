@@ -9,6 +9,7 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestThreadGroupName } from "./ThreadGroupNameDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -33,7 +34,11 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
 } from "@t3tools/client-runtime/state/thread-inbox";
-import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  collectThreadGroupNames,
+  orderThreadsByGroup,
+  sortSettledThreads,
+} from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
   threadSearchMatchKey,
@@ -61,6 +66,7 @@ import {
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import {
+  AppWindowIcon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
@@ -152,6 +158,16 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/older
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import {
+  buildMoveToWindowMenuItem,
+  createWindowThreadFilter,
+  isMoveToWindowMenuId,
+  moveThreadsToWindow,
+  parseMoveToWindowMenuId,
+  useDesktopWindowLayoutStore,
+  withMoveToWindowItem,
+  type DesktopWindowLayoutView,
+} from "../desktopWindowLayout";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -229,6 +245,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { Button } from "./ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import {
   Combobox,
   ComboboxEmpty,
@@ -343,6 +360,8 @@ interface SidebarThreadPartitionInput {
   readonly workingShelfEnabled: boolean;
   /** Boring mode: folders list active threads by the user's latest message. */
   readonly sortActiveBySend: boolean;
+  /** Named thread groups, only when the sidebar is scoped to one project. */
+  readonly clusterGroups: boolean;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
@@ -398,6 +417,8 @@ function routeThreadOnly(
 function useSidebarThreads(input: {
   readonly projectScopeKey: string | null;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly projectKeyByProjectRef: ReadonlyMap<string, string>;
+  readonly windowLayout: DesktopWindowLayoutView | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
@@ -407,18 +428,34 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to can start one.
   readonly keepEmptyFolders: boolean;
+  readonly clusterGroups: boolean;
 }) {
   const {
     projectScopeKey,
     scopedProjectKeys,
+    projectKeyByProjectRef,
+    windowLayout,
     serverConfigs,
     optimisticDrop,
-    threads,
+    threads: sourceThreads,
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    clusterGroups,
   } = input;
+  const inThisWindow = createWindowThreadFilter({
+    view: windowLayout,
+    projectKeyByProjectRef,
+    scopedProjectKeys,
+  });
+  // A thread moved into this window stays here even when it sits outside the project scope.
+  const threads =
+    inThisWindow === null
+      ? sourceThreads
+      : sourceThreads.filter((thread) =>
+          inThisWindow(threadShellKey(thread), `${thread.environmentId}:${thread.projectId}`),
+        );
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
     useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null;
@@ -457,14 +494,17 @@ function useSidebarThreads(input: {
   const settledVisibleCount =
     settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
 
+  const listedProjectKeys = inThisWindow === null ? scopedProjectKeys : null;
   const partition = partitionSidebarThreads({
     threads,
-    scopedProjectKeys,
+    // The window filter already applied the project scope, and keeps moved-in threads.
+    scopedProjectKeys: listedProjectKeys,
     delegatedUnderParent,
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend: folderGroups !== null,
+    clusterGroups,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
@@ -472,7 +512,7 @@ function useSidebarThreads(input: {
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: olderSettledScopes([...serverConfigs.keys()], listedProjectKeys),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -600,6 +640,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
+    clusterGroups,
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
@@ -663,6 +704,15 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     : workingShelfEnabled
       ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
       : sortThreadsForSidebar(active);
+  const arrangedActive =
+    optimisticDrop?.section !== "active" || optimisticDrop.order === null
+      ? sortedActive
+      : orderItemsByPreferredIds({
+          items: sortedActive,
+          preferredIds: optimisticDrop.order,
+          getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        });
+  const groupedActive = clusterGroups ? orderThreadsByGroup(arrangedActive) : null;
   return {
     pinnedThreads:
       optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
@@ -674,14 +724,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           }),
     draggableThreadKeys: draggable,
     activeReorderableThreadKeys: activeReorderable,
-    activeThreads:
-      optimisticDrop?.section !== "active" || optimisticDrop.order === null
-        ? sortedActive
-        : orderItemsByPreferredIds({
-            items: sortedActive,
-            preferredIds: optimisticDrop.order,
-            getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          }),
+    activeThreads: groupedActive?.grouped === true ? groupedActive.threads : arrangedActive,
+    activeGrouped: groupedActive?.grouped === true,
     workingThreads: sortWorkingThreadsBySend(working),
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
@@ -805,6 +849,13 @@ function useSidebarLookups() {
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
+  const projectKeyByProjectRef = new Map(
+    projectGroups.flatMap((group) =>
+      group.memberProjects.map(
+        (project) => [`${project.environmentId}:${project.id}`, group.projectKey] as const,
+      ),
+    ),
+  );
   const projectScopeItems = [
     { value: "all", label: "All projects" },
     ...projectGroups.map((project) => ({ value: project.projectKey, label: project.displayName })),
@@ -818,8 +869,53 @@ function useSidebarLookups() {
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
+    projectKeyByProjectRef,
     projectScopeItems,
   };
+}
+
+function supportsThreadGroups(capabilities: object | null | undefined): boolean {
+  if (capabilities == null || !("threadGroups" in capabilities)) return false;
+  return (capabilities as { readonly threadGroups?: unknown }).threadGroups === true;
+}
+
+function SidebarThreadGroupHeader(props: {
+  readonly name: string;
+  readonly onRename: () => void;
+  readonly onRemove: () => void;
+}) {
+  return (
+    <li
+      data-thread-selection-safe
+      data-testid={`sidebar-group-${props.name}`}
+      className="list-none"
+    >
+      <div className="flex h-8 items-center gap-1 px-2.5">
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-muted-foreground">
+          {props.name}
+        </span>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                type="button"
+                size="micro"
+                variant="ghost-muted"
+                aria-label={`${props.name} group actions`}
+                className="shrink-0"
+              />
+            }
+          >
+            Actions
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={props.onRename}>Rename</MenuItem>
+            <MenuItem onClick={props.onRemove}>Remove group</MenuItem>
+          </MenuPopup>
+        </Menu>
+      </div>
+    </li>
+  );
 }
 
 function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }) {
@@ -882,8 +978,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
+    projectKeyByProjectRef,
     projectScopeItems,
   } = useSidebarLookups();
+  const windowLayout = useDesktopWindowLayoutStore((store) => store.view);
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1042,6 +1140,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  // A thread started from a draft in this window stays here, even when an
+  // earlier window on the same project would otherwise show it. Each thread is
+  // claimed once, so two windows on the same draft cannot trade it back and forth.
+  const claimedThreadKeysRef = useRef(new Set<string>());
+  const promotedDraftThreadKey = routeTarget?.kind === "draft" ? routeThreadKey : null;
+  const claimingWindowId =
+    windowLayout !== null && windowLayout.layout.windows.length > 1 ? windowLayout.windowId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- claims a promoted draft once for this window
+  useEffect(() => {
+    if (promotedDraftThreadKey === null || claimingWindowId === null) return;
+    if (claimedThreadKeysRef.current.has(promotedDraftThreadKey)) return;
+    claimedThreadKeysRef.current.add(promotedDraftThreadKey);
+    void moveThreadsToWindow([promotedDraftThreadKey], { windowId: claimingWindowId });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- moveThreadsToWindow is a stable import
+  }, [promotedDraftThreadKey, claimingWindowId]);
 
   // A selection made under one scope can hold threads the next scope hides.
   const setProjectScopeKeys = (keys: readonly string[]) => {
@@ -1142,6 +1255,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       projectScopeFilter.contains(item, query, (candidate) => candidate.label),
   });
   const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
+  const clusterGroups = scopedProjectGroups.length === 1;
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
   const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
   const threadSearch = useThreadSearch(
@@ -1202,6 +1316,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       openProjectSettings(projectGroup);
     },
   );
+  const openDesktopWindow = isElectron ? window.desktopBridge?.openWindow : undefined;
+  const handleOpenProjectWindow = (
+    event: ReactMouseEvent<HTMLElement>,
+    projectGroup: SidebarProjectSnapshot,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressNextScopeChangeRef.current = true;
+    dispatchProjectScopeMenu({ type: "open-changed", open: false });
+    void openDesktopWindow?.({ projectScopeKey: projectGroup.projectKey });
+  };
   const startThreadInProjectFolder = useStableCallback((group: SidebarProjectSnapshot) => {
     if (isMobile) setOpenMobile(false);
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
@@ -1243,6 +1368,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     draggableThreadKeys,
     activeReorderableThreadKeys,
     activeThreads,
+    activeGrouped,
     workingThreads,
     snoozedThreads,
     settledThreads,
@@ -1276,6 +1402,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarThreads({
     projectScopeKey,
     scopedProjectKeys,
+    projectKeyByProjectRef,
+    windowLayout,
     serverConfigs,
     optimisticDrop,
     threads,
@@ -1287,6 +1415,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : scopedProjectGroups
       : null,
     keepEmptyFolders: scopedProjectGroups.length > 0,
+    clusterGroups,
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -1702,7 +1831,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
     if (!pointerOutsideThreadList(point)) return false;
-    dropThreadContext(point, contextDragThreads());
+    const dragged = contextDragThreads();
+    // Released past this window's edge: the window under the cursor takes the threads.
+    if (
+      windowLayout !== null &&
+      (point.x < 0 || point.y < 0 || point.x >= window.innerWidth || point.y >= window.innerHeight)
+    ) {
+      void moveThreadsToWindow(dragged.map(scopedThreadKey), "window-at-cursor").then((moved) => {
+        if (moved) clearSelection();
+      });
+      return true;
+    }
+    dropThreadContext(point, dragged);
     return true;
   };
   // useSensor memoizes options identity; fresh options rebuild DndContext and every sortable row.
@@ -1988,7 +2128,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeOrder: activeKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
-            activeTimeOrdered: workingShelfEnabled,
+            activeTimeOrdered: workingShelfEnabled || activeGrouped,
           }).kind !== "none"
         );
       },
@@ -2021,7 +2161,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeOrder: activeKeys,
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
-      activeTimeOrdered: workingShelfEnabled,
+      activeTimeOrdered: workingShelfEnabled || activeGrouped,
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
@@ -2239,6 +2379,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         timestampFormat,
         selectedThreads[0]!.environmentId,
       );
+      const moveToWindowItem = buildMoveToWindowMenuItem(windowLayout, count);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -2282,6 +2423,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   },
                 ]
               : []),
+            ...(moveToWindowItem ? [moveToWindowItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
             {
               id: "delete",
@@ -2294,6 +2436,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         ),
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
+      if (isMoveToWindowMenuId(clicked.value)) {
+        const target = parseMoveToWindowMenuId(clicked.value);
+        if (target !== null) {
+          clearSelection();
+          void moveThreadsToWindow(threadKeys, target);
+        }
+        return;
+      }
       const actionTargets =
         clicked.value === "unpin"
           ? pinnedSelectedThreads
@@ -2501,6 +2651,46 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const assignThreadGroups = async (
+    targets: readonly EnvironmentThreadShell[],
+    group: string | null,
+  ) => {
+    for (const target of targets) {
+      if ((target.group ?? null) === group) continue;
+      const result = await updateThreadMetadata({
+        environmentId: target.environmentId,
+        input: { threadId: target.id, group },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update group",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+        return;
+      }
+    }
+  };
+  const threadsInScopedGroup = (name: string) => {
+    if (scopedProjectKeys === null) return [];
+    return threads.filter(
+      (candidate) =>
+        candidate.group === name &&
+        scopedProjectKeys.has(`${candidate.environmentId}:${candidate.projectId}`),
+    );
+  };
+  const renameThreadGroup = async (name: string) => {
+    const next = await requestThreadGroupName({ title: "Rename group", initialValue: name });
+    if (next === null || next === name) return;
+    await assignThreadGroups(threadsInScopedGroup(name), next);
+  };
+  const removeThreadGroup = async (name: string) => {
+    await assignThreadGroups(threadsInScopedGroup(name), null);
+  };
+
   const handleThreadContextMenu = useStableCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -2539,44 +2729,69 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const moveToWindowItem = buildMoveToWindowMenuItem(windowLayout);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
-                threadRef.environmentId,
-                AuthOrchestrationOperateScope,
-              ),
-              branch: thread.branch ?? null,
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKeys.includes(threadProjectGroup.projectKey),
-                  }
-                : null,
-              isPinned,
-              isSettled,
-              autoSettleEnabled: thread.autoSettleDisabledAt == null,
-              isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
-              isRegeneratingTitle,
-              isRunning: !threadRuntimeCanArchive(thread.runtime),
-              canShareWithGuest: appAtomRegistry.get(
-                canShareWithGuestAtom(threadRef.environmentId),
-              ),
-              canTurnIntoProject: canTurnThreadIntoProject(threadRef),
-              supports: {
-                settlement: configLoaded,
-                autoSettleOptOut: supportsAutoSettleOptOut,
-                snooze: configLoaded,
-                pinning: configLoaded,
-                titleRegeneration: configLoaded,
-              },
-              snoozePresets,
-            }),
+            withMoveToWindowItem(
+              buildThreadActionMenuItems({
+                canOperate: readEnvironmentScope(
+                  threadRef.environmentId,
+                  AuthOrchestrationOperateScope,
+                ),
+                branch: thread.branch ?? null,
+                projectFilter: threadProjectGroup
+                  ? {
+                      label: threadProjectGroup.displayName,
+                      isActive: projectScopeKeys.includes(threadProjectGroup.projectKey),
+                    }
+                  : null,
+                isPinned,
+                isSettled,
+                autoSettleEnabled: thread.autoSettleDisabledAt == null,
+                isSnoozed,
+                canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+                isRegeneratingTitle,
+                isRunning: !threadRuntimeCanArchive(thread.runtime),
+                canShareWithGuest: appAtomRegistry.get(
+                  canShareWithGuestAtom(threadRef.environmentId),
+                ),
+                canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+                group:
+                  clusterGroups &&
+                  supportsThreadGroups(
+                    serverConfigs.get(thread.environmentId)?.environment.capabilities,
+                  )
+                    ? {
+                        current: thread.group ?? null,
+                        names: collectThreadGroupNames(
+                          threads.filter((candidate) =>
+                            scopedProjectKeys?.has(
+                              `${candidate.environmentId}:${candidate.projectId}`,
+                            ),
+                          ),
+                        ),
+                      }
+                    : null,
+                supports: {
+                  settlement: configLoaded,
+                  autoSettleOptOut: supportsAutoSettleOptOut,
+                  snooze: configLoaded,
+                  pinning: configLoaded,
+                  titleRegeneration: configLoaded,
+                },
+                snoozePresets,
+              }),
+              moveToWindowItem,
+            ),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (isMoveToWindowMenuId(clicked.value)) {
+          const target = parseMoveToWindowMenuId(clicked.value);
+          if (target !== null) void moveThreadsToWindow([threadKey], target);
+          return;
+        }
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
@@ -2589,6 +2804,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   thread.environmentId,
                 );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value.startsWith("group:")) {
+          const action = clicked.value.slice("group:".length);
+          if (action === "new") {
+            const name = await requestThreadGroupName({ title: "New group" });
+            if (name) await assignThreadGroups([thread], name);
+            return;
+          }
+          if (action === "none") {
+            await assignThreadGroups([thread], null);
+            return;
+          }
+          if (action.startsWith("set:")) {
+            await assignThreadGroups([thread], decodeURIComponent(action.slice("set:".length)));
+          }
           return;
         }
         switch (clicked.value) {
@@ -3043,6 +3274,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
+                            {project && openDesktopWindow ? (
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                tabIndex={-1}
+                                aria-hidden="true"
+                                title={`Open ${project.displayName} in a new window`}
+                                className="ml-auto"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => handleOpenProjectWindow(event, project)}
+                              >
+                                <AppWindowIcon className="size-3.5" />
+                              </Button>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
@@ -3050,7 +3295,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
+                                className={openDesktopWindow ? undefined : "ml-auto"}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);
@@ -3316,10 +3561,44 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      const previousActiveGroup = { name: undefined as string | null | undefined };
+                      const appendActiveThread = (
+                        thread: EnvironmentThreadShell,
+                        folderRow: string | undefined,
+                        previousGroup: { name: string | null | undefined },
+                      ) => {
+                        if (activeGrouped) {
+                          const name = thread.group ? thread.group : null;
+                          if (name !== null && name !== previousGroup.name) {
+                            items.push(
+                              <SidebarThreadGroupHeader
+                                key={`group:${folderRow ?? "active"}:${name}`}
+                                name={name}
+                                onRename={() => {
+                                  void renameThreadGroup(name);
+                                }}
+                                onRemove={() => {
+                                  void removeThreadGroup(name);
+                                }}
+                              />,
+                            );
+                          }
+                          previousGroup.name = name;
+                        }
+                        items.push(renderThreadRow(thread, "active", folderRow));
+                      };
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
                           if (projectFolders !== null && item.section === "active") continue;
+                          if (item.section === "active") {
+                            appendActiveThread(
+                              threadByKey.get(item.key)!,
+                              undefined,
+                              previousActiveGroup,
+                            );
+                            continue;
+                          }
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
                           continue;
                         }
@@ -3336,13 +3615,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 onContextMenu={handleProjectFolderContextMenu}
                               />,
                             );
+                            const previousFolderGroup = {
+                              name: undefined as string | null | undefined,
+                            };
                             for (const thread of folder.threads) {
-                              items.push(
-                                renderThreadRow(
-                                  thread,
-                                  "active",
-                                  sidebarFolderRowId(folder.group.projectKey),
-                                ),
+                              appendActiveThread(
+                                thread,
+                                sidebarFolderRowId(folder.group.projectKey),
+                                previousFolderGroup,
                               );
                             }
                           }

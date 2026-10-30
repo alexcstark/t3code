@@ -2711,6 +2711,15 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         projection.providerSessions.at(-1)?.lastError,
         "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.",
       );
+
+      const reopened = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.notStrictEqual(reopened, runtime);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
     });
 
     yield* effect.pipe(

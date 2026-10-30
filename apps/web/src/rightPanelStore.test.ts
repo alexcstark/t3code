@@ -39,6 +39,17 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("opens the plan surface as a singleton", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().open(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
@@ -631,8 +642,46 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("preserves persisted plan surfaces alongside the inline timeline", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "plan",
+            surfaces: [{ id: "plan", kind: "plan" }],
+          },
+          "env-1:thread-B": {
+            isOpen: true,
+            activeSurfaceId: "plan",
+            surfaces: [
+              { id: "plan", kind: "plan" },
+              { id: "diff", kind: "diff" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "plan",
+          surfaces: [{ id: "plan", kind: "plan" }],
+        },
+        "env-1:thread-B": {
+          isOpen: true,
+          activeSurfaceId: "plan",
+          surfaces: [
+            { id: "plan", kind: "plan" },
+            { id: "diff", kind: "diff" },
+          ],
+        },
+      },
+      threadPanelVisibilityByThreadKey: {},
+    });
+  });
+
   it.each([
-    { kind: "plan", isOpen: true },
     { kind: "agents", isOpen: true },
     { kind: "agents", isOpen: false },
   ])("drops $kind with isOpen=$isOpen and falls back", ({ kind, isOpen }) => {

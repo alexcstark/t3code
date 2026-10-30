@@ -8,8 +8,9 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
+import * as DatabaseReader from "./DatabaseReader.ts";
 
-const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -49,9 +50,9 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
-  return Layer.provideMerge(
+  const writer = Layer.provideMerge(
     layerSetup,
-    NodeSqliteClient.layer({
+    NodeSqliteClient.layerWorker({
       filename: dbPath,
       readerWorker: true,
       // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
@@ -62,6 +63,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       },
     }),
   );
+  return Layer.mergeAll(writer, DatabaseReader.layer.pipe(Layer.provide(writer)));
 }, Layer.unwrap);
 
 export const layerMemory = Layer.provideMerge(

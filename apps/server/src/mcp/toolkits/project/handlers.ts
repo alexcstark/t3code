@@ -208,6 +208,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
+        const systemPrompt =
+          input.systemPrompt === undefined && caller !== undefined
+            ? (yield* context.threads
+                .getThreadRecords(caller.id, [])
+                .pipe(Effect.mapError(unavailable))).thread.systemPrompt
+            : (input.systemPrompt ?? undefined);
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -216,6 +222,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
+          ...(systemPrompt === undefined ? {} : { systemPrompt }),
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
           ...(input.message === undefined && attachments.length === 0
             ? {}

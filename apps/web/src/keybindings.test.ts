@@ -168,6 +168,11 @@ const DEFAULT_BINDINGS = compile([
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("l", { shiftKey: true }),
+    command: "reasoningPicker.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -917,6 +922,54 @@ describe("Usage shortcuts", () => {
       resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("reasoning picker and thread settle shortcuts", () => {
+  it("resolves the reasoning picker outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "l", metaKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+      "reasoningPicker.toggle",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(
+        event({ key: "l", metaKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: true } },
+      ),
+      "reasoningPicker.toggle",
+    );
+  });
+
+  it("resolves Cmd+W to settle outside the terminal and close inside it", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.settle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.close",
+    );
+  });
+
+  it("labels the reasoning picker shortcut", () => {
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "reasoningPicker.toggle", {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "⇧⌘L",
     );
   });
 });

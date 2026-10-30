@@ -1,4 +1,5 @@
 import * as NodeSqlite from "node:sqlite";
+
 import * as NodeUtil from "node:util";
 import * as NodeWorkerThreads from "node:worker_threads";
 
@@ -192,6 +193,32 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
     return true;
   }
 };
+
+// Native SQLite binds byte views; a bare ArrayBuffer is otherwise treated as
+// named parameters, which silently binds NULL on the positional path.
+const sqliteBindings = (params: ReadonlyArray<unknown>) =>
+  params.map((value) => {
+    if (NodeUtil.types.isAnyArrayBuffer(value)) return new Uint8Array(value);
+    if (
+      value === null ||
+      isBlob(value) ||
+      (typeof value !== "object" && typeof value !== "function")
+    )
+      return value;
+    const properties = Object.getOwnPropertyDescriptors(value);
+    let changed = false;
+    for (const property of Object.values(properties)) {
+      if (
+        property.enumerable &&
+        "value" in property &&
+        NodeUtil.types.isAnyArrayBuffer(property.value)
+      ) {
+        property.value = new Uint8Array(property.value);
+        changed = true;
+      }
+    }
+    return changed ? Object.defineProperties({}, properties) : value;
+  });
 
 // Inline worker source also runs in bundles and single-executable builds without module files.
 const readerWorkerSource = `
@@ -390,8 +417,15 @@ const makeReader = Effect.fnUntraced(function* (
           });
           if (pending.size === 1) worker.ref();
           const cached = input.cached && !hasLargeBinding(input.params);
+          const message = {
+            id,
+            safeIntegers,
+            ...input,
+            params: sqliteBindings(input.params),
+            cached,
+          };
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached });
+          worker.postMessage(message);
         });
       });
 
@@ -490,11 +524,6 @@ const makeReader = Effect.fnUntraced(function* (
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
 const CHECKPOINT_BACKPRESSURE_FRAMES = 10 * CHECKPOINT_FRAMES;
-
-const readSafeSqliteInteger = (value: unknown) => {
-  const number = typeof value === "bigint" ? Number(value) : value;
-  return typeof number === "number" && Number.isSafeInteger(number) ? number : undefined;
-};
 
 // Evaluated source also works in bundles and single-executable builds.
 const checkpointWorkerSource = `
@@ -1002,9 +1031,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
               if (hasRows(statement)) {
                 arrays = mode === "values";
                 if (arrays) statement.setReturnArrays(true);
-                return statement.all(...(params as any));
+                return statement.all(...(sqliteBindings(params) as any));
               }
-              const result = statement.run(...(params as any));
+              const result = statement.run(...(sqliteBindings(params) as any));
               return mode === "raw" ? (result as unknown as ReadonlyArray<unknown>) : [];
             });
             result = Exit.succeed(value);
@@ -1049,7 +1078,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         runStatement(statement, params, "values"),
       );
 
-    return identity<Connection>({
+    const connection = identity<Connection>({
       execute(sql, params, rowTransform) {
         return rowTransform ? Effect.map(run(sql, params), rowTransform) : run(sql, params);
       },
@@ -1074,6 +1103,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
         return Stream.die(new UnsupportedNodeSqliteOperationError());
       },
     });
+    return connection;
   });
 
   const semaphore = yield* Semaphore.make(1);

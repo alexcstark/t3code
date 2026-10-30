@@ -44,8 +44,9 @@ const RETRY_MAX_DELAY_MS = 300_000;
 // A cold server with a large database can take longer than 15 seconds to
 // answer, and that is not a reason to drop a working connection.
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
-const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
+// Cold SSH bootstrap measured about 40s. 15s would abandon a live attempt.
+const SSH_CONNECTION_ESTABLISHMENT_TIMEOUT = "2 minutes";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 // A probe still unanswered this long checks the host with a fresh request. If
@@ -278,6 +279,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
     usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
   }`;
+  const establishmentTimeout = Duration.fromInputUnsafe(
+    target._tag === "SshConnectionTarget"
+      ? SSH_CONNECTION_ESTABLISHMENT_TIMEOUT
+      : CONNECTION_ESTABLISHMENT_TIMEOUT,
+  );
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;

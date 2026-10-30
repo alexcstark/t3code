@@ -27,11 +27,13 @@ interface ChatShortcutsInput {
   readonly scriptKeybindings: ResolvedKeybindingsConfig;
   readonly getShortcutContext: (target: EventTarget | null) => ShortcutMatchContext & {
     readonly modelPickerOpen: boolean;
+    readonly reasoningPickerOpen?: boolean;
   };
   readonly threadFindActive: boolean;
   /** Takes type-to-focus keys and the composer and branch toolbar chords. */
   readonly composerRef: ComposerHandleRef;
   readonly branchToolbarRef: { readonly current: BranchToolbarHandle | null };
+  readonly interrupt?: (() => void) | undefined;
   readonly closeThreadFind: () => void;
   readonly commands: ChatShortcutCommands;
   /** Handles commands not in `commands`, such as project scripts. */
@@ -55,14 +57,31 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       event.stopPropagation();
       return;
     }
-    if (!input.enabled || isCommandPaletteOpen()) return;
+    if (isCommandPaletteOpen()) return;
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
 
     if (
+      input.enabled &&
+      input.interrupt &&
+      (event.key === "Escape" || (event.ctrlKey && event.key.toLowerCase() === "c")) &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
+      !shortcutContext.reasoningPickerOpen &&
+      (event.key !== "Escape" || !document.querySelector('[data-composer-drawer-layer="true"]'))
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) input.interrupt();
+      return;
+    }
+
+    if (
+      input.enabled &&
+      !shortcutContext.terminalFocus &&
+      !shortcutContext.modelPickerOpen &&
+      !shortcutContext.reasoningPickerOpen &&
       shouldTypeToFocusComposer(event) &&
       input.composerRef.current?.insertTextAtEnd(event.key) === true
     ) {
@@ -74,7 +93,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
       context: shortcutContext,
     });
-    if (!command) return;
+    if (!command || (!input.enabled && command !== "reasoningPicker.toggle")) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
@@ -94,7 +113,13 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     )
       return;
     const context = input.getShortcutContext(event.target);
-    if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
+    if (
+      context.terminalFocus ||
+      context.previewFocus ||
+      context.modelPickerOpen ||
+      context.reasoningPickerOpen
+    )
+      return;
     event.preventDefault();
     input.closeThreadFind();
   });

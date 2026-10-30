@@ -1,7 +1,8 @@
 import * as NodeSqlite from "node:sqlite";
-import type * as NodeWorkerThreads from "node:worker_threads";
+import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -165,6 +166,95 @@ const makeTempDatabase = Effect.gen(function* () {
   });
   return { filename, other };
 });
+
+it.effect("keeps the main thread responsive while SQLite waits for another writer", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 1000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const write = yield* sql`UPDATE counters SET value = 1 WHERE id = 1`.pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      // Releasing this lock requires the main thread to run while SQLite is waiting.
+      yield* Effect.sync(() => other.exec("ROLLBACK"));
+      yield* Fiber.join(write);
+      assert.deepEqual(yield* sql`SELECT value FROM counters`.values, [[1]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps an outside write out of a transaction that rolls back", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE isolated_entries(value TEXT)`;
+    const entered = yield* Deferred.make<void>();
+    const finish = yield* Deferred.make<void>();
+    const transaction = yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`INSERT INTO isolated_entries VALUES ('inside')`;
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(finish);
+          return yield* Effect.fail("rollback");
+        }),
+      )
+      .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(entered);
+    const outside = yield* sql`INSERT INTO isolated_entries VALUES ('outside')`.pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Deferred.succeed(finish, undefined);
+    assert.equal((yield* Fiber.join(transaction))._tag, "Failure");
+    yield* Fiber.join(outside);
+    assert.deepEqual(yield* sql`SELECT value FROM isolated_entries`, [{ value: "outside" }]);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("rolls back an interrupted transaction before reusing the worker connection", () =>
+  Effect.gen(function* () {
+    const { filename, other } = yield* makeTempDatabase;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA busy_timeout = 1000`;
+      yield* Effect.sync(() => other.exec("BEGIN IMMEDIATE"));
+      const transaction = yield* sql
+        .withTransaction(sql`UPDATE counters SET value = 10 WHERE id = 1`)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const interrupt = yield* Fiber.interrupt(transaction).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.sync(() => other.exec("ROLLBACK"));
+      yield* Fiber.join(interrupt);
+      const exit = yield* Fiber.await(transaction);
+      assert(exit._tag === "Failure");
+      assert(Cause.hasInterruptsOnly(exit.cause));
+      assert.deepEqual(yield* sql`SELECT value FROM counters`.values, [[0]]);
+      yield* sql.withTransaction(sql`UPDATE counters SET value = 1 WHERE id = 1`);
+      assert.deepEqual(yield* sql`SELECT value FROM counters`.values, [[1]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("preserves blobs, integer modes, raw results and row transforms across the worker", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE encoded_entries(id INTEGER PRIMARY KEY, payload BLOB)`;
+    const payload = new Uint8Array([0, 128, 255]);
+    const raw = yield* sql`INSERT INTO encoded_entries(payload) VALUES (${payload})`.raw;
+    assert.deepEqual(raw, { changes: 1, lastInsertRowid: 1 });
+    const select = sql`SELECT id AS entry_id, payload FROM encoded_entries`;
+    assert.deepEqual(yield* select, [{ entryId: 1, payload }]);
+    assert.deepEqual(yield* select.values, [[1, payload]]);
+    assert.deepEqual(
+      yield* select.values.pipe(Effect.provideService(SqlClient.SafeIntegers, true)),
+      [[1n, payload]],
+    );
+    assert.deepEqual(yield* select, [{ entryId: 1, payload }]);
+    assert.deepEqual(yield* sql`SELECT 1 AS repeated, 2 AS repeated`.values, [[1, 2]]);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
 
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {

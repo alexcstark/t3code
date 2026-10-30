@@ -41,6 +41,7 @@ export class CodexAppServerClient extends Context.Service<
   CodexAppServerClient,
   {
     readonly raw: CodexAppServerClientRaw;
+    /** Observes transport loss even when no request is pending. */
     readonly awaitTermination: Effect.Effect<never, CodexError.CodexAppServerError>;
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,

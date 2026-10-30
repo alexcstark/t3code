@@ -29,6 +29,7 @@ import {
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -970,6 +971,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ON CONFLICT(thread_id) DO NOTHING
       `;
       yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        )
+        VALUES
+          ('message:v1:imported', ${importedV1ThreadId}, NULL, 'assistant', 'done', 0, ${nowIso}, ${nowIso}),
+          ('message:v1:pending', ${pendingV1ThreadId}, NULL, 'assistant', 'done', 0, ${nowIso}, ${nowIso})
+      `;
+      yield* sql`
         INSERT INTO orchestration_command_receipts (
           command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status, command_type
         )
@@ -1026,6 +1035,17 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["command:foundation-compact:pending"],
       );
 
+      const remainingMessages = yield* sql<{ readonly message_id: string }>`
+        SELECT message_id
+        FROM projection_thread_messages
+        WHERE thread_id IN (${importedV1ThreadId}, ${pendingV1ThreadId})
+      `;
+      assert.deepEqual(
+        remainingMessages.map((row) => row.message_id),
+        ["message:v1:pending"],
+      );
+
+      // Replay across the deletion gaps must still produce a valid projection.
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
@@ -3665,4 +3685,145 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
         ),
       );
     }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect.each(["completed", "cancelled", "interrupted"] as const)(
+  "recovers SQLITE_FULL event ingestion with outcome %s",
+  (outcome) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const failedWrite = yield* Deferred.make<void>();
+      const observedSql = Object.assign(
+        function (...args: Parameters<typeof sql>) {
+          return sql(...args);
+        },
+        sql,
+        {
+          withTransaction: <A, E, R>(transaction: Effect.Effect<A, E, R>) =>
+            sql
+              .withTransaction(transaction)
+              .pipe(Effect.tapCause(() => Deferred.succeed(failedWrite, undefined))),
+        },
+      );
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const eventStore = yield* EventStore.EventStoreV2;
+        const now = yield* DateTime.now;
+        const thread = makeThread(ThreadId.make("thread:storage-recovery"), now);
+        const attemptId = RunAttemptId.make("attempt:storage-recovery");
+        const run: OrchestrationV2Run = {
+          id: RunId.make("run:storage-recovery"),
+          threadId: thread.id,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:storage-recovery"),
+          rootNodeId: null,
+          activeAttemptId: attemptId,
+          status: "running",
+          queuePosition: null,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        yield* sink.write({
+          events: [
+            threadCreatedEvent({ id: "event:storage-recovery:thread", thread, now }),
+            {
+              id: EventId.make("event:storage-recovery:run"),
+              type: "run.created",
+              threadId: thread.id,
+              runId: run.id,
+              occurredAt: now,
+              payload: run,
+            },
+          ],
+        });
+        const afterSequence = yield* sink.latestSequence();
+        const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+          {
+            id: EventId.make("event:storage-recovery:output"),
+            type: "thread.metadata-updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...thread, title: "output".repeat(100_000) },
+          },
+          {
+            id: EventId.make("event:storage-recovery:terminal"),
+            type: "run.updated",
+            threadId: thread.id,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+        ];
+        const [pageCount] = yield* sql<{
+          page_count: number;
+        }>`PRAGMA page_count`;
+        assert(pageCount);
+        yield* sql.unsafe(`PRAGMA max_page_count = ${pageCount.page_count}`);
+        const published = yield* sink
+          .stream({ afterSequence })
+          .pipe(
+            Stream.take(outcome === "cancelled" ? 1 : events.length),
+            Stream.runCollect,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        const ingestion = yield* Stream.fromIterable(events).pipe(
+          Stream.runForEach((event) =>
+            sink.writeIfRunCurrent({
+              threadId: thread.id,
+              runId: run.id,
+              activeAttemptId: attemptId,
+              expectedStatus: "running",
+              events: [event],
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(failedWrite);
+        assert.deepEqual(yield* eventStore.read({ afterSequence }).pipe(Stream.runCollect), []);
+        yield* sql`PRAGMA max_page_count = 2147483646`;
+        if (outcome === "interrupted") {
+          yield* Fiber.interrupt(ingestion);
+          const exit = yield* Fiber.await(ingestion);
+          assert(exit._tag === "Failure");
+          assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+          assert.deepEqual(yield* eventStore.read({ afterSequence }).pipe(Stream.runCollect), []);
+          return;
+        }
+        const cancelled: OrchestrationV2DomainEvent = {
+          id: EventId.make("event:storage-recovery:cancelled"),
+          type: "run.updated",
+          threadId: thread.id,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "cancelled", completedAt: now },
+        };
+        if (outcome === "cancelled") {
+          yield* sink.write({ events: [cancelled] });
+        }
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(ingestion);
+        const persisted = yield* eventStore.read({ afterSequence }).pipe(Stream.runCollect);
+        assert.deepEqual(
+          persisted.map((stored) => stored.event.id),
+          (outcome === "cancelled" ? [cancelled] : events).map((event) => event.id),
+        );
+        assert.deepEqual(yield* Fiber.join(published), persisted);
+        const projection = yield* projectionStore.getThreadProjection(thread.id);
+        assert.equal(projection.runs[0]?.status, outcome);
+        assert.equal(
+          projection.thread.title,
+          outcome === "cancelled" ? thread.title : "output".repeat(100_000),
+        );
+      }).pipe(
+        Effect.provide(EventSink.layer),
+        Effect.provideService(SqlClient.SqlClient, observedSql),
+      );
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
 );

@@ -218,6 +218,7 @@ describe("V2 environment commands", () => {
 
   it.effect("preserves an existing worktree and branch during first-message launch", () =>
     Effect.gen(function* () {
+      const systemPrompt = { id: "review", name: "Review", content: "Only review the changes." };
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
       const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
 
@@ -235,6 +236,7 @@ describe("V2 environment commands", () => {
         titleSeed: "Continue here",
         bootstrap: {
           createThread: {
+            systemPrompt,
             projectId: ProjectId.make("project-1"),
             title: "Thread",
             modelSelection: v2Projection.thread.modelSelection,
@@ -250,11 +252,57 @@ describe("V2 environment commands", () => {
       expect(launches[0]).toMatchObject({
         threadId: v2ThreadId,
         title: "Continue here",
+        systemPrompt,
         generateTitle: true,
         workspaceStrategy: {
           type: "existing_worktree",
           worktreePath: "/workspace/project-worktrees/feature",
           branch: "feature",
+        },
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("provisions an origin-based worktree for an existing empty thread", () =>
+    Effect.gen(function* () {
+      const systemPrompt = { id: "empty", name: "Empty", content: "" };
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands: [],
+        projects: [],
+        launches,
+        projection: { ...v2Projection, thread: { ...v2Projection.thread, systemPrompt } },
+      });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-existing-thread-worktree"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-existing-thread-worktree"),
+          role: "user",
+          text: "Start from origin",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          prepareWorktree: {
+            projectCwd: "/workspace/project",
+            baseBranch: "main",
+            startFromOrigin: true,
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({
+        threadId: v2ThreadId,
+        reuseExistingThread: true,
+        systemPrompt,
+        projectId: v2Projection.thread.projectId,
+        workspaceStrategy: {
+          type: "worktree",
+          baseRef: "main",
+          startFromOrigin: true,
         },
       });
     }).pipe(Effect.provide(layerTestCrypto)),

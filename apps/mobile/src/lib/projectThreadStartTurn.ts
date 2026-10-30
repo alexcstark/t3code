@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type SystemPrompt,
 } from "@t3tools/contracts";
 import {
   deriveThreadTitleSeed,
@@ -17,6 +18,7 @@ import {
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
+  readonly systemPrompt?: SystemPrompt;
   readonly projectId: ProjectId;
   readonly projectCwd: string;
   readonly threadId: string;
@@ -60,6 +62,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     interactionMode: spec.interactionMode,
     bootstrap: {
       createThread: {
+        ...(spec.systemPrompt ? { systemPrompt: spec.systemPrompt } : {}),
         projectId: spec.projectId,
         title,
         modelSelection: spec.modelSelection,

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 
 import "@fontsource-variable/inter";
 import "./index.css";
+import "./addons/terminal-shell/terminal-shell.css";
 
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";

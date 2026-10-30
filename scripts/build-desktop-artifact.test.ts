@@ -41,6 +41,8 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  resolveDesktopAppId,
+  resolveMacLsEnvironment,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -494,6 +496,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }
     }),
   );
+
+  it("uses the branded app identity override for packaging", () => {
+    assert.equal(
+      resolveDesktopAppId({ T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.alexcstark.t4code " }),
+      "com.alexcstark.t4code",
+    );
+    assert.equal(resolveDesktopAppId({}), "com.t3tools.t3code");
+  });
+
+  it("bakes fork branding into macOS LSEnvironment when those vars are set", () => {
+    assert.equal(resolveMacLsEnvironment({}), undefined);
+    assert.deepStrictEqual(
+      resolveMacLsEnvironment({
+        T3CODE_DESKTOP_DISPLAY_NAME: " T4 Code ",
+        T3CODE_DESKTOP_USER_DATA_DIR_NAME: "t3code-t4",
+        T3CODE_DISABLE_AUTO_UPDATE: "true",
+      }),
+      {
+        T3CODE_DESKTOP_DISPLAY_NAME: "T4 Code",
+        T3CODE_DESKTOP_USER_DATA_DIR_NAME: "t3code-t4",
+        T3CODE_DISABLE_AUTO_UPDATE: "true",
+      },
+    );
+  });
 
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {

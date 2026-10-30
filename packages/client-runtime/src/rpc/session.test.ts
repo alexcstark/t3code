@@ -21,12 +21,16 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
+  BearerConnectionTarget,
   ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -1004,5 +1008,106 @@ describe("RpcSessionFactory", () => {
       expect(config.issues).toEqual([]);
       expect(config.availableEditors).toEqual(["zed"]);
     }),
+  );
+
+  it.effect("closes a loopback session after 15 seconds without a frame from the server", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect({
+        ...PREPARED,
+        socketUrl: "ws://127.0.0.1:3773/ws",
+      });
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      yield* TestClock.adjust("15 seconds");
+      expect(closedFiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Fiber.join(closedFiber)).toMatchObject({
+        reason: "transport",
+        detail:
+          "Test environment stopped responding for 15s. It may be overloaded, asleep, or off the network.",
+      });
+      expect(socket.readyState).toBe(TestWebSocket.CLOSED);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    ["remote primary", PREPARED],
+    [
+      "direct remote",
+      {
+        ...PREPARED,
+        target: new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "remote",
+        }),
+      },
+    ],
+    [
+      "SSH tunnel",
+      {
+        ...PREPARED,
+        socketUrl: "ws://127.0.0.1:3773/ws",
+        target: new SshConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "ssh",
+        }),
+      },
+    ],
+    [
+      "T3 Connect",
+      {
+        ...PREPARED,
+        target: new RelayConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+        }),
+      },
+    ],
+  ] as const)(
+    "keeps a %s session through a 30-second stall and still detects silence",
+    ([_route, prepared]) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(prepared);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(readyFiber);
+
+        yield* TestClock.adjust("30 seconds");
+        expect(closedFiber.pollUnsafe()).toBeUndefined();
+        expect(socket.readyState).toBe(TestWebSocket.OPEN);
+
+        const probeFiber = yield* Effect.forkChild(session.probe);
+        const probeRequest = yield* awaitRequest(socket, 1);
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Exit",
+            requestId: probeRequest.id,
+            exit: { _tag: "Success", value: {} },
+          }),
+        );
+        yield* Fiber.join(probeFiber);
+
+        yield* TestClock.adjust("60 seconds");
+        expect(closedFiber.pollUnsafe()).toBeUndefined();
+        yield* TestClock.adjust("5 seconds");
+        expect(yield* Fiber.join(closedFiber)).toMatchObject({
+          reason: "transport",
+          detail:
+            "Test environment stopped responding for 60s. It may be overloaded, asleep, or off the network.",
+        });
+        expect(socket.readyState).toBe(TestWebSocket.CLOSED);
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });

@@ -115,6 +115,8 @@ export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | u
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+/** Archiving may discard queued work, but it must not detach a provider that
+ * is preparing, starting, or running a turn. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (
@@ -179,6 +181,8 @@ export interface EnvironmentThreadShell {
   readonly snoozedAt: string | null;
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
+  /** Named group inside the project. Absent on servers that predate groups. */
+  readonly group?: string | null;
   readonly autoSettleDisabledAt?: string | null;
   readonly pinOrderKey: string | null;
   readonly activeOrderKey: string | null;
@@ -277,11 +281,6 @@ export function presentThreadShell(
           assistantMessageId: null,
         } satisfies ThreadRunSummary);
   const runtime = shellRuntime(thread);
-  // Waiting runs have ended their provider turn and are only draining effects.
-  const runtimeIsWorking =
-    runtime?.status === "preparing" ||
-    runtime?.status === "starting" ||
-    runtime?.status === "running";
   return {
     environmentId,
     id: thread.id,
@@ -315,9 +314,7 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
-    hasPendingUserInput:
-      thread.pendingRuntimeRequest?.kind === "user_input" &&
-      (thread.pendingRuntimeRequest.blocking !== false || !runtimeIsWorking),
+    hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
@@ -336,6 +333,7 @@ export function presentThreadShell(
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
     limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
+    ...(thread.group === undefined ? {} : { group: thread.group }),
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
@@ -391,6 +389,50 @@ export function resolveThreadWorkingStartedAt(input: {
     return valid(run.startedAt) ?? valid(run.requestedAt);
   }
   return null;
+}
+
+/**
+ * Detail work that began after the shell's latest completion is a start the
+ * summary has not applied yet. Work that began earlier is the run the summary
+ * already finished; a detail snapshot that still calls it live is behind.
+ */
+function detailWorkStartedAfterShellCompletion(
+  thread: Pick<EnvironmentThreadShell, "latestRun">,
+  detailRuntime: Pick<ThreadRuntimeSummary, "activityStartedAt">,
+): boolean {
+  const completedAt = thread.latestRun?.completedAt;
+  const startedAt = detailRuntime.activityStartedAt;
+  if (completedAt == null || startedAt == null) return true;
+  const completedMs = Date.parse(completedAt);
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(completedMs) || !Number.isFinite(startedMs)) return true;
+  return startedMs > completedMs;
+}
+
+/** Prefer a detail run that started after the shell finished, so opening a thread stays Done. */
+export function reconcileThreadShellRuntimeFromDetail(
+  thread: EnvironmentThreadShell,
+  detailRuntime: ThreadRuntimeSummary | null,
+): EnvironmentThreadShell {
+  if (detailRuntime === null || !threadRunStatusIsActive(detailRuntime.status)) return thread;
+  const shellRuntime = thread.runtime;
+  if (
+    shellRuntime === detailRuntime ||
+    (shellRuntime !== null &&
+      threadRunStatusIsActive(shellRuntime.status) &&
+      shellRuntime.status === detailRuntime.status &&
+      shellRuntime.activeRunId === detailRuntime.activeRunId &&
+      shellRuntime.activityStartedAt === detailRuntime.activityStartedAt)
+  ) {
+    return thread;
+  }
+  if (
+    (shellRuntime === null || !threadRunStatusIsActive(shellRuntime.status)) &&
+    !detailWorkStartedAfterShellCompletion(thread, detailRuntime)
+  ) {
+    return thread;
+  }
+  return { ...thread, runtime: detailRuntime };
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {

@@ -104,6 +104,11 @@ describe("reduceCommandPaletteUiState", () => {
       openIntent: { kind: "add-project" },
       session: 2,
     });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenSwitchProject" })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "switch-project" },
+    });
   });
 });
 

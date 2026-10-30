@@ -24,19 +24,28 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   size?: "sm" | "xs";
   /** Close the portaled popup when its trigger hides. */
   hidden?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const size = props.size ?? "sm";
-  const [open, setOpen] = useComposerMenuState(props.hidden);
+  const [uncontrolledOpen, setUncontrolledOpen] = useComposerMenuState(props.hidden);
+  const isOpen = (props.open ?? uncontrolledOpen) && !(props.hidden ?? false);
+  const setIsOpen = (nextOpen: boolean) => {
+    props.onOpenChange?.(nextOpen);
+    if (props.open === undefined) {
+      setUncontrolledOpen(nextOpen);
+    }
+  };
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   return (
     <Menu
-      open={open}
-      onOpenChange={setOpen}
-      onOpenChangeComplete={(isOpen) => focusRequestedPermission(isOpen, triggerRef.current)}
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      onOpenChangeComplete={(nextOpen) => focusRequestedPermission(nextOpen, triggerRef.current)}
     >
       <MenuTrigger
         render={

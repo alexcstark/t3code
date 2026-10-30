@@ -2513,3 +2513,28 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+describe("saved composer system prompts", () => {
+  it("keeps a chosen prompt through reload and can switch back to T3 default", () => {
+    const projectRef = scopeProjectRef(
+      TEST_ENVIRONMENT_ID,
+      ProjectId.make("project-system-prompt"),
+    );
+    const draftId = DraftId.make("draft-system-prompt");
+    const threadId = ThreadId.make("thread-system-prompt");
+    const systemPrompt = { id: "review", name: "Review", content: "  Review only.\n" };
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, { systemPrompt });
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const reloaded = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(reloaded.draftThreadsByThreadKey[draftId]?.systemPrompt).toEqual(systemPrompt);
+    store.setDraftThreadContext(draftId, { systemPrompt: null });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.systemPrompt).toBeNull();
+  });
+});

@@ -12,7 +12,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentThreadShell, resolveThreadWorkingStartedAt } from "./models.ts";
+import {
+  presentThreadShell,
+  reconcileThreadShellRuntimeFromDetail,
+  resolveThreadWorkingStartedAt,
+} from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
 import { isThreadWorking } from "./threadInbox.ts";
@@ -22,7 +26,7 @@ import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 const environmentId = EnvironmentId.make("environment-v2");
 
 describe("V2 client presentation", () => {
-  it("keeps async questions in Working until the run completes", () => {
+  it("keeps async questions visible as Input while the run continues", () => {
     const runId = RunId.make("run-async-question");
     const running = {
       ...v2ThreadShell,
@@ -39,8 +43,8 @@ describe("V2 client presentation", () => {
       },
     };
     const active = presentThreadShell(environmentId, running);
-    expect(active.hasPendingUserInput).toBe(false);
-    expect(isThreadWorking(active)).toBe(true);
+    expect(active.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(active)).toBe(false);
     expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
 
     const completed = presentThreadShell(environmentId, {
@@ -581,5 +585,65 @@ describe("V2 client presentation", () => {
       { requestId: multiRequestId, multiSelect: true },
       { requestId: legacyRequestId, multiSelect: false },
     ]);
+  });
+
+  it("promotes an idle shell to Working when detail still has a live run", () => {
+    const runId = RunId.make("run-live");
+    const startedAt = "2026-06-20T01:00:00.000Z";
+    const idleShell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: null,
+      activityRunStatus: null,
+      status: "completed",
+      pendingBackgroundTasks: [],
+    });
+    const detailRuntime = {
+      status: "running" as const,
+      activeRunId: runId,
+      activityStartedAt: startedAt,
+      providerInstanceId: idleShell.modelSelection.instanceId,
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-06-20T01:40:00.000Z",
+    };
+
+    expect(idleShell.runtime).toMatchObject({ status: "completed" });
+    expect(reconcileThreadShellRuntimeFromDetail(idleShell, detailRuntime).runtime).toEqual(
+      detailRuntime,
+    );
+    expect(reconcileThreadShellRuntimeFromDetail(idleShell, null)).toBe(idleShell);
+    expect(
+      reconcileThreadShellRuntimeFromDetail(idleShell, {
+        ...detailRuntime,
+        status: "completed",
+        activeRunId: null,
+        activityStartedAt: null,
+      }),
+    ).toBe(idleShell);
+  });
+
+  it("does not revive a run the shell has already finished", () => {
+    const runId = RunId.make("run-finished");
+    const finishedShell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:05:00.000Z"),
+      activeRunId: null,
+      activityRunStatus: null,
+      status: "completed",
+      pendingBackgroundTasks: [],
+    });
+    const detailRuntime = {
+      status: "running" as const,
+      activeRunId: runId,
+      activityStartedAt: "2026-06-20T01:00:00.000Z",
+      providerInstanceId: finishedShell.modelSelection.instanceId,
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-06-20T01:40:00.000Z",
+    };
+
+    expect(reconcileThreadShellRuntimeFromDetail(finishedShell, detailRuntime)).toBe(finishedShell);
   });
 });

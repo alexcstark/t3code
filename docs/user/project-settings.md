@@ -69,12 +69,22 @@ using its project, model, and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
-a new thread on each run survive deletion of their previous threads.
+a new thread on each run survive deletion of their previous threads. Deleting a
+project removes its tasks. Tasks already left behind are removed automatically.
 
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
+
+## Automated threads
+
+A task set to run in an existing thread turns that thread into a long-running
+agent: every run adds to the same conversation. These threads leave the sidebar
+thread list and appear on the **Automations** page, opened from the sidebar
+footer. Open one to watch it work or to talk to it, and pause, resume, run, or
+edit its task from the same card. Delete the task to return the thread to the
+sidebar.
 
 ## Webhook automations
 
@@ -228,6 +238,18 @@ In Source control, enable **Automatically pull** to keep the default-branch chec
 with its configured upstream. Choose an environment to set the default or a project to override it.
 On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
 
-T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
-or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
-local work, resolve it yourself before automatic pulls can resume.
+The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
+Pull failures do not prevent the server from starting.
+
+## Defaults for new threads
+
+Open **Settings** → **Projects**, select a project, and use **New threads** to set:
+
+- **Model**: the provider and model used by new threads in the project.
+- **Workspace**: whether new threads use the current checkout or a new worktree.
+- **Location**: which connected environment (such as a remote machine) receives new threads when
+  the project has checkouts on multiple environments.
+
+The location preference is stored locally in the T3 Code client. **Default** uses the checkout you
+opened or selected. Explicitly choosing a branch, worktree, or workspace in the composer overrides
+the project location default.

@@ -15,6 +15,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { use, useEffect, useRef, useState, type ComponentProps } from "react";
 import {
   Platform,
+  Pressable,
   ScrollView,
   useWindowDimensions,
   View,
@@ -52,6 +53,7 @@ import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatche
 import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+import { collectThreadGroupNames } from "@t3tools/client-runtime/state/thread-sort";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -59,6 +61,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionDivider,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -127,6 +130,9 @@ interface HomeScreenProps {
     direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSetThreadGroup: (thread: EnvironmentThreadShell, group: string | null) => void;
+  readonly onCreateThreadGroup: (thread: EnvironmentThreadShell) => void;
+  readonly onRenameThreadGroup: (threads: readonly EnvironmentThreadShell[], name: string) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -393,6 +399,14 @@ export function HomeScreen(props: HomeScreenProps) {
       ),
     ),
   );
+  const v2ScopedProjectKeys =
+    v2ScopedProjectGroup === null
+      ? null
+      : new Set(
+          v2ScopedProjectGroup.projectRefs.map((projectRef) =>
+            scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+          ),
+        );
   const handleSettleThread = props.onSettleThread;
   const handleSnoozeThread = props.onSnoozeThread;
   const handleUnsnoozeThread = props.onUnsnoozeThread;
@@ -438,6 +452,7 @@ export function HomeScreen(props: HomeScreenProps) {
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
+    groupEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
@@ -467,6 +482,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
+    clusterGroups: props.selectedProjectKey !== null,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
@@ -546,6 +562,27 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-group") {
+      return (
+        <Pressable
+          onPress={() =>
+            props.onRenameThreadGroup(
+              props.threads.filter(
+                (thread) =>
+                  thread.group === item.name &&
+                  (v2ScopedProjectKeys === null ||
+                    v2ScopedProjectKeys.has(
+                      scopedProjectKey(thread.environmentId, thread.projectId),
+                    )),
+              ),
+              item.name,
+            )
+          }
+        >
+          <ThreadListV2SectionDivider label={item.name} />
+        </Pressable>
+      );
+    }
     if (item.type === "v2-settled-shelf") {
       return (
         <ThreadListV2SettledShelfHeader
@@ -598,6 +635,16 @@ export function HomeScreen(props: HomeScreenProps) {
         onDeleteThread={handleDeleteThread}
         onArchiveThread={props.onArchiveThread}
         onRenameThread={handleRenameThread}
+        groupsSupported={groupEnvironmentIds.has(thread.environmentId)}
+        groupNames={collectThreadGroupNames(
+          props.threads.filter(
+            (candidate) =>
+              candidate.environmentId === thread.environmentId &&
+              candidate.projectId === thread.projectId,
+          ),
+        )}
+        onSetThreadGroup={props.onSetThreadGroup}
+        onCreateThreadGroup={props.onCreateThreadGroup}
         onRegenerateThreadTitle={handleRegenerateThreadTitle}
         titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
         settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}

@@ -12,7 +12,7 @@ export type ThreadListProvider = Pick<
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
-const capabilityKeys = ["threadAutoSettleOptOut"] as const;
+const capabilityKeys = ["threadAutoSettleOptOut", "threadGroups"] as const;
 
 function selectEnvironment(config: ServerConfig) {
   return {
@@ -61,12 +61,14 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const loadedEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
+  const groupEnvironmentIds = new Set<EnvironmentId>();
   for (const [id, { providers, machineKind, capabilities, snoozePresets }] of environments) {
     providersByEnvironmentId.set(id, providers);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
+    if (capabilities.threadGroups === true) groupEnvironmentIds.add(id);
   }
   return {
     providersByEnvironmentId,
@@ -79,6 +81,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     activeReorderEnvironmentIds: loadedEnvironmentIds,
     titleRegenerationEnvironmentIds: loadedEnvironmentIds,
     snoozePresetsByEnvironmentId,
+    groupEnvironmentIds,
   };
 }
 

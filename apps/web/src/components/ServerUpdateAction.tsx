@@ -26,7 +26,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { serverEnvironment, updateOutdatedServer } from "~/state/server";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { manualServerUpdateCommand } from "~/versionSkew";
+import { manualServerUpdateCommand, resolveServerUpdateTargetVersion } from "~/versionSkew";
 import { useServerConfigs } from "~/state/entities";
 import { crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 import { Button } from "./ui/button";
@@ -249,6 +249,9 @@ export function ServerUpdateAction({
   const serverVersion = useServerConfigs().get(environmentId)?.environment.serverVersion;
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
   const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
+  const serverTargetVersion = isDesktopAppUpdate
+    ? targetVersion
+    : resolveServerUpdateTargetVersion(targetVersion);
   const update = useServerUpdate();
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
     target: installation?.kind === "npm-global" ? "update command" : "relaunch command",
@@ -294,7 +297,7 @@ export function ServerUpdateAction({
       serverLabel,
       selfUpdate,
       desktopAppUpdate,
-      targetVersion,
+      targetVersion: serverTargetVersion,
     });
   };
 

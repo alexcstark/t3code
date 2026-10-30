@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -14,7 +17,13 @@ import {
   type ThreadSearchShell,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  ModelSelection,
+  ServerProviderModel,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
@@ -28,6 +37,7 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
+import { getProviderOptionDescriptors, getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
@@ -158,6 +168,44 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   return key !== null && retained?.key === key ? retained.value : null;
 }
 
+const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+
+function isReasoningOptionId(id: string): boolean {
+  return REASONING_OPTION_IDS.has(id) || id.toLowerCase() === "reasoninglevel";
+}
+
+function formatReasoningFallback(value: string): string {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function resolveSidebarReasoningLabel(input: {
+  modelSelection: ModelSelection;
+  model: ServerProviderModel | null;
+}): string | null {
+  const descriptors = input.model?.capabilities
+    ? getProviderOptionDescriptors({
+        caps: input.model.capabilities,
+        selections: input.modelSelection.options,
+      })
+    : [];
+  const reasoningDescriptor = descriptors.find(
+    (descriptor) =>
+      descriptor.label.trim().toLowerCase() === "reasoning" || isReasoningOptionId(descriptor.id),
+  );
+  const descriptorLabel = getProviderOptionCurrentLabel(reasoningDescriptor);
+  if (descriptorLabel) return descriptorLabel;
+
+  const rawSelection = input.modelSelection.options?.find(({ id }) => isReasoningOptionId(id));
+  return typeof rawSelection?.value === "string"
+    ? formatReasoningFallback(rawSelection.value)
+    : null;
+}
+
+// Sidebar.motion handles ordinary section changes. Sortable transforms own
+// dragging; replaying their committed DOM order would animate the drop twice.
 // Sortable owns drag transforms; replaying committed order would animate drops twice.
 export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
@@ -194,10 +242,13 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 
 export type SidebarListItem =
   | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker }
+  | { readonly kind: "group"; readonly name: string };
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  if (item.kind === "thread") return item.key;
+  if (item.kind === "group") return `sidebar-group-${encodeURIComponent(item.name)}`;
+  return sidebarMarkerId(item.marker);
 }
 
 function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
@@ -243,8 +294,10 @@ export function resolveSidebarDropTarget(
         item.marker === "settled-header"
       )
         break;
-    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
-    else activeOrder.push(item.key);
+    } else if (item.kind === "thread") {
+      if (currentSection === "pinned") pinnedOrder.push(item.key);
+      else activeOrder.push(item.key);
+    }
   }
   return { section, pinnedOrder, activeOrder };
 }
@@ -857,10 +910,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
+  if (threadRuntimeIsActive(thread.runtime)) {
     return "working";
   }
   if (thread.runtime?.status === "idle") {

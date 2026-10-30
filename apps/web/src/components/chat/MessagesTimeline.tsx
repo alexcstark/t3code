@@ -26,6 +26,7 @@ import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const NOOP_RESPONSE_CLICK = () => {};
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds"] = [];
 
@@ -217,6 +218,7 @@ interface MessagesTimelineProps {
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
+  onResponseClick?: () => void;
   isWorking: boolean;
   runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
@@ -325,6 +327,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
+  onResponseClick = NOOP_RESPONSE_CLICK,
   isWorking,
   runlessWorkActive = false,
   activeTurnStartedAt = null,
@@ -1045,6 +1048,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleAttemptFold,
     onToggleWorkGroup,
     onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    onResponseClick,
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,

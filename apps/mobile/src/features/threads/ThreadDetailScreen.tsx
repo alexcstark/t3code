@@ -1,6 +1,7 @@
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { ThreadSystemPromptPicker } from "./ThreadSystemPromptPicker";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -39,6 +40,7 @@ import { HeaderHeightContext } from "@react-navigation/elements";
 import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
 import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/reserved-regions";
 import type {
+  SystemPrompt,
   EnvironmentId,
   MessageId,
   ProviderInteractionMode,
@@ -213,6 +215,7 @@ export interface ThreadDetailScreenProps {
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
   };
+  readonly systemPrompt?: SystemPrompt;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
@@ -229,6 +232,8 @@ export interface ThreadDetailScreenProps {
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly lastAgentUpdateAt?: string | null;
+  /** The live work is a provider-native subagent's runless root turn. */
   readonly runlessWorkActive?: boolean;
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
   readonly isCompacting: boolean;
@@ -727,7 +732,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       return { kind: "compacting" };
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
-      return { kind: "working", startedAt: props.activeWorkStartedAt };
+      return {
+        kind: "working",
+        startedAt: props.activeWorkStartedAt,
+        lastAgentUpdateAt: props.lastAgentUpdateAt ?? null,
+      };
     }
     if (pendingBackgroundWork !== null && contentPresentationKind === "ready") {
       return {
@@ -1647,6 +1656,13 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     </View>
                   ) : (
                     <>
+                      {props.systemPrompt ? (
+                        <ThreadSystemPromptPicker
+                          selected={props.systemPrompt}
+                          prompts={[]}
+                          disabled={false}
+                        />
+                      ) : null}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

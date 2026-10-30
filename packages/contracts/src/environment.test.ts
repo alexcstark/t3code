@@ -33,4 +33,10 @@ describe("ExecutionEnvironmentDescriptor", () => {
       ).toBeUndefined();
     }
   });
+
+  it("treats missing saved-prompt, thread-group, and browser-profile capabilities as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.systemPrompts).toBeUndefined();
+    expect(decodeDescriptor(descriptor).capabilities.threadGroups).toBeUndefined();
+    expect(decodeDescriptor(descriptor).capabilities.browserProfileReporting).toBeUndefined();
+  });
 });

@@ -54,6 +54,8 @@ export function useThreadListV2(input: {
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  /** Cluster active rows under their group when a single project is selected. */
+  readonly clusterGroups?: boolean;
 }) {
   const { threads, workingShelfEnabled } = input;
   // A thread can stop working when the threads change, or when its exit grace expires.
@@ -163,6 +165,7 @@ export function useThreadListV2(input: {
     queuedThreadKeys: input.queuedThreadKeys,
     moveAvailability,
     shelfPreferencesLoading: !input.shelfPreferencesLoaded,
+    clusterGroups: input.clusterGroups,
   });
   return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
 }

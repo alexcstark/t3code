@@ -85,14 +85,14 @@ export function createNewThreadHandler(router: AnyRouter) {
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      carryComposerContent?: boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
+    const projectDefaultEnvironmentIds = getClientSettings().projectDefaultEnvironmentIds ?? {};
     // Read at call time; status pushes replace the config map and would recreate every sidebar handler.
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const targetServerSettings =
-      environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
     const {
       getComposerDraft,
       getDraftSessionByLogicalProjectKey,
@@ -134,13 +134,60 @@ export function createNewThreadHandler(router: AnyRouter) {
       carrySourceShell?.interactionMode ??
       carrySourceDraft?.interactionMode ??
       null;
-    const project = projects.find(
+    // Content only moves when the caller opted in and the user is looking
+    // at a draft. The content check happens at move time, not here: the
+    // paths below await, and text typed during those awaits must still
+    // come along.
+    const carryContentSourceDraftId =
+      options?.carryComposerContent === true && currentRouteTarget?.kind === "draft"
+        ? currentRouteTarget.draftId
+        : null;
+    const carryComposerContentTo = (destinationDraftId: DraftId) => {
+      if (
+        carryContentSourceDraftId &&
+        carryContentSourceDraftId !== destinationDraftId &&
+        // Never clobber a destination the user already invested in — the
+        // move overwrites the destination prompt, so a concurrent repo
+        // change that carried content first must win.
+        !composerDraftHasUserContent(getComposerDraft(destinationDraftId)) &&
+        composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
+      ) {
+        moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
+      }
+    };
+    const requestedProject = projects.find(
       (candidate) =>
         candidate.id === projectRef.projectId &&
         candidate.environmentId === projectRef.environmentId,
     );
+    const requestedLogicalProjectKey = requestedProject
+      ? deriveLogicalProjectKeyFromSettings(requestedProject, projectGroupingSettings)
+      : scopedProjectKey(projectRef);
+    const hasExplicitProjectLocation =
+      options?.branch !== undefined ||
+      options?.worktreePath !== undefined ||
+      options?.envMode !== undefined ||
+      options?.startFromOrigin !== undefined;
+    const preferredEnvironmentId = hasExplicitProjectLocation
+      ? null
+      : (projectDefaultEnvironmentIds[requestedLogicalProjectKey] ?? null);
+    const project =
+      (preferredEnvironmentId === null
+        ? requestedProject
+        : (projects.find(
+            (candidate) =>
+              candidate.environmentId === preferredEnvironmentId &&
+              deriveLogicalProjectKeyFromSettings(candidate, projectGroupingSettings) ===
+                requestedLogicalProjectKey,
+          ) ?? requestedProject)) ?? null;
+    const resolvedProjectRef = project
+      ? scopeProjectRef(project.environmentId, project.id)
+      : projectRef;
     const abandonedSinceRequest = () =>
-      routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
+      routeChangedSinceRequest() || (project !== null && readProject(resolvedProjectRef) === null);
+    const targetServerSettings =
+      environmentServerConfigs.get(resolvedProjectRef.environmentId)?.settings ??
+      DEFAULT_SERVER_SETTINGS;
     const projectSettings = resolveProjectSettings(
       targetServerSettings,
       project?.id ?? null,
@@ -153,14 +200,14 @@ export function createNewThreadHandler(router: AnyRouter) {
         (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
           ? null
           : resolveProjectDefaultProviderModelSelection(
-              environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+              environmentServerConfigs.get(resolvedProjectRef.environmentId)?.providers ?? [],
               targetServerSettings,
-              projectRef.projectId,
+              resolvedProjectRef.projectId,
             )),
       fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
-      providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+      providers: environmentServerConfigs.get(resolvedProjectRef.environmentId)?.providers ?? [],
       settings: targetServerSettings,
-      projectId: projectRef.projectId,
+      projectId: resolvedProjectRef.projectId,
       now: Date.now(),
     });
     const projectDefaultModelSelection = fallbackResolution.fallback
@@ -179,7 +226,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =
-        project !== undefined &&
+        project !== null &&
         projectSettings.settings.defaultThreadEnvMode === null &&
         appAtomRegistry
           .get(environmentSummaries.connectedEnvironmentIdsAtom)
@@ -195,15 +242,16 @@ export function createNewThreadHandler(router: AnyRouter) {
           projectFile,
         ),
         workspaceRoot: project?.workspaceRoot ?? null,
-        newProjectsRoot: environmentServerConfigs.get(projectRef.environmentId)?.newProjectsRoot,
+        newProjectsRoot: environmentServerConfigs.get(resolvedProjectRef.environmentId)
+          ?.newProjectsRoot,
         projectHasThreads:
           readThreadShells().some(
             (thread) =>
-              thread.environmentId === projectRef.environmentId &&
-              thread.projectId === projectRef.projectId,
+              thread.environmentId === resolvedProjectRef.environmentId &&
+              thread.projectId === resolvedProjectRef.projectId,
           ) ||
           readUnloadedThreadCount(
-            [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
+            [{ environmentId: resolvedProjectRef.environmentId, id: resolvedProjectRef.projectId }],
             [],
           ) > 0,
       });
@@ -303,7 +351,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         // Remapping physical projects clears workspace context; preserve the branch and worktree.
         setLogicalProjectDraftThreadId(
           logicalProjectKey,
-          projectRef,
+          resolvedProjectRef,
           emptyStoredDraftThread.draftId,
           {
             threadId: emptyStoredDraftThread.threadId,
@@ -312,6 +360,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
           },
         );
+        carryComposerContentTo(emptyStoredDraftThread.draftId);
         const opened = {
           draftId: emptyStoredDraftThread.draftId,
           threadId: emptyStoredDraftThread.threadId,
@@ -348,13 +397,18 @@ export function createNewThreadHandler(router: AnyRouter) {
       ) {
         setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
       }
-      setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
-        threadId: latestActiveDraftThread.threadId,
-        createdAt: latestActiveDraftThread.createdAt,
-        runtimeMode: latestActiveDraftThread.runtimeMode,
-        interactionMode: latestActiveDraftThread.interactionMode,
-        ...pickExplicitWorkspaceOptions(options),
-      });
+      setLogicalProjectDraftThreadId(
+        logicalProjectKey,
+        resolvedProjectRef,
+        currentRouteTarget.draftId,
+        {
+          threadId: latestActiveDraftThread.threadId,
+          createdAt: latestActiveDraftThread.createdAt,
+          runtimeMode: latestActiveDraftThread.runtimeMode,
+          interactionMode: latestActiveDraftThread.interactionMode,
+          ...pickExplicitWorkspaceOptions(options),
+        },
+      );
       seedPrompt(currentRouteTarget.draftId);
       return Promise.resolve({
         draftId: currentRouteTarget.draftId,
@@ -377,13 +431,14 @@ export function createNewThreadHandler(router: AnyRouter) {
         racedDraft.draftId !== storedDraftThread?.draftId &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
-        setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
+        setLogicalProjectDraftThreadId(logicalProjectKey, resolvedProjectRef, racedDraft.draftId, {
           threadId: racedDraft.threadId,
           createdAt: racedDraft.createdAt,
           runtimeMode: racedDraft.runtimeMode,
           interactionMode: racedDraft.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        carryComposerContentTo(racedDraft.draftId);
         seedPrompt(racedDraft.draftId);
         await router.navigate({
           to: "/draft/$draftId",
@@ -392,7 +447,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         });
         return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
       }
-      setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
+      setLogicalProjectDraftThreadId(logicalProjectKey, resolvedProjectRef, draftId, {
         threadId,
         createdAt,
         branch: options?.branch ?? null,
@@ -412,6 +467,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
       }
+      carryComposerContentTo(draftId);
       seedPrompt(draftId);
       await router.navigate({
         to: "/draft/$draftId",

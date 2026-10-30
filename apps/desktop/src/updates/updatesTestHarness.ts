@@ -119,6 +119,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     main: Effect.succeedNone,
     currentMainOrFirst: Effect.succeedNone,
     focusedMainOrFirst: Effect.succeedNone,
+    forWebContentsId: () => Effect.succeedNone,
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
@@ -230,6 +231,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
           applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
           applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+          updateWindowLayout: () => Effect.die("unexpected window layout update"),
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 

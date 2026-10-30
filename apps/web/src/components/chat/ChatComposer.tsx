@@ -203,7 +203,11 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
-import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
+import {
+  getComposerPromptInjectionState,
+  getComposerReasoningStep,
+  renderProviderTraitsMenuContent,
+} from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import {
   providerSupportsManualCompaction,
@@ -308,6 +312,9 @@ export interface ChatComposerHandle {
   isModelPickerOpen: () => boolean;
   isCaretAtStart: () => boolean;
   compactContext: () => void;
+  openReasoningPicker: () => void;
+  toggleReasoningPicker: () => void;
+  isReasoningPickerOpen: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1007,6 +1014,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [isComposerReasoningPickerOpen, setIsComposerReasoningPickerOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
@@ -2334,8 +2342,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       terminalOpen={terminalOpen}
+      currentThreadId={routeKind === "server" ? activeThreadId : null}
       modelPickerOpen={isComposerModelPickerOpen}
-      onModelPickerOpenChange={setIsComposerModelPickerOpen}
+      onModelPickerOpenChange={(open) => {
+        setIsComposerModelPickerOpen(open);
+        if (open) setIsComposerReasoningPickerOpen(false);
+      }}
+      reasoningPickerOpen={isComposerReasoningPickerOpen}
+      onReasoningPickerOpenChange={(open) => {
+        setIsComposerReasoningPickerOpen(open);
+        if (open) setIsComposerModelPickerOpen(false);
+      }}
       modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
       getModelDisabledReason={getModelDisabledReason}
     />
@@ -2760,7 +2777,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, []);
 
+  const hasProviderTraits =
+    renderProviderTraitsMenuContent({
+      provider: selectedProvider,
+      instanceId: selectedInstanceId,
+      ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+      ...(routeKind === "draft" && draftId ? { draftId } : {}),
+      model: selectedModel,
+      models: selectedProviderModels,
+      modelOptions: composerModelOptions?.[selectedInstanceId],
+      reportedModelSelection,
+      promptUltrathink,
+      onPromptEdit: editPromptFromTraitsStable,
+      planModeEnabled: settings.planModeEnabled,
+    }) !== null;
+  if (!hasProviderTraits && isComposerReasoningPickerOpen) setIsComposerReasoningPickerOpen(false);
   const openModelPicker = () => {
+    setIsComposerReasoningPickerOpen(false);
     if (composerControlsHidden) {
       if (composerBlurFrameRef.current !== null) {
         window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -2846,6 +2879,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       },
       toggleModelPicker: () => {
+        setIsComposerReasoningPickerOpen(false);
         if (isComposerModelPickerOpen) {
           setIsComposerModelPickerOpen(false);
         } else {
@@ -2874,6 +2908,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       compactContext: compactThreadContextStable,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      openReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen(true);
+      },
+      toggleReasoningPicker: () => {
+        if (!hasProviderTraits) return;
+        setIsComposerModelPickerOpen(false);
+        setIsComposerReasoningPickerOpen((open) => !open);
+      },
+      isReasoningPickerOpen: () => isComposerReasoningPickerOpen,
       isCaretAtStart: () => {
         const range = composerEditorRef.current?.readSelectionRange();
         return range !== undefined && range.start === 0 && range.end === 0;
@@ -3014,6 +3059,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       applyPromptReplacementStable,
       isComposerModelPickerOpen,
       openModelPickerStable,
+      isComposerReasoningPickerOpen,
+      hasProviderTraits,
       readComposerSnapshotStable,
       resetComposerTrigger,
       setComposerTrigger,

@@ -427,6 +427,20 @@ it.effect(
         title: "After",
       });
       yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("group-control"),
+        threadId,
+        group: "Auth",
+      });
+      assert.equal((yield* projections.getThreadShell(threadId))?.group, "Auth");
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("ungroup-control"),
+        threadId,
+        group: null,
+      });
+      assert.equal((yield* projections.getThreadShell(threadId))?.group ?? null, null);
+      yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("mode-control"),
         threadId,
@@ -1520,5 +1534,20 @@ it.effect("dispatch records the command outcome and its duration", () =>
 
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("accepts deleting or settling a thread the server never stored", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:never-created");
+    for (const type of ["thread.delete", "thread.settle"] as const) {
+      const result = yield* orchestrator.dispatch({
+        type,
+        commandId: CommandId.make(`${type}-absent`),
+        threadId,
+      });
+      assert.deepEqual(result.storedEvents, []);
+    }
   }).pipe(Effect.provide(layerTest)),
 );

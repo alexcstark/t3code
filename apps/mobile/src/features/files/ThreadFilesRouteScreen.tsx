@@ -64,6 +64,7 @@ import {
   fileRoutePathSegments,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
+  isAbsolutePath,
   isAudioPreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
@@ -729,6 +730,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  const previewRelativePath =
+    fileData !== null && isAbsolutePath(fileData.relativePath)
+      ? fileData.relativePath
+      : relativePath;
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -971,7 +976,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     );
   }
 
-  const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
+  const headerSubtitle = fileHeaderSubtitle(projectName, previewRelativePath ?? relativePath);
 
   return (
     <View className="flex-1 bg-sheet">

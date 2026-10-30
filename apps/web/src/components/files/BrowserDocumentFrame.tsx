@@ -9,6 +9,7 @@ import {
 import {
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
+  htmlRenderScrollChainOffset,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -16,6 +17,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderScrollChain,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -147,6 +149,11 @@ export function HtmlRenderDocument(props: {
   readonly onContentHeight?: (height: number) => void;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
+  /**
+   * An inline thread frame. Wheel events never leave its opaque document, so
+   * the page asks the thread to scroll and to stop following the live edge.
+   */
+  readonly chainWheel?: boolean;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -247,6 +254,27 @@ export function HtmlRenderDocument(props: {
       props.onContentHeight?.(height);
       return;
     }
+    const scrollRequest = readHtmlRenderScrollChain(event.data);
+    if (scrollRequest !== undefined && props.chainWheel === true) {
+      const scroller = frame.closest(".messages-timeline-scroll");
+      if (scroller instanceof HTMLElement) {
+        // Upward scrolling over the page is the reader leaving the live edge,
+        // even when the page itself consumes the wheel.
+        if (scrollRequest.deltaY < 0) {
+          scroller.dispatchEvent(
+            new WheelEvent("wheel", {
+              deltaY: scrollRequest.deltaY,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        }
+        if (scrollRequest.chain) {
+          scroller.scrollTop += htmlRenderScrollChainOffset(scrollRequest, scroller.clientHeight);
+        }
+      }
+      return;
+    }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
@@ -296,7 +324,13 @@ export function HtmlRenderDocument(props: {
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
         className={cn("border-0 scheme-light", props.className)}
-        style={loaded ? { colorScheme: theme.appearance } : undefined}
+        style={
+          loaded
+            ? { colorScheme: theme.appearance }
+            : props.chainWheel
+              ? { pointerEvents: "none" }
+              : undefined
+        }
       />
       {expandedImage !== null ? (
         <ExpandedImageDialog preview={expandedImage} onClose={() => setExpandedImage(null)} />

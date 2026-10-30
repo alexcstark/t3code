@@ -5,6 +5,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
@@ -24,6 +25,7 @@ import {
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { ModelPickerCapacity } from "./ModelPickerCapacity";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
@@ -135,7 +137,7 @@ function shouldOfferModelPickerSetup(
 
 function adjacentModelPickerProvider(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
-  selectedInstanceId: ProviderInstanceId | "favorites";
+  selectedInstanceId: ProviderInstanceId | "favorites" | "capacity";
   direction: 1 | -1;
   disabledInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
   selectableUnavailableInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
@@ -151,7 +153,7 @@ function adjacentModelPickerProvider(input: {
       )
       .map((entry) => entry.instanceId),
   ];
-  const index = providers.indexOf(input.selectedInstanceId);
+  const index = providers.findIndex((provider) => provider === input.selectedInstanceId);
   return providers[
     index < 0
       ? input.direction === 1
@@ -347,6 +349,8 @@ function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   environmentId: EnvironmentId | null;
+  currentThreadId?: ThreadId | null;
+  /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
@@ -425,18 +429,40 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
     );
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
-    () => {
-      if (
-        props.lockedProvider !== null ||
-        activeInstanceHasSelectableUnavailableModel ||
-        activeInstanceNeedsSetup
-      ) {
-        return props.activeInstanceId;
-      }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
-    },
+  const lockedProvider = props.lockedProvider;
+  const lockedContinuationGroupKey = props.lockedContinuationGroupKey;
+  const matchesLockedProvider = (
+    entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">,
+  ): boolean => {
+    if (lockedProvider === null) return true;
+    if (entry.driverKind !== lockedProvider) return false;
+    if (!lockedContinuationGroupKey) return true;
+    return entry.continuationGroupKey === lockedContinuationGroupKey;
+  };
+  const capacityEntries = instanceEntries.filter(
+    (entry) =>
+      isProviderInstancePickerReady(entry) &&
+      matchesLockedProvider(entry) &&
+      (modelOptionsByInstance.get(entry.instanceId) ?? []).some(
+        (model) => !model.isUnavailable && !getModelDisabledReason?.(entry.instanceId, model.slug),
+      ),
   );
+  // Each open starts on provider capacity; choosing a provider replaces it with that
+  // provider's models for the rest of the open.
+  const [selectedInstanceId, setSelectedInstanceId] = useState<
+    ProviderInstanceId | "favorites" | "capacity"
+  >(() => {
+    if (activeInstanceHasSelectableUnavailableModel || activeInstanceNeedsSetup) {
+      return props.activeInstanceId;
+    }
+    if (props.environmentId !== null && capacityEntries.length > 0) {
+      return "capacity";
+    }
+    if (props.lockedProvider !== null) {
+      return props.activeInstanceId;
+    }
+    return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+  });
   const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
@@ -506,19 +532,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     terminalOpen: props.terminalOpen,
     modelPickerOpen: true,
   } as const;
-  const lockedProvider = props.lockedProvider;
-  const lockedContinuationGroupKey = props.lockedContinuationGroupKey;
   const canOpenProviderSetup = onOpenProviderSetup !== undefined;
 
   const entryByInstanceId = new Map(instanceEntries.map((entry) => [entry.instanceId, entry]));
-  const matchesLockedProvider = (
-    entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">,
-  ): boolean => {
-    if (lockedProvider === null) return true;
-    if (entry.driverKind !== lockedProvider) return false;
-    if (!lockedContinuationGroupKey) return true;
-    return entry.continuationGroupKey === lockedContinuationGroupKey;
-  };
 
   const selectableUnavailableInstanceIds = (() => {
     const instanceIds = new Set<ProviderInstanceId>();
@@ -636,6 +652,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return [...available, ...disabled];
   })();
   const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showCapacity = !isSearching && selectedInstanceId === "capacity";
   const instanceOrder = instanceEntries.map((entry) => entry.instanceId);
 
   const filteredModels = (() => {
@@ -675,7 +692,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   })();
 
   const legacySection = (() => {
-    if (isSearching || selectedInstanceId === "favorites") {
+    if (isSearching || selectedInstanceId === "favorites" || selectedInstanceId === "capacity") {
       return null;
     }
     const currentModels: ModelPickerItem[] = [];
@@ -707,7 +724,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   })();
 
   const selectedEntry =
-    selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
+    selectedInstanceId === "favorites" || selectedInstanceId === "capacity"
+      ? undefined
+      : entryByInstanceId.get(selectedInstanceId);
   const providerSetupEntries =
     !isSearching && canOpenProviderSetup
       ? instanceEntries.filter(
@@ -963,6 +982,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onTouchStart={(e) => e.stopPropagation()}
             />
 
+            {showCapacity && props.environmentId !== null ? (
+              <ModelPickerCapacity
+                environmentId={props.environmentId}
+                currentThreadId={props.currentThreadId ?? null}
+                entries={capacityEntries}
+                onSelectInstance={handleSelectInstance}
+              />
+            ) : null}
+
             <ModelPickerList
               listRef={modelListRef}
               itemKeys={filteredItemKeys}
@@ -1027,17 +1055,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 );
               }}
             />
-            <ModelPickerProviderNotices
-              setupEntries={providerSetupEntries}
-              updateRequiredNotices={updateRequiredNotices}
-              emptyLabel={
-                selectedInstanceId === "favorites" && !isSearching
-                  ? "No favorites yet"
-                  : "No models found"
-              }
-              onRequestClose={onRequestClose}
-              onOpenProviderSetup={onOpenProviderSetup}
-            />
+            {showCapacity ? null : (
+              <ModelPickerProviderNotices
+                setupEntries={providerSetupEntries}
+                updateRequiredNotices={updateRequiredNotices}
+                emptyLabel={
+                  selectedInstanceId === "favorites" && !isSearching
+                    ? "No favorites yet"
+                    : "No models found"
+                }
+                onRequestClose={onRequestClose}
+                onOpenProviderSetup={onOpenProviderSetup}
+              />
+            )}
           </div>
         </Combobox>
       </div>

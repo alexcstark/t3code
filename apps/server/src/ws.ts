@@ -789,17 +789,6 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.thread_id": input.threadId,
     });
-    yield* threadManagement.ensureLegacyTranscript(input.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationV2GetThreadProjectionError({
-            threadId: input.threadId,
-            message: `Failed to hydrate migrated thread ${input.threadId}`,
-            cause,
-          }),
-      ),
-    );
-
     const eventStreamFrom = (afterSequence: number) =>
       threadManagement
         .streamStoredEventsFrom({
@@ -913,6 +902,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       );
       if (input.afterSequence > highWater) {
         return yield* snapshotThenLive();
+      }
+      // An unchanged thread needs only confirmation, with no replay to prepare.
+      if (input.afterSequence === highWater) {
+        return Stream.concat(completionMarker, eventStreamFrom(highWater));
       }
       const stats = yield* applicationEvents
         .getAgentReplayStats({
@@ -2050,6 +2043,9 @@ export const layerWsRpc = (
                     modelSelection: input.modelSelection,
                     runtimeMode: input.runtimeMode,
                     interactionMode: input.interactionMode,
+                    ...(input.systemPrompt === undefined
+                      ? {}
+                      : { systemPrompt: input.systemPrompt }),
                     workspaceStrategy: input.workspaceStrategy,
                     ...(input.initialMessage === undefined
                       ? {}

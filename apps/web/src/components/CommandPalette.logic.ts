@@ -71,7 +71,7 @@ export function browseInputEndPaddingClass(input: {
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
-  | { readonly kind: "add-project" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "add-project" | "new-thread-in" | "switch-project" | "change-theme" }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -99,6 +99,7 @@ export type CommandPaletteUiAction =
     }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenSwitchProject" }
   | { readonly _tag: "OpenChangeTheme" }
   | {
       readonly _tag: "OpenChildSearch";
@@ -155,6 +156,8 @@ export function reduceCommandPaletteUiState(
       return openWithIntent({ kind: "add-project" });
     case "OpenNewThreadIn":
       return openWithIntent({ kind: "new-thread-in" });
+    case "OpenSwitchProject":
+      return openWithIntent({ kind: "switch-project" });
     case "OpenChangeTheme":
       return openWithIntent({ kind: "change-theme" });
   }

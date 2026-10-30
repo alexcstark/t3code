@@ -1416,7 +1416,12 @@ export function deriveThreadFeedPresentation(
       compactionItemRunIds.add(entry.runId);
     }
   }
-  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
+  // `waiting` is post-success checkpoint / blocked wait: keep the feed settled
+  // rather than a shimmering Thinking row that looks like the model is live.
+  const isWorking =
+    activeWorkStartedAt !== null &&
+    latestRun?.status !== "preparing" &&
+    latestRun?.status !== "waiting";
   const foldsByAnchorId = deriveThreadFeedRunFolds(
     sourceFeed,
     latestRun,

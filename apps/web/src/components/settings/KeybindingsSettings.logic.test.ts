@@ -9,6 +9,7 @@ import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
+  buildWhenVariableOptions,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -265,5 +266,21 @@ describe("KeybindingsSettings.logic", () => {
         when: "",
       }),
     ).toEqual(["Chat: New Local"]);
+  });
+
+  it("builds known when variable options including the reasoning picker", () => {
+    const options = buildWhenVariableOptions();
+    expect(options).toEqual(
+      expect.arrayContaining([
+        "terminalFocus",
+        "terminalOpen",
+        "modelPickerOpen",
+        "reasoningPickerOpen",
+        "isWeb",
+        "isDesktop",
+        "true",
+        "false",
+      ]),
+    );
   });
 });
