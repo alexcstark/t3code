@@ -77,6 +77,14 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
+    const usageAuthFile = environment.CURSOR_USAGE_AUTH_FILE?.trim();
+    if (!token && usageAuthFile) {
+      const credentials = yield* fs
+        .readFileString(usageAuthFile)
+        .pipe(Effect.flatMap(decodeCredentials));
+      token = credentials.accessToken?.trim();
+      if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+    }
     // An explicit API key can name a different account from the stored login.
     if (!token && environment.CURSOR_API_KEY?.trim()) {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
