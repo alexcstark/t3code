@@ -122,6 +122,14 @@ its monthly allowance, including separate Auto and API usage, using the CLI logi
 usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
 a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
 
+Cursor browser sign-in uses an SDK key that cannot read the monthly allowance. To show capacity
+for that account, add `CURSOR_USAGE_AUTH_FILE` in its **Environment variables**, pointing to the
+matching Cursor CLI `auth.json` on the server, then refresh provider status. Use a separate file
+for each account. T3 reads the file on each usage refresh so renewed CLI logins take effect without
+copying tokens into settings. `CURSOR_AUTH_TOKEN`, when set, takes priority over the file. If the
+configured file is missing or invalid, T3 leaves capacity unavailable rather than using another
+account's login.
+
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.

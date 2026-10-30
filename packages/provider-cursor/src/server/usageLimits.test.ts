@@ -163,7 +163,13 @@ describe("Cursor usage limits", () => {
   it.effect("reports failed requests without exposing credentials or response bodies", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "private-token" }).pipe(
+        readCursorUsageLimits(
+          { apiEndpoint: "" },
+          {
+            CURSOR_AUTH_TOKEN: "private-token",
+            CURSOR_USAGE_AUTH_FILE: "/must-not-read-when-an-explicit-token-is-set",
+          },
+        ).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) =>
@@ -196,6 +202,80 @@ describe("Cursor usage limits", () => {
       );
       expect(limits.unavailable?.reason).toBe("unsupported");
     }),
+  );
+
+  it.effect("reads each instance's usage login file and picks up refreshed credentials", () =>
+    withNodeServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const client = HttpClient.make((request) => {
+          const usedPercent = {
+            "Bearer personal-token": 1.3,
+            "Bearer work-token": 87.3,
+            "Bearer refreshed-work-token": 88,
+          }[request.headers.authorization ?? ""];
+          expect(usedPercent).toBeDefined();
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ planUsage: { totalPercentUsed: usedPercent } }),
+            ),
+          );
+        });
+        for (const [name, token, usedPercent] of [
+          ["personal", "personal-token", 1.3],
+          ["work", "work-token", 87.3],
+          ["work", "refreshed-work-token", 88],
+        ] as const) {
+          const authFile = path.join(directory, `${name}.json`);
+          yield* fs.writeFileString(authFile, JSON.stringify({ accessToken: token }));
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "" },
+            {
+              CURSOR_API_KEY: "sdk-browser-key",
+              CURSOR_USAGE_AUTH_FILE: authFile,
+              AGENT_CLI_CREDENTIAL_STORE: "memory",
+            },
+          ).pipe(Effect.provideService(HttpClient.HttpClient, client));
+          expect(limits.windows[0]?.usedPercent).toBe(usedPercent);
+        }
+      }).pipe(Effect.scoped),
+    ),
+  );
+
+  it.effect("does not fall back to another login when the configured usage file is invalid", () =>
+    withNodeServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(directory, "cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, "cursor", "auth.json"),
+          JSON.stringify({ accessToken: "unrelated-account-token" }),
+        );
+        const authFile = path.join(directory, "usage-login.json");
+        for (const contents of [undefined, "invalid json", "{}", '{"accessToken":"  "}']) {
+          if (contents !== undefined) yield* fs.writeFileString(authFile, contents);
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "" },
+            { CURSOR_USAGE_AUTH_FILE: authFile, XDG_CONFIG_HOME: directory },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("must not request another account's usage")),
+            ),
+          );
+          expect(limits.windows).toEqual([]);
+          expect(limits.unavailable?.reason).toBe(
+            contents === undefined || contents === "invalid json" ? "probeFailed" : "unsupported",
+          );
+        }
+      }).pipe(Effect.scoped),
+    ),
   );
 
   it.effect("reads the default macOS Cursor login from Keychain for limits", () =>
