@@ -376,12 +376,13 @@ export function OutdatedServerUpdateAction({
   readonly label?: string;
 }) {
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
+  const serverTargetVersion = resolveServerUpdateTargetVersion(targetVersion);
   const handleUpdate = async () => {
     if (pendingUpdateEnvironmentIds.has(environmentId)) return;
     pendingUpdateEnvironmentIds.add(environmentId);
     const result = await update({
       environmentId,
-      input: { targetVersion },
+      input: { targetVersion: serverTargetVersion },
       ...(fromVersion === undefined ? {} : { fromVersion }),
     });
     pendingUpdateEnvironmentIds.delete(environmentId);
@@ -400,7 +401,7 @@ export function OutdatedServerUpdateAction({
       description: `Reconnected on t3@${result.value.targetVersion}.`,
     });
   };
-  if (fromVersion !== undefined && crossesReleaseTrack(fromVersion, targetVersion)) {
+  if (fromVersion !== undefined && crossesReleaseTrack(fromVersion, serverTargetVersion)) {
     return <CrossTrackNote />;
   }
   return (
