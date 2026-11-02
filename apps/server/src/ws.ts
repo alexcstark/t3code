@@ -344,6 +344,8 @@ export const withLateEditorConfig = <E, R>(
             return [{ ...current, providers: event.payload.providers }, [event]];
           case "settingsUpdated":
             return [{ ...current, settings: event.payload.settings }, [event]];
+          case "eventLoopStall":
+            return [{ ...current, lastEventLoopStall: event.payload }, [event]];
           // Themes and usage-limit sources never ride in a snapshot; clients
           // carry their projected values across one.
           default:
@@ -3039,6 +3041,17 @@ export const layerWsRpc = (
                   payload: { settings },
                 })),
               );
+              // Older clients reject an unknown event and drop the whole config subscription.
+              const stallUpdates =
+                input.eventLoopStalls === true
+                  ? eventLoopMonitor.noticeableStalls.pipe(
+                      Stream.map((stall) => ({
+                        version: 1 as const,
+                        type: "eventLoopStall" as const,
+                        payload: stall,
+                      })),
+                    )
+                  : Stream.never;
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,
@@ -3046,7 +3059,10 @@ export const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, stallUpdates),
+                    ),
                   ),
                 ),
               );

@@ -10,10 +10,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as Metrics from "./Metrics.ts";
@@ -37,8 +39,13 @@ export class EventLoopMonitor extends Context.Reference<{
    * first, so a stall that ended just before a client reconnected is included.
    */
   readonly latestNoticeableStall: Effect.Effect<ServerEventLoopStall | undefined>;
+  /** Stalls of 5s or more as they are recorded. Subscribers see only later ones. */
+  readonly noticeableStalls: Stream.Stream<ServerEventLoopStall>;
 }>("t3/observability/EventLoopMonitor", {
-  defaultValue: () => ({ latestNoticeableStall: Effect.succeed(undefined) }),
+  defaultValue: () => ({
+    latestNoticeableStall: Effect.succeed(undefined),
+    noticeableStalls: Stream.empty,
+  }),
 }) {}
 
 /** Delay in ns, active time in ms, CPU in µs. */
@@ -155,6 +162,7 @@ export const layerWith = (
       const latestNoticeableStall = yield* Ref.make<
         { readonly stall: ServerEventLoopStall; readonly detectedAtMs: number } | undefined
       >(undefined);
+      const noticeableStalls = yield* PubSub.unbounded<ServerEventLoopStall>();
       const stallSink = yield* Effect.try(
         () =>
           new RotatingFileSink({
@@ -179,17 +187,19 @@ export const layerWith = (
         const now = yield* DateTime.now;
         const detectedAt = DateTime.formatIso(now);
         if (delayMaxMs >= NOTICEABLE_STALL_MS) {
+          const stall: ServerEventLoopStall = {
+            detectedAt,
+            durationMs: delayMaxMs,
+            ...(loadAverage === undefined
+              ? {}
+              : { loadAverage: Math.round(loadAverage * 10) / 10 }),
+            cpuCount,
+          };
           yield* Ref.set(latestNoticeableStall, {
             detectedAtMs: DateTime.toEpochMillis(now),
-            stall: {
-              detectedAt,
-              durationMs: delayMaxMs,
-              ...(loadAverage === undefined
-                ? {}
-                : { loadAverage: Math.round(loadAverage * 10) / 10 }),
-              cpuCount,
-            },
+            stall,
           });
+          yield* PubSub.publish(noticeableStalls, stall);
         }
         const attributes = {
           delayMaxMs,
@@ -228,6 +238,7 @@ export const layerWith = (
       );
 
       return EventLoopMonitor.of({
+        noticeableStalls: Stream.fromPubSub(noticeableStalls),
         latestNoticeableStall: Effect.gen(function* () {
           if (yield* Ref.get(warmedUp)) yield* tick;
           const latest = yield* Ref.get(latestNoticeableStall);

@@ -138,5 +138,11 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "eventLoopStall":
+      return Option.map(current, (projection) => ({
+        config: { ...projection.config, lastEventLoopStall: event.payload },
+        latestEvent: event,
+        source: "live",
+      }));
   }
 }

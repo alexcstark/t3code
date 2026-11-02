@@ -631,8 +631,9 @@ export const ServerConfig = Schema.Struct({
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * The latest stall long enough to notice, sent only for a few minutes after
-   * it. A client that reconnects reads it to say why the host stopped
-   * answering. Clients do not cache it, since it describes the host at connect.
+   * it. A reconnecting client reads it from the snapshot. A client that opted
+   * into `eventLoopStalls` also receives each new one while connected.
+   * Clients do not cache it.
    */
   lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
   /**
@@ -767,6 +768,14 @@ export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
   typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
 
+export const ServerConfigStreamEventLoopStallEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("eventLoopStall"),
+  payload: ServerEventLoopStall,
+});
+export type ServerConfigStreamEventLoopStallEvent =
+  typeof ServerConfigStreamEventLoopStallEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -774,6 +783,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+  ServerConfigStreamEventLoopStallEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

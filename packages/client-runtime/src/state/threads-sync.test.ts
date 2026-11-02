@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -32,6 +33,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -123,10 +125,15 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const loaderCalls = yield* Ref.make(0);
   const httpSnapshotIndex = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
+  const subscribeInputs = yield* Queue.unbounded<number | undefined>();
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
   const lastAcceptCompactTurnItems = yield* Ref.make<true | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
+  const hostStalls = yield* PubSub.unbounded<{
+    readonly environmentId: EnvironmentId;
+    readonly detectedAt: string;
+  }>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
@@ -148,6 +155,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
           Effect.andThen(Ref.set(lastSubscribeAfterSequence, input.afterSequence)),
+          Effect.andThen(Queue.offer(subscribeInputs, input.afterSequence)),
           Effect.andThen(
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
@@ -236,6 +244,18 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
     ),
+    Effect.provideService(
+      HostStallRefresh.HostStallRefresh,
+      HostStallRefresh.HostStallRefresh.of({
+        note: (environmentId, detectedAt) =>
+          PubSub.publish(hostStalls, { environmentId, detectedAt }).pipe(Effect.asVoid),
+        changes: (environmentId) =>
+          Stream.fromPubSub(hostStalls).pipe(
+            Stream.filter((event) => event.environmentId === environmentId),
+            Stream.map((event) => event.detectedAt),
+          ),
+      }),
+    ),
   );
   if (options?.historyPaging !== "no-http") {
     makeThreadState = makeThreadState.pipe(
@@ -273,6 +293,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     subscriptionCount,
     loaderCalls,
     lastSubscribeAfterSequence,
+    subscribeInputs,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
     lastAcceptCompactTurnItems,
@@ -281,6 +302,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     savedThreads,
     removedThreads,
     wakeups,
+    hostStalls,
     replaceSession: SubscriptionRef.set(
       supervisorSession,
       Option.some(testSession(client, options)),
@@ -697,6 +719,19 @@ describe("EnvironmentThreads", () => {
 
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("reloads the open thread after a host stall instead of resuming the cursor", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      expect(yield* Queue.take(harness.subscribeInputs)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+
+      yield* PubSub.publish(harness.hostStalls, {
+        environmentId: TARGET.environmentId,
+        detectedAt: "2026-11-02T18:02:00.000Z",
+      });
+      expect(yield* Queue.take(harness.subscribeInputs)).toBeUndefined();
     }),
   );
 
