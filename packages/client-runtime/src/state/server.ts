@@ -33,6 +33,7 @@ import {
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -355,12 +356,14 @@ export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly eventLoopStalls?: boolean;
 }
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (subscription: ServerConfigSubscriptionOptions) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
+    const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
     const environmentId = supervisor.target.environmentId;
     const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
       Effect.catch((error) =>
@@ -430,12 +433,16 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+      ...(subscription.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
     }).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           const next = applyServerConfigProjection(yield* SubscriptionRef.get(state), event);
           if (Option.isNone(next)) {
             return;
+          }
+          if (event.type === "eventLoopStall" && Option.isSome(hostStalls)) {
+            yield* hostStalls.value.note(environmentId, event.payload.detectedAt);
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
           yield* SubscriptionRef.set(state, next);
@@ -613,6 +620,7 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
     readonly usageLimitsCommand?: boolean;
+    readonly eventLoopStalls?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -628,6 +636,7 @@ export function createServerEnvironmentAtoms<R, E>(
           ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
           ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+          ...(options.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
         }),
       )
       .pipe(

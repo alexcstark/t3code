@@ -60,6 +60,7 @@ export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly eventLoopStalls?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -168,6 +169,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+    ...(options.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
   };
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {

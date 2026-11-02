@@ -93,3 +93,24 @@ describe("applyServerConfigProjection settingsUpdated", () => {
     expect(nextSettings.providerInstances.claude.config.launchArgs).toBe("--verbose");
   });
 });
+
+describe("applyServerConfigProjection eventLoopStall", () => {
+  it("keeps the stall on the live config", () => {
+    const current = Option.some({
+      config: {} as ServerConfig,
+      latestEvent: {} as ServerConfigStreamEvent,
+      source: "live" as const,
+    });
+    const stall = {
+      detectedAt: "2026-11-02T18:02:00.000Z",
+      durationMs: 16_499,
+      cpuCount: 8,
+    };
+    const next = applyServerConfigProjection(current, {
+      version: 1,
+      type: "eventLoopStall",
+      payload: stall,
+    });
+    expect(Option.getOrThrow(next).config.lastEventLoopStall).toEqual(stall);
+  });
+});
