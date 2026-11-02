@@ -58,15 +58,15 @@ function statusWithoutLiveData(
 }
 
 /**
- * A thread opened in the same moment it is created can 404 until its row
- * commits. Retry those misses before treating the thread as deleted.
- * Otherwise the chat pane unsubscribes and stays blank while the sidebar
- * still shows the thread.
+ * A create can 404 until its row commits. Retry before treating it as deleted,
+ * or the chat pane unsubscribes and stays blank. The waits add up to 15s: a
+ * large database can answer the first read before that commit.
  */
 export const THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS = [
-  "100 millis",
-  "250 millis",
-  "500 millis",
+  "1 second",
+  "2 seconds",
+  "4 seconds",
+  "8 seconds",
 ] as const;
 
 function formatThreadError(cause: Cause.Cause<unknown>): string {
