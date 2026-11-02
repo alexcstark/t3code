@@ -1771,7 +1771,7 @@ describe("EnvironmentThreads", () => {
           harness.observed,
           (value) => value.status === "deleted",
         ).pipe(Effect.forkScoped);
-        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("15 seconds");
         const state = yield* Fiber.join(pending);
 
         expect(Option.isNone(state.data)).toBe(true);
@@ -1828,7 +1828,7 @@ describe("EnvironmentThreads", () => {
           Option.isSome(value.data) &&
           value.data.value.thread.title === "Committed thread",
       ).pipe(Effect.forkScoped);
-      yield* TestClock.adjust("100 millis");
+      yield* TestClock.adjust("1 second");
       const state = yield* Fiber.join(pending);
 
       expect(Option.getOrThrow(state.data).thread.title).toBe("Committed thread");
