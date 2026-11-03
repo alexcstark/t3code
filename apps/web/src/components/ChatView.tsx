@@ -1,3 +1,4 @@
+import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ThreadSystemPromptPicker } from "./chat/ThreadSystemPromptPicker";
@@ -521,7 +522,6 @@ import {
   type LocalDispatchSnapshot,
   cloneComposerImageForRetry,
   deriveLockedProvider,
-  readFileAsDataUrl,
   resolveFileAttachmentUrl,
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
@@ -540,14 +540,7 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
-import {
-  awaitAttachmentUploads,
-  getUploadedAttachments,
-  readAttachmentUpload,
-  releaseDraftAttachments,
-  retryAttachmentUpload,
-  startAttachmentUpload,
-} from "../lib/attachmentUploadQueue";
+import { releaseDraftAttachments } from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
@@ -1566,9 +1559,7 @@ export default function ChatView(props: ChatViewProps) {
   // The shell is the list's status. A detail snapshot that still calls a
   // finished run live must not make the open thread look Working.
   const presentedRuntime =
-    serverThreadShell === null ||
-    activeRuntime === null ||
-    !threadRuntimeIsActive(activeRuntime.status)
+    serverThreadShell === null || activeRuntime === null || !threadRuntimeIsActive(activeRuntime)
       ? activeRuntime
       : reconcileThreadShellRuntimeFromDetail(serverThreadShell, activeRuntime).runtime;
   const hasHeldQueuedRuns =
@@ -6797,31 +6788,6 @@ export default function ChatView(props: ChatViewProps) {
       composerFilesSnapshot.length > 0
         ? attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads
         : supportsAttachmentUploads;
-    if (turnUsesAttachmentUploads && composerAttachmentsSnapshot.length > 0) {
-      for (const attachment of composerAttachmentsSnapshot) {
-        const upload =
-          readAttachmentUpload(attachment.id)?.status === "failed"
-            ? retryAttachmentUpload
-            : startAttachmentUpload;
-        upload({
-          environmentId,
-          image: attachment,
-          draftTarget: composerDraftTarget,
-        });
-      }
-      await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
-      const attachmentCapabilitiesAfterUpload = readLiveAttachmentCapabilities();
-      if (attachmentCapabilitiesAfterUpload.fileBlockReason !== null) {
-        composerSendState.setPending(false);
-        setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
-        return;
-      }
-      if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
-        composerSendState.setPending(false);
-        setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
-        return;
-      }
-    }
 
     if (
       multipleModelSelections === null &&
@@ -6882,29 +6848,28 @@ export default function ChatView(props: ChatViewProps) {
       );
     }
 
-    const turnAttachmentsPromise = Promise.all(
-      composerAttachmentsSnapshot.map(async (attachment) => {
-        if (turnUsesAttachmentUploads) {
-          const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
-          if (!uploaded) {
-            throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
-          }
-          return uploaded;
-        }
-        if (attachment.type !== "image") {
-          throw new Error("This server does not support file attachments.");
-        }
-        return {
-          type: "image" as const,
-          id: attachment.id,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
-          dataUrl: await readFileAsDataUrl(attachment.file),
-          ...(attachment.source ? { source: attachment.source } : {}),
-        };
-      }),
-    );
+    const preparedMessage = prepareComposerMessage({
+      environmentId,
+      draftTarget: composerDraftTarget,
+      attachments: composerAttachmentsSnapshot,
+      usesAttachmentUploads: turnUsesAttachmentUploads,
+      readFileBlockReason: () => readLiveAttachmentCapabilities().fileBlockReason,
+      message: {
+        id: messageIdForSend,
+        role: "user",
+        text: outgoingMessageText,
+        ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
+        runId: null,
+        createdAt: messageCreatedAt,
+        updatedAt: messageCreatedAt,
+        streaming: false,
+        ...(shouldQueueBehindActiveRun
+          ? { inputIntent: "queued_turn" as const }
+          : phase === "running" && dispatchMode === "steer"
+            ? { inputIntent: "steer" as const }
+            : {}),
+      },
+    });
     if (multipleModelSelections !== null) {
       const failedSelections: ModelSelection[] = [];
       let clearedDraft = false;
@@ -6914,7 +6879,9 @@ export default function ChatView(props: ChatViewProps) {
       // Anything thrown here (an attachment the server can no longer take)
       // fails every selection; the draft restore below still runs.
       const sendResult = await settlePromise(async () => {
-        const attachments = await turnAttachmentsPromise;
+        const attachmentResult = await preparedMessage.attachments;
+        if (attachmentResult._tag === "Failure") throw squashAtomCommandFailure(attachmentResult);
+        const attachments = attachmentResult.value;
         const fileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
         if (fileBlockReason !== null) throw new Error(fileBlockReason);
         const context = buildOutgoingMessageContext(
@@ -7107,27 +7074,6 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    const optimisticAttachments = composerAttachmentsSnapshot.map((attachment) =>
-      attachment.type === "image"
-        ? {
-            type: "image" as const,
-            id: attachment.id,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-            previewUrl: attachment.previewUrl,
-            ...(attachment.source ? { source: attachment.source } : {}),
-          }
-        : {
-            type: "file" as const,
-            id: attachment.id,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-            downloadable: false,
-            ...(attachment.source ? { source: attachment.source } : {}),
-          },
-    );
     if (!shouldQueueBehindActiveRun) {
       isAtEndRef.current = true;
       timelineScrollModeRef.current = "anchoring-new-turn";
@@ -7142,25 +7088,7 @@ export default function ChatView(props: ChatViewProps) {
         messageId: messageIdForSend,
       });
     }
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
-        runId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-        ...(shouldQueueBehindActiveRun
-          ? { inputIntent: "queued_turn" as const }
-          : phase === "running" && dispatchMode === "steer"
-            ? { inputIntent: "steer" as const }
-            : {}),
-      },
-    ]);
+    setOptimisticUserMessages((existing) => [...existing, preparedMessage.message]);
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -7222,14 +7150,7 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
-    const turnAttachmentsResult = await settlePromise(async () => {
-      const turnAttachments = await turnAttachmentsPromise;
-      const liveFileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
-      if (liveFileBlockReason !== null) {
-        throw new Error(liveFileBlockReason);
-      }
-      return turnAttachments;
-    });
+    const turnAttachmentsResult = await preparedMessage.attachments;
     if (failure === null && turnAttachmentsResult._tag === "Failure") {
       failure = turnAttachmentsResult;
     }
