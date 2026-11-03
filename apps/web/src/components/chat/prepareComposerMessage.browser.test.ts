@@ -2,8 +2,12 @@ import { EnvironmentId, MessageId, ThreadId, type ChatAttachment } from "@t3tool
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { expect, it, vi } from "vite-plus/test";
 
-import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import { prepareComposerMessage } from "./prepareComposerMessage";
+import {
+  useComposerDraftStore,
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+} from "../../composerDraftStore";
+import { prepareComposerMessage, restoreFailedComposerMessage } from "./prepareComposerMessage";
 
 const transport = vi.hoisted(() => ({
   upload: vi.fn<() => Promise<void>>(),
@@ -29,6 +33,7 @@ function deferredResponse() {
 }
 
 function setup() {
+  useComposerDraftStore.setState({ draftsByThreadKey: {} });
   const upload = deferredResponse();
   transport.upload.mockReset().mockReturnValue(upload.promise);
   transport.uploaded.mockReset().mockReturnValue([
@@ -91,6 +96,34 @@ it("returns the conversation message before its attachments finish uploading", a
   if (result._tag !== "Success") throw squashAtomCommandFailure(result);
   expect(result.value[0]?.id).toBe("uploaded-image");
   expect(prepared.message.attachments?.[0]?.id).toBe("local-image");
+});
+
+it("preserves a newer draft when an upload fails and can restore the failed message afterward", async () => {
+  const { input, upload, image } = setup();
+  const prepared = prepareComposerMessage(input);
+  const store = useComposerDraftStore.getState();
+  store.setPrompt(input.draftTarget, "My next message");
+  upload.reject(new Error("Connection lost"));
+  const result = await prepared.attachments;
+  expect(result._tag).toBe("Failure");
+  const snapshot = {
+    prompt: input.message.text,
+    images: [image],
+    files: [],
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+    threadContexts: [],
+  };
+  expect(restoreFailedComposerMessage(input.draftTarget, snapshot)).toBeNull();
+  expect(store.getComposerDraft(input.draftTarget)?.prompt).toBe("My next message");
+  store.clearComposerContent(input.draftTarget);
+  const restoredImages = restoreFailedComposerMessage(input.draftTarget, snapshot);
+  expect(store.getComposerDraft(input.draftTarget)?.prompt).toBe(input.message.text);
+  expect(restoredImages).toHaveLength(1);
+  expect(restoredImages?.[0]?.id).toBe(image.id);
+  expect(restoredImages?.[0]?.previewUrl).not.toBe(image.previewUrl);
+  for (const restored of restoredImages ?? []) URL.revokeObjectURL(restored.previewUrl);
 });
 
 it.each(["failed", "rejected", "capability changed"])(

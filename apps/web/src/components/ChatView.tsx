@@ -1,6 +1,9 @@
-import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import {
+  prepareComposerMessage,
+  restoreFailedComposerMessage,
+} from "./chat/prepareComposerMessage";
 import { ThreadSystemPromptPicker } from "./chat/ThreadSystemPromptPicker";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
@@ -6882,8 +6885,6 @@ export default function ChatView(props: ChatViewProps) {
         const attachmentResult = await preparedMessage.attachments;
         if (attachmentResult._tag === "Failure") throw squashAtomCommandFailure(attachmentResult);
         const attachments = attachmentResult.value;
-        const fileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
-        if (fileBlockReason !== null) throw new Error(fileBlockReason);
         const context = buildOutgoingMessageContext(
           attachments.map((attachment, index) =>
             "id" in attachment && attachment.id !== undefined
@@ -7337,27 +7338,22 @@ export default function ChatView(props: ChatViewProps) {
         );
         clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
       }
-      if (
-        !composerDraftHasUserContent(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-        )
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
+      setOptimisticUserMessages((existing) => {
+        const next = existing.filter((message) => message.id !== messageIdForSend);
+        return next.length === existing.length ? existing : next;
+      });
+      revokeUserMessagePreviewUrls(preparedMessage.message);
+      const restoreFailedMessage = () => {
+        const retryComposerImages = restoreFailedComposerMessage(composerDraftTarget, {
+          prompt: messageTextForSend,
+          images: composerImagesSnapshot,
+          files: composerFilesSnapshot,
+          terminalContexts: composerTerminalContextsSnapshot,
+          previewAnnotations: composerPreviewAnnotationsSnapshot,
+          reviewComments: composerReviewCommentsSnapshot,
+          threadContexts: composerThreadContextsSnapshot,
         });
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+        if (retryComposerImages === null) return false;
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = messageTextForSend;
           composerImagesRef.current = retryComposerImages;
@@ -7369,6 +7365,38 @@ export default function ChatView(props: ChatViewProps) {
             detectTrigger: true,
           });
         }
+        return true;
+      };
+      if (!restoreFailedMessage()) {
+        const recoveryToastId = toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Message could not be sent",
+            description:
+              "Your newer draft is unchanged. Restore the failed message when this composer is empty.",
+            timeout: 0,
+            actionProps: {
+              children: "Restore message",
+              onClick: () => {
+                if (composerSendState.pending || !restoreFailedMessage()) {
+                  toastManager.update(recoveryToastId, {
+                    description: "Send or clear the current draft before restoring this message.",
+                  });
+                  return;
+                }
+                if (draftId) {
+                  void navigate({ to: "/draft/$draftId", params: { draftId } });
+                } else {
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(scopeThreadRef(environmentId, threadIdForSend)),
+                  });
+                }
+                toastManager.close(recoveryToastId);
+              },
+            },
+          }),
+        );
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
