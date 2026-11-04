@@ -1003,6 +1003,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly agent: string;
           readonly orchestration: boolean;
           readonly device: boolean;
+          readonly systemPrompt: string | undefined;
         } | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
@@ -2388,11 +2389,21 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
-            // A conversation this process has not sent to was told on its first run.
+            // Resumed conversations already got defaults; overrides need confirmed delivery.
             const delivered =
               known?.agent === agent.nativeThreadId
-                ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
+                ? {
+                    orchestration:
+                      known.orchestration &&
+                      known.systemPrompt === turnInput.runtimePolicy.systemPrompt,
+                    device: known.device,
+                  }
+                : {
+                    orchestration:
+                      turnInput.runtimePolicy.systemPrompt === undefined &&
+                      turnInput.runOrdinal > 1,
+                    device: false,
+                  };
             const message = yield* resolveUserMessage(
               turnInput,
               mcpServers,
@@ -2424,8 +2435,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
             yield* Ref.set(told, {
               agent: agent.nativeThreadId,
-              orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
+              orchestration:
+                !compacted &&
+                (delivered.orchestration ||
+                  mcpServers !== undefined ||
+                  turnInput.runtimePolicy.systemPrompt !== undefined),
               device: !compacted && hasDeviceTools,
+              systemPrompt: turnInput.runtimePolicy.systemPrompt,
             });
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();

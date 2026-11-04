@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
+import { agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Schema from "effect/Schema";
 
@@ -105,15 +106,21 @@ const decodeRuntime = Schema.decodeUnknownSync(
   ),
 );
 
-async function withHome(run: (home: string, cli: string) => Promise<void>) {
+async function withHome(run: (home: string, cliSourcePath: string) => Promise<void>) {
   const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-upstream-ssh-"));
   const runtime = NodePath.join(home, ".t3/runtime/versions", archiveVersion);
   NodeFS.mkdirSync(runtime, { recursive: true });
   const cli = NodePath.join(runtime, "t3");
-  NodeFS.writeFileSync(cli, "#!" + process.execPath + "\n" + cliSource, { mode: 0o700 });
+  const cliSourcePath = `${cli}.mjs`;
+  NodeFS.writeFileSync(cliSourcePath, cliSource);
+  NodeFS.writeFileSync(
+    cli,
+    agentScopeLauncherScript({ command: process.execPath, args: [cliSourcePath] }),
+    { mode: 0o700 },
+  );
   NodeFS.writeFileSync(NodePath.join(runtime, ".install-complete"), archiveVersion);
   try {
-    await run(home, cli);
+    await run(home, cliSourcePath);
   } finally {
     const runtimeFile = NodePath.join(home, ".t3/userdata/server-runtime.json");
     if (NodeFS.existsSync(runtimeFile)) {
@@ -247,8 +254,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("upstream SSH l
     }));
 
   it("waits for a pending service update to publish its replacement", () =>
-    withHome(async (home, cli) => {
-      const server = NodeChildProcess.fork(cli, ["serve", "--port", "0"], {
+    withHome(async (home, cliSourcePath) => {
+      const server = NodeChildProcess.fork(cliSourcePath, ["serve", "--port", "0"], {
         env: { ...process.env, HOME: home },
         silent: true,
       });

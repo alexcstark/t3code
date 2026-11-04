@@ -761,13 +761,14 @@ describe("CursorAdapterV2", () => {
       };
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
+      let systemPrompt: string | undefined;
       const send = Effect.fnUntraced(function* (compact = false) {
         runOrdinal += 1;
         const turnInput = {
           threadId,
           providerThread,
           modelSelection,
-          runtimePolicy,
+          runtimePolicy: { ...runtimePolicy, systemPrompt },
           runId: RunId.make(`cursor-device-run-${runOrdinal}`),
           runOrdinal,
           providerTurnOrdinal: runOrdinal,
@@ -809,6 +810,19 @@ describe("CursorAdapterV2", () => {
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
       assert.deepEqual(yield* send(), told(false, false));
+      systemPrompt = "Use our review checklist.";
+      assert.deepEqual(yield* send(), told(false, true));
+      assert.include(sentMessages.at(-1)!, systemPrompt);
+      assert.deepEqual(yield* send(), told(false, false));
+      assert.notInclude(sentMessages.at(-1)!, systemPrompt);
+      systemPrompt = "Use the updated review checklist.";
+      yield* send();
+      assert.include(sentMessages.at(-1)!, systemPrompt);
+      yield* send(true);
+      yield* send();
+      assert.include(sentMessages.at(-1)!, systemPrompt, "compaction drops the custom prompt");
+      systemPrompt = undefined;
+      assert.deepEqual(yield* send(), told(true, true), "clearing the override restores defaults");
     }).pipe(
       Effect.scoped,
       Effect.provide(
