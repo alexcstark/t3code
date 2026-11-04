@@ -270,7 +270,7 @@ import { revisionedQuery } from "../state/revisionedQuery";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreads, threadEnvironment } from "../state/threads";
 import {
   resolveProviderSkillsForCwd,
   resolveProvidersForCwd,
@@ -291,11 +291,11 @@ import {
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
   useQuietThreadVisibleTurnItems,
-  useThreadError,
   useThreadStatus,
   useThreadHistory,
   useQuietThreadShell,
   useThreadCheckpointSummaries,
+  useThreadSyncError,
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -573,12 +573,13 @@ export default function ChatView(props: ChatViewProps) {
     ? deriveReportedModelSelection(serverProjection)
     : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
-  const threadSyncError = useThreadError(routeThreadDetailRef);
+  const threadSyncError = useThreadSyncError(routeThreadDetailRef);
+  const retryMessageSync = useAtomCommand(environmentThreads.retrySync);
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
     shellExists: serverThread !== null,
     status: threadStatus,
-    hasError: threadSyncError !== null,
+    error: threadSyncError,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
   // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
@@ -3389,6 +3390,9 @@ export default function ChatView(props: ChatViewProps) {
           attention={attentionNow}
           work={workNow}
           syncPhase={shownThreadSyncPhase}
+          onRetrySync={() => {
+            if (routeThreadDetailRef !== null) void retryMessageSync(routeThreadDetailRef);
+          }}
           goal={goalNow}
         />
         {threadStatusLine}
@@ -3674,7 +3678,7 @@ export default function ChatView(props: ChatViewProps) {
                   entriesInput={timelineEntriesInput}
                   draftEntries={isServerThread ? null : draftTimelineEntries}
                   activeThreadKey={activeThreadKey}
-                  syncing={threadSyncPhase !== null}
+                  syncing={threadSyncPhase === "loading" || threadSyncPhase === "syncing"}
                   detailLoading={threadDetailLoading}
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}

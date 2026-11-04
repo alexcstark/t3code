@@ -1,5 +1,12 @@
+import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import {
+  resolveThreadSyncPhase,
+  threadSyncLabel,
+  type EnvironmentThreadStatus,
+} from "@t3tools/client-runtime/state/threads";
+import { environmentThreads } from "../../state/threads";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -282,6 +289,8 @@ export interface ThreadDetailScreenProps {
   readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
+  readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
@@ -562,6 +571,17 @@ function ThreadDetailBody(
   const composerBottomInset = useComposerBottomInset();
   const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
+  const realThreadSyncPhase =
+    props.threadSyncStatus === undefined
+      ? null
+      : resolveThreadSyncPhase({
+          status: props.threadSyncStatus,
+          error: props.threadSyncError,
+          detailExists: contentPresentationKind === "ready",
+          shellExists: contentPresentationKind === "ready" || contentPresentationKind === "loading",
+        });
+  const threadSyncPhase = useDelayedStatus(selectedThreadKey, realThreadSyncPhase);
+  const retryMessageSync = useAtomCommand(environmentThreads.retrySync);
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -878,6 +898,19 @@ function ThreadDetailBody(
     }
     if (props.creationState?.kind === "failed") {
       return null;
+    }
+    if (threadSyncPhase === "offline" || threadSyncPhase === "failed") {
+      return {
+        kind: "connection",
+        label: gt("{status}. Tap to retry.", {
+          status: threadSyncLabel(threadSyncPhase, messages),
+        }),
+        onPress: () => {
+          if (props.selectedThreadDetailRef !== null) {
+            void retryMessageSync(props.selectedThreadDetailRef);
+          }
+        },
+      };
     }
     const childInput = childThreadInputs[0];
     if (childInput && contentPresentationKind === "ready") {

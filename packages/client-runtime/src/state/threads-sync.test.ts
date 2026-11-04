@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { RpcClientError } from "effect/rpc";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
@@ -124,6 +125,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
   /** Answers per load call; the last one repeats. Overrides `httpSnapshot`. */
   readonly httpSnapshots?: readonly ThreadSnapshotLoadResult[];
+  readonly loadSnapshot?: Effect.Effect<ThreadSnapshotLoadResult>;
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -151,6 +153,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly environmentId: EnvironmentId;
     readonly detectedAt: string;
   }>();
+  const hostStallEvents = yield* PubSub.subscribe(hostStalls);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
@@ -211,12 +214,16 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
-        Effect.map((count) =>
-          threadId === THREAD_ID
-            ? (options?.httpSnapshots?.[Math.min(count, options.httpSnapshots.length) - 1] ??
-              options?.httpSnapshot ??
-              ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
-            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+        Effect.flatMap(
+          (count) =>
+            options?.loadSnapshot ??
+            Effect.succeed(
+              threadId === THREAD_ID
+                ? (options?.httpSnapshots?.[Math.min(count, options.httpSnapshots.length) - 1] ??
+                    options?.httpSnapshot ??
+                    ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
+                : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+            ),
         ),
       ),
   });
@@ -273,7 +280,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       note: (environmentId, detectedAt) =>
         PubSub.publish(hostStalls, { environmentId, detectedAt }).pipe(Effect.asVoid),
       changes: (environmentId) =>
-        Stream.fromPubSub(hostStalls).pipe(
+        Stream.fromSubscription(hostStallEvents).pipe(
           Stream.filter((event) => event.environmentId === environmentId),
           Stream.map((event) => event.detectedAt),
         ),
@@ -2545,8 +2552,11 @@ describe("EnvironmentThreads", () => {
         expect(failed.status).toBe("empty");
         expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize the thread.");
 
-        yield* TestClock.adjust("60 seconds");
-        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+        yield* TestClock.adjust("250 millis");
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 2),
+          Stream.runHead,
+        );
 
         yield* Queue.offer(
           harness.inputs,
@@ -2586,7 +2596,7 @@ describe("EnvironmentThreads", () => {
       // A failed reload backs off, still from the snapshot.
       yield* Queue.offer(harness.inputs, TEST_DEFECT);
       yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
-      yield* TestClock.adjust("60 seconds");
+      yield* TestClock.adjust("250 millis");
       yield* awaitSubscriptions(3);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
 
@@ -2837,5 +2847,168 @@ describe("EnvironmentThreads", () => {
       expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 4);
     }),
+  );
+  it.effect.each(["cached", "empty"] as const)(
+    "recovers a stalled %s thread without discarding messages or timing out a live stream",
+    (cache) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          ...(cache === "cached" ? { cached: BASE_PROJECTION } : {}),
+          completionMarker: true,
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 1),
+          Stream.runHead,
+        );
+        const syncingProjection = {
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Syncing snapshot" },
+        };
+        yield* Queue.offer(harness.inputs, snapshot(syncingProjection, 10));
+        yield* TestClock.adjust("15 seconds");
+        const failed = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(Option.getOrNull(failed.error)).toBe("Message sync timed out. Retrying…");
+        expect(failed.status).toBe(cache === "cached" ? "cached" : "empty");
+        expect(Option.getOrNull(failed.data)).toEqual(cache === "cached" ? BASE_PROJECTION : null);
+
+        yield* TestClock.adjust("1 second");
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 2),
+          Stream.runHead,
+        );
+        expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+        yield* Queue.offer(
+          harness.inputs,
+          snapshot(
+            { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Retry snapshot" } },
+            11,
+          ),
+        );
+        yield* Queue.offer(harness.inputs, synchronized());
+        const recovered = yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" &&
+            Option.getOrNull(value.data)?.thread.title === "Retry snapshot",
+        );
+        expect(Option.isNone(recovered.error)).toBe(true);
+        yield* TestClock.adjust("1 minute");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+        expect(yield* Ref.get(harness.retryCount)).toBe(0);
+      }),
+  );
+
+  it.effect.each(["disconnect", "socket fallback"] as const)(
+    "recovers a stalled HTTP snapshot through %s",
+    (recovery) =>
+      Effect.gen(function* () {
+        const snapshotStarted = yield* Deferred.make<void>();
+        const snapshotClosed = yield* Deferred.make<void>();
+        const snapshotLoads = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          loadSnapshot: Ref.getAndUpdate(snapshotLoads, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? Deferred.succeed(snapshotStarted, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(Deferred.succeed(snapshotClosed, undefined)),
+                  )
+                : Effect.succeed({ _tag: "unavailable" } as const),
+            ),
+          ),
+        });
+        yield* Deferred.await(snapshotStarted);
+        yield* TestClock.adjust("15 seconds");
+        const failed = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(failed.status).toBe("empty");
+        expect(Option.getOrNull(failed.error)).toBe("Message sync timed out. Retrying…");
+        yield* Deferred.await(snapshotClosed);
+        if (recovery === "socket fallback") {
+          yield* TestClock.adjust("1 second");
+          expect(yield* Queue.take(harness.subscribeInputs)).toBeUndefined();
+          expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+          yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+          const live = yield* awaitThreadState(
+            harness.observed,
+            (value) => value.status === "live",
+          );
+          expect(Option.getOrThrow(live.data)).toEqual(BASE_PROJECTION);
+          return;
+        }
+
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
+        yield* SubscriptionRef.set(harness.supervisorState, {
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "offline",
+        } satisfies SupervisorConnectionState);
+        yield* TestClock.adjust("1 minute");
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(0);
+      }),
+  );
+
+  it.effect("caps stalled catch-up backoff and resets it after the completion marker", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: BASE_PROJECTION,
+        completionMarker: true,
+        resumeCache: { snapshot: undefined, owner: undefined, forceSnapshot: true },
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+      for (const [index, delay] of [1, 2, 4, 8, 16, 30, 30].entries()) {
+        yield* TestClock.adjust("15 seconds");
+        yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(index + 1);
+        yield* TestClock.adjust(`${delay} seconds`);
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === index + 2),
+          Stream.runHead,
+        );
+      }
+      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* PubSub.publish(harness.hostStalls, {
+        environmentId: TARGET.environmentId,
+        detectedAt: "2026-11-04T00:00:00.000Z",
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 9),
+        Stream.runHead,
+      );
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("1 second");
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(10);
+    }),
+  );
+
+  it.effect(
+    "recovers a lost message transport on the existing session while retaining cached messages",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        yield* Queue.offer(
+          harness.inputs,
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({ message: "socket closed", cause: null }),
+          }),
+        );
+        const failed = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(failed.status).toBe("cached");
+        expect(Option.getOrThrow(failed.data)).toEqual(BASE_PROJECTION);
+        yield* TestClock.adjust("250 millis");
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+      }),
   );
 });

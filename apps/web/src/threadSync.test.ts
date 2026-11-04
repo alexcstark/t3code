@@ -9,7 +9,7 @@ describe("resolveThreadSyncPhase", () => {
         detailExists: true,
         shellExists: true,
         status: "cached",
-        hasError: true,
+        error: "Sync failed",
       }),
     ).toBe("failed");
     expect(
@@ -17,15 +17,15 @@ describe("resolveThreadSyncPhase", () => {
         detailExists: false,
         shellExists: true,
         status: "synchronizing",
-        hasError: true,
+        error: "Sync failed",
       }),
-    ).toBe("loading");
+    ).toBe("failed");
     expect(
       resolveThreadSyncPhase({
         detailExists: true,
         shellExists: true,
         status: "synchronizing",
-        hasError: false,
+        error: null,
       }),
     ).toBe("syncing");
   });

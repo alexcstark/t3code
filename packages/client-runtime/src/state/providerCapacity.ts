@@ -1,4 +1,5 @@
-import { msg, mFallback, type MFunctionType } from "gt-i18n";
+import { msg, mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type {
   EnvironmentId,
   OrchestrationV2ThreadShell,

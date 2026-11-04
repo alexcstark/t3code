@@ -443,6 +443,7 @@ it("refreshes capacity from the providers stream without replacing the presentat
           },
           connection: { phase: "connected", error: null, traceId: null },
           serverConfig: null,
+          refusedRouteIds: [],
         },
       ],
     ]),
