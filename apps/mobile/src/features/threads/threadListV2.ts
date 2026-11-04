@@ -28,6 +28,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   sortActiveThreadsByOrderKey,
+  orderThreadsByGroup,
   resolveSettledThreadTimestamp,
   resolveThreadActivityTimestamp,
   sortPinnedThreadsByOrderKey,
@@ -481,12 +482,19 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2GroupListItem {
+  readonly type: "v2-group";
+  readonly key: string;
+  readonly name: string;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
-  | ThreadListV2SettledShelfListItem;
+  | ThreadListV2SettledShelfListItem
+  | ThreadListV2GroupListItem;
 
 export function isThreadListV2ListItem(value: {
   readonly type: string;
@@ -496,7 +504,8 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
-    value.type === "v2-settled-shelf"
+    value.type === "v2-settled-shelf" ||
+    value.type === "v2-group"
   );
 }
 
@@ -552,6 +561,8 @@ export function threadListV2ListItemsAreEqual(
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
       );
+    case "v2-group":
+      return previous.type === "v2-group" && previous.name === item.name;
   }
 }
 
@@ -578,6 +589,36 @@ function resolveThreadListV2ItemTimeLabel(
   );
 }
 
+function clusterActiveThreadListItems(
+  head: readonly ThreadListV2ListItem[],
+  enabled: boolean,
+): ThreadListV2ListItem[] {
+  if (!enabled) return [...head];
+  const pinned: ThreadListV2ListItem[] = [];
+  const active: ThreadListV2ThreadListItem[] = [];
+  for (const item of head) {
+    if (item.type === "v2-thread" && item.item.pinned) pinned.push(item);
+    else if (item.type === "v2-thread") active.push(item);
+  }
+  const ordered = orderThreadsByGroup(active.map((item) => item.item.thread));
+  if (!ordered.grouped) return [...head];
+  const byKey = new Map(
+    active.map((item) => [`${item.item.thread.environmentId}:${item.item.thread.id}`, item]),
+  );
+  const clustered = [...pinned];
+  let previous: string | null = null;
+  for (const thread of ordered.threads) {
+    const name = thread.group ?? null;
+    if (name !== null && name !== previous) {
+      clustered.push({ type: "v2-group", key: `v2-group:${name}`, name });
+    }
+    previous = name;
+    const row = byKey.get(`${thread.environmentId}:${thread.id}`);
+    if (row) clustered.push({ ...row, canMoveUp: false, canMoveDown: false });
+  }
+  return clustered;
+}
+
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -596,6 +637,7 @@ export function buildThreadListV2ListItems(input: {
   readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
   readonly shelfPreferencesLoading?: boolean;
   readonly resolve?: MessageResolver;
+  readonly clusterGroups?: boolean;
 }): ThreadListV2ListItem[] {
   const resolve = input.resolve ?? m;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
@@ -646,7 +688,11 @@ export function buildThreadListV2ListItems(input: {
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
+  const activeSlice = clusterActiveThreadListItems(
+    threadItems.slice(0, activeEnd),
+    input.clusterGroups === true,
+  );
+  const result: ThreadListV2ListItem[] = [...pendingItems, ...activeSlice];
   const shelfDisabled = input.shelfPreferencesLoading === true;
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({

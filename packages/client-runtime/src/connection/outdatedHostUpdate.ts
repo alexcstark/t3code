@@ -23,7 +23,7 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
-import { makeWsRpcProtocolClient, PING_TIMEOUT } from "../rpc/protocol.ts";
+import { makeWsRpcProtocolClient, rpcPingTimeout } from "../rpc/protocol.ts";
 import {
   isLegacyUpdateHandoffLoss,
   localizeServerSelfUpdateError,
@@ -129,7 +129,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           Layer.effect(
             RpcClient.Protocol,
             RpcClient.makeProtocolSocket({
-              pingTimeout: PING_TIMEOUT,
+              pingTimeout: rpcPingTimeout(prepared),
               retryTransientErrors: false,
               retryPolicy: Schedule.recurs(0),
             }),

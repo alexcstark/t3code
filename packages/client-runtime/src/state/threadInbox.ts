@@ -14,6 +14,10 @@ type WorkingThreadInput = Pick<
   | "runtime"
 >;
 
+/** Threads busy with work that does not need the user fold into the Working
+    section: a running run, or one stopped with background work that will wake
+    it. Approvals, pending questions, plan prompts, and failures stay in the
+    inbox. */
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;

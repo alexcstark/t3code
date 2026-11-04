@@ -74,6 +74,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
   workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
+  systemPrompt: Schema.optional(Schema.String),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

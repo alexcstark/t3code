@@ -542,6 +542,7 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
         ...(queuedMessage.freshContext ? { freshContext: true } : {}),
         ...(queuedMessage.creation
           ? {
+              systemPrompt: queuedMessage.creation.systemPrompt ?? null,
               workspaceSelection: {
                 mode: queuedMessage.creation.workspaceMode,
                 branch: queuedMessage.creation.branch,
@@ -1139,6 +1140,12 @@ export function createThreadOutboxDelivery(): {
       currentConfig.providers,
     );
     if (!hasAccess()) return;
+    if (creation.systemPrompt && currentConfig.environment.capabilities.systemPrompts !== true) {
+      return yield* restoreQueuedMessage(
+        persistedMessage,
+        "Update this environment’s server to use a saved system prompt, or choose T3 default.",
+      );
+    }
     let workspace = creation;
     const launched = launchedCreations.get(persistedMessage.messageId);
     if (launched?.revision === deliveryRevision) {
@@ -1203,6 +1210,7 @@ export function createThreadOutboxDelivery(): {
         modelSelection: sendSettings.modelSelection,
         runtimeMode: sendSettings.runtimeMode,
         interactionMode: sendSettings.interactionMode,
+        ...(creation.systemPrompt ? { systemPrompt: creation.systemPrompt } : {}),
         workspaceMode: workspace.workspaceMode,
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,

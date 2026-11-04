@@ -22,6 +22,8 @@ export interface VersionMismatch {
 const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismissals:v1";
 
 const dismissedServerUpdateFailures = new WeakSet<ServerUpdateState>();
+const T4_FORK_VERSION_PATTERN =
+  /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)-t4\.[0-9A-Za-z.-]+$/u;
 
 export function isServerUpdateFailureDismissed(state: ServerUpdateState): boolean {
   return state.status === "failed" && dismissedServerUpdateFailures.has(state);
@@ -101,21 +103,29 @@ export function supportsDesktopAppUpdate(
   return serverConfig?.environment.capabilities.desktopAppUpdate === true;
 }
 
+/** Server updates use the public T3 package even when this client is a T4 fork. */
+export function resolveServerUpdateTargetVersion(targetVersion: string): string {
+  const normalizedTargetVersion = targetVersion.trim();
+  return T4_FORK_VERSION_PATTERN.exec(normalizedTargetVersion)?.[1] ?? normalizedTargetVersion;
+}
+
+/** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(
   targetVersion: string,
   installation?: ServerInstallation,
 ): string {
+  const version = resolveServerUpdateTargetVersion(targetVersion);
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   if (installation?.kind === "npm-global") {
-    return `npm install --global --prefix ${quote(installation.prefix)} t3@${targetVersion}`;
+    return `npm install --global --prefix ${quote(installation.prefix)} t3@${version}`;
   }
   if (installation?.kind === "t3-launcher") {
     // An inherited T3CODE_HOME would otherwise send the update to a home the launcher is not in.
-    return `${quote(installation.launcher)} update --base-dir ${quote(installation.baseDir)} ${targetVersion}`;
+    return `${quote(installation.launcher)} update --base-dir ${quote(installation.baseDir)} ${version}`;
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  return `${runner} t3@${version}`;
 }
 
 export function buildVersionMismatchDismissalKey(

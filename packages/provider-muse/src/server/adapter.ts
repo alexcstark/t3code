@@ -2200,6 +2200,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       runtimePolicy: turnInput.runtimePolicy,
                     }),
                   },
+                  ...(turnInput.runtimePolicy.systemPrompt
+                    ? [{ type: "text", text: turnInput.runtimePolicy.systemPrompt }]
+                    : []),
                   ...parts,
                 ],
                 displayText: turnInput.message.text || "Image attachment",

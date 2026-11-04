@@ -52,6 +52,10 @@ import {
   readMedia,
   restartAudioService,
   openSystemSettings,
+  openWindow,
+  getWindowLayout,
+  setWindowProjectScope,
+  moveThreadsToWindow,
   checkSystemPermission,
   pasteAsText,
   probeRemoteEditors,
@@ -110,6 +114,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getPreferredSystemLanguages);
   yield* ipc.handleSync(getPrimaryPasteEnabled);
   yield* ipc.handleSync(getWindowFullscreenState);
+  yield* ipc.handleSync(getWindowLayout);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
   yield* ipc.handle(setLocalEnvironmentEnabled);
@@ -172,6 +177,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);
+  yield* ipc.handle(openWindow);
+  yield* ipc.handle(setWindowProjectScope);
+  yield* ipc.handle(moveThreadsToWindow);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

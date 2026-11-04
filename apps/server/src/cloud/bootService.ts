@@ -101,7 +101,12 @@ const systemdUnsafeValue = (plan: BootServicePlan) =>
   /[\x00-\x1f\x7f"'\\]/.test(plan.program[0] ?? "");
 
 /** Service units cannot rely on the user's shell or PATH. */
-export function renderBootServiceUnit(plan: BootServicePlan): string {
+export function renderBootServiceUnit(
+  plan: BootServicePlan,
+  options: { readonly environmentPath: string } = {
+    environmentPath: "/usr/local/bin:/usr/bin:/bin",
+  },
+): string {
   if (systemdUnsafeValue(plan)) {
     throw new BootServiceBaseDirUnsupportedError({ baseDir: plan.baseDir });
   }
@@ -120,6 +125,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
       ? []
       : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
     `Environment=${SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=PATH=${quoteSystemdValue(options.environmentPath)}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
@@ -321,8 +327,20 @@ const launchdPlistPath = (path: Path.Path, homeDir: string) =>
 function systemdManager(input: {
   readonly path: Path.Path;
   readonly unitDir: string;
+  readonly homeDir: string;
+  readonly environmentPath: string;
 }): BootServiceManager {
   const unitPath = input.path.join(input.unitDir, BOOT_SERVICE_UNIT_FILE);
+  // ~/.local/bin is on a login PATH and absent from the user manager's.
+  // Keep it ahead of the installer's directories so a later service update,
+  // which runs with the unit's own PATH, does not drop it.
+  const environmentPath = Array.from(
+    new Set(
+      [input.path.join(input.homeDir, ".local", "bin"), ...input.environmentPath.split(":")].filter(
+        (segment) => segment.length > 0,
+      ),
+    ),
+  ).join(":");
   // Once StartLimitBurst trips, systemd refuses every start until the failed state is cleared.
   const resetFailed = {
     step: "clearing the service's failed state",
@@ -355,7 +373,7 @@ function systemdManager(input: {
   return {
     kind: "systemd",
     unitPath,
-    render: renderBootServiceUnit,
+    render: (plan) => renderBootServiceUnit(plan, { environmentPath }),
     stop: [
       {
         step: "stopping the installed service",
@@ -565,6 +583,8 @@ function selectBootServiceManager(input: {
       unitDir:
         input.systemdUnitDir ??
         defaultSystemdUnitDir(input.path, input.homeDir, input.xdgConfigHome),
+      homeDir: input.homeDir,
+      environmentPath: input.environmentPath,
     });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {

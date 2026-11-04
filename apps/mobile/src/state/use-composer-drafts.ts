@@ -14,6 +14,7 @@ import {
   ProviderInteractionMode as ProviderInteractionModeSchema,
   ProviderOptionSelection as ProviderOptionSelectionSchema,
   RuntimeMode as RuntimeModeSchema,
+  SystemPrompt,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -446,6 +447,7 @@ export interface ComposerDraft {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
+  readonly systemPrompt?: SystemPrompt | null;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   /** `/clear` armed this draft: its next message starts a fresh provider session. */
@@ -489,6 +491,7 @@ export interface ComposerDraftWorkspaceSelection {
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
   | "modelSelection"
+  | "systemPrompt"
   | "runtimeMode"
   | "interactionMode"
   | "freshContext"
@@ -524,6 +527,7 @@ const ComposerDraftSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
+  systemPrompt: Schema.optional(Schema.NullOr(SystemPrompt)),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   freshContext: Schema.optional(Schema.Boolean),
@@ -704,6 +708,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.text.length === 0 &&
     draft.attachments.length === 0 &&
     draft.modelSelection === undefined &&
+    draft.systemPrompt == null &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
     draft.freshContext !== true &&
@@ -771,6 +776,7 @@ export function decodePersistedComposerState(value: unknown): {
               draft.modelSelection &&
               draft.text.length === 0 &&
               draft.attachments.length === 0 &&
+              draft.systemPrompt == null &&
               draft.runtimeMode === undefined &&
               draft.interactionMode === undefined &&
               draft.workspaceSelection === undefined
@@ -1281,6 +1287,9 @@ export async function removeDeliveredCloudQueuedMessage(
         !sameDraftAttachmentIds(editor.attachments, message.attachments) ||
         (editor.modelSelection !== undefined &&
           JSON.stringify(editor.modelSelection) !== JSON.stringify(message.modelSelection)) ||
+        (editor.systemPrompt !== undefined &&
+          JSON.stringify(editor.systemPrompt ?? null) !==
+            JSON.stringify(message.creation?.systemPrompt ?? null)) ||
         (editor.runtimeMode !== undefined && editor.runtimeMode !== message.runtimeMode) ||
         (editor.interactionMode !== undefined &&
           editor.interactionMode !== message.interactionMode) ||
@@ -1888,6 +1897,7 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.context === b.context &&
     a.importedShareIds === b.importedShareIds &&
     a.modelSelection === b.modelSelection &&
+    a.systemPrompt === b.systemPrompt &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
     a.freshContext === b.freshContext &&
@@ -1918,6 +1928,7 @@ export function undoComposerDraftMergeState(
   const undoSetting = <
     K extends
       | "modelSelection"
+      | "systemPrompt"
       | "runtimeMode"
       | "interactionMode"
       | "freshContext"
@@ -1939,6 +1950,7 @@ export function undoComposerDraftMergeState(
       (attachment) => !insertedAttachmentIds.has(attachment.id),
     ),
     modelSelection: undoSetting("modelSelection"),
+    systemPrompt: undoSetting("systemPrompt"),
     runtimeMode: undoSetting("runtimeMode"),
     interactionMode: undoSetting("interactionMode"),
     freshContext: undoSetting("freshContext"),

@@ -9118,6 +9118,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+            ...(turnInput.runtimePolicy.systemPrompt === undefined
+              ? {}
+              : { systemPrompt: turnInput.runtimePolicy.systemPrompt }),
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined

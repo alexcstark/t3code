@@ -14,6 +14,7 @@ export interface DesktopIpcInvokeEvent {
 
 export interface DesktopIpcSyncEvent extends DesktopIpcInvokeEvent {
   returnValue: unknown;
+  readonly sender: { readonly id: number };
 }
 
 export type DesktopIpcSenderGuard = (event: DesktopIpcInvokeEvent) => Effect.Effect<boolean>;
@@ -80,7 +81,7 @@ export interface DesktopIpcMethod<E, R> {
 
 export interface DesktopSyncIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: () => Effect.Effect<unknown, E, R>;
+  readonly handler: (event?: DesktopIpcInvokeEvent) => Effect.Effect<unknown, E, R>;
 }
 
 export class DesktopIpc extends Context.Service<
@@ -158,7 +159,7 @@ export const make = (
                     yield* Effect.logWarning("Rejected sync IPC from an untrusted sender.");
                     return undefined;
                   }
-                  return yield* handler();
+                  return yield* handler(event);
                 }).pipe(
                   Effect.annotateLogs({ channel }),
                   Effect.withSpan("desktop.ipc.invokeSync"),
@@ -186,7 +187,7 @@ export const layer = (ipcMain: DesktopIpcMain) =>
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       return make(ipcMain, (event) =>
         Effect.map(
-          electronWindow.main,
+          electronWindow.forWebContentsId(event.sender.id),
           (main) =>
             Option.isSome(main) &&
             main.value.webContents.id === event.sender.id &&
@@ -287,7 +288,7 @@ export interface DesktopSyncIpcMethodRegistration<
     ResultDecodingServices,
     ResultEncodingServices
   >;
-  readonly handler: () => Effect.Effect<Result, E, R>;
+  readonly handler: (event?: DesktopIpcInvokeEvent) => Effect.Effect<Result, E, R>;
 }
 
 export const makeSyncIpcMethod = <
@@ -311,9 +312,9 @@ export const makeSyncIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: () =>
+    handler: (event) =>
       method
-        .handler()
+        .handler(event)
         .pipe(
           Effect.flatMap(encode),
           Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),

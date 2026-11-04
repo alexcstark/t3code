@@ -103,6 +103,7 @@ export interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean, entryId?: string) => void;
   onWorkEntryContentReady?: (anchorKey: string, entryId: string) => void;
+  onResponseClick: () => void;
   onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;

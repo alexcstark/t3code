@@ -2881,6 +2881,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             deviceInstructionsDelivered: delivered.device,
             providerInstructions: CURSOR_BACKGROUND_WAIT_INSTRUCTIONS,
             providerInstructionsDelivered: delivered.backgroundWait,
+            ...(turnInput.runtimePolicy.systemPrompt === undefined
+              ? {}
+              : { systemPrompt: turnInput.runtimePolicy.systemPrompt }),
           });
           const userText =
             interrupted === undefined
@@ -2970,7 +2973,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               known?.agent === agent.nativeThreadId
                 ? known
                 : {
-                    orchestration: turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1,
+                    orchestration:
+                      turnInput.runtimePolicy.systemPrompt === undefined &&
+                      (turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1),
                     device: false,
                     backgroundWait: false,
                     runtime: undefined,
@@ -3074,7 +3079,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             if (resume === undefined) {
               yield* Ref.set(told, {
                 agent: agent.nativeThreadId,
-                orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
+                orchestration:
+                  !compacted &&
+                  (delivered.orchestration ||
+                    mcpServers !== undefined ||
+                    turnInput.runtimePolicy.systemPrompt !== undefined),
                 device: !compacted && hasDeviceTools,
                 backgroundWait:
                   !compacted && (delivered.backgroundWait || mcpServers !== undefined),

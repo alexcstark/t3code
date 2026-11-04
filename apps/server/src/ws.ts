@@ -417,7 +417,10 @@ export const withLateConfigDiscovery = <E, R>(
             return [{ ...current, providers: event.payload.providers }, [event]];
           case "settingsUpdated":
             return [{ ...current, settings: event.payload.settings }, [event]];
-          // Themes and usage-limit sources survive snapshots because snapshots never include them.
+          case "eventLoopStall":
+            return [{ ...current, lastEventLoopStall: event.payload }, [event]];
+          // Themes and usage-limit sources never ride in a snapshot; clients
+          // carry their projected values across one.
           default:
             return [current, [event]];
         }
@@ -939,17 +942,6 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.thread_id": input.threadId,
     });
-    yield* threadManagement.ensureLegacyTranscript(input.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationV2GetThreadProjectionError({
-            threadId: input.threadId,
-            message: `Failed to hydrate migrated thread ${input.threadId}`,
-            cause,
-          }),
-      ),
-    );
-
     const eventStreamFrom = (afterSequence: number) =>
       threadManagement
         .streamStoredEventsFrom({
@@ -1073,6 +1065,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         (input.afterSequence < highWater && input.afterSequence < prunedThrough)
       ) {
         return yield* snapshotThenLive();
+      }
+      // An unchanged thread needs only confirmation, with no replay to prepare.
+      if (input.afterSequence === highWater) {
+        return Stream.concat(completionMarker, eventStreamFrom(highWater));
       }
       const stats = yield* applicationEvents
         .getAgentReplayStats({
@@ -2241,6 +2237,9 @@ export const layerWsRpc = (
                           modelSelection: input.modelSelection,
                           runtimeMode: input.runtimeMode,
                           interactionMode: input.interactionMode,
+                          ...(input.systemPrompt === undefined
+                            ? {}
+                            : { systemPrompt: input.systemPrompt }),
                           workspaceStrategy: input.workspaceStrategy,
                           ...(input.initialMessage === undefined
                             ? {}
@@ -3588,6 +3587,17 @@ export const layerWsRpc = (
                   payload: { settings },
                 })),
               );
+              // Older clients reject an unknown event and drop the whole config subscription.
+              const stallUpdates =
+                input.eventLoopStalls === true
+                  ? eventLoopMonitor.noticeableStalls.pipe(
+                      Stream.map((stall) => ({
+                        version: 1 as const,
+                        type: "eventLoopStall" as const,
+                        payload: stall,
+                      })),
+                    )
+                  : Stream.never;
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,
@@ -3595,7 +3605,10 @@ export const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, stallUpdates),
+                    ),
                   ),
                 ),
               );

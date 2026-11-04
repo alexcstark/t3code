@@ -1273,6 +1273,7 @@ describe("thread outbox", () => {
         model: "gpt-5.4",
       },
       creation: {
+        systemPrompt: { id: "empty", name: "Empty", content: "" },
         projectId: ProjectId.make("project-1"),
         workspaceMode: "worktree",
         branch: "fork/feature",

@@ -109,6 +109,7 @@ import {
 import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import type { AppBarSearch } from "../../components/ui/AppBar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
+import { ProviderCapacitySection, useProviderCapacity } from "./ProviderCapacitySection";
 import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
@@ -289,6 +290,7 @@ type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null;
   readonly cwd: string | null;
+  readonly currentThreadId?: ThreadId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -313,6 +315,7 @@ export type ExistingThreadSettingsRouteParams = {
 
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
+  readonly currentThreadId?: ThreadId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
@@ -334,6 +337,8 @@ type ThreadSettingsSessionValue = {
   readonly pendingModel: ModelOption | null;
   readonly favoritesOnly: boolean;
   readonly providerFilter: string | null;
+  /** Provider capacity leads the sheet until a provider filter is chosen. */
+  readonly capacityOpen: boolean;
   readonly searchQuery: string;
   readonly showLegacy: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
@@ -510,6 +515,11 @@ function ThreadSettingsSessionProvider(
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [capacityOpen, setCapacityOpen] = useState(true);
+  const chooseProviderFilter = (providerKey: string | null) => {
+    setCapacityOpen(false);
+    setProviderFilter(providerKey);
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -638,6 +648,7 @@ function ThreadSettingsSessionProvider(
 
   const value = {
     environmentId,
+    currentThreadId: props.currentThreadId ?? null,
     providerInstanceId: props.providerInstanceId,
     providerGroups,
     manageHidden,
@@ -658,6 +669,7 @@ function ThreadSettingsSessionProvider(
     pendingModel,
     favoritesOnly,
     providerFilter,
+    capacityOpen,
     searchQuery,
     showLegacy: showLegacyToggle,
     applyOptionChange,
@@ -666,7 +678,7 @@ function ThreadSettingsSessionProvider(
     isDisplayed,
     pressModel,
     setFavoritesOnly,
-    setProviderFilter,
+    setProviderFilter: chooseProviderFilter,
     setSearchQuery,
     setShowLegacy: setShowLegacyToggle,
     toggleProvider,
@@ -1110,13 +1122,21 @@ function ThreadSettingsMainContent(props: {
   const reducedMotion = useReducedMotion();
   const reduceMotionEnabled = useReduceMotionEnabled();
   const animationsReady = listLoaded && !reducedMotion && !reduceMotionEnabled;
-  const catalogItems = buildThreadSettingsCatalogItems(session, m, locale);
+  const capacity = useProviderCapacity({
+    environmentId: session.environmentId,
+    currentThreadId: session.currentThreadId ?? null,
+    providerGroups: session.providerGroups,
+  });
   const hasActiveCatalogFilter =
     session.favoritesOnly ||
     session.providerFilter !== null ||
     session.searchQuery.trim().length > 0;
+  const showCapacity = session.capacityOpen && !hasActiveCatalogFilter && capacity.length > 0;
+  const catalogItems = showCapacity ? [] : buildThreadSettingsCatalogItems(session, m, locale);
   const listItems = [
-    ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
+    ...(catalogItems.length === 0 && !showCapacity
+      ? ([{ kind: "empty", key: "empty" }] as const)
+      : catalogItems),
     { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
   const renderCatalogItem = (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
@@ -1190,6 +1210,17 @@ function ThreadSettingsMainContent(props: {
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
+      ListHeaderComponent={
+        <>
+          {showCapacity ? (
+            <ProviderCapacitySection
+              capacity={capacity}
+              providerGroups={session.providerGroups}
+              onSelectProvider={session.setProviderFilter}
+            />
+          ) : null}
+        </>
+      }
       recycleItems
       refreshControl={
         session.environmentId ? (
@@ -1541,6 +1572,7 @@ export function ExistingThreadSettingsRouteScreen({
   return (
     <ThreadSettingsPickerScreen
       environmentId={selectedThread.environmentId}
+      currentThreadId={route.params.threadId}
       projectId={selectedThread.projectId}
       cwd={selectedThreadCwd}
       providerInstanceId={modelSelection.instanceId}

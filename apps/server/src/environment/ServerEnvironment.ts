@@ -222,6 +222,7 @@ export const make = Effect.gen(function* () {
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
+      filesystemMetadata: true,
       attachmentUploads: true,
       accessTokenRenewal: true,
       questionAttachments: true,
@@ -248,6 +249,7 @@ export const make = Effect.gen(function* () {
       worktreesDirectory: true,
       ...(hostPlatform === "darwin" ? { fastWorktreeCheckout: true } : {}),
       threadAutoSettlementScope: true,
+      systemPrompts: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
       projectProviderInstanceOverrides: true,
@@ -264,6 +266,7 @@ export const make = Effect.gen(function* () {
       threadActiveReorder: true,
       threadAutoSettleOptOut: true,
       threadProjectFromScratch: true,
+      threadGroups: true,
       threadTitleRegeneration: true,
       commandOutputStreaming: true,
       threadVisitedTracking: true,
@@ -307,6 +310,7 @@ export const make = Effect.gen(function* () {
       shellThreadFamilies: true,
       shellOlderSettled: true,
       agentFeedback: true,
+      browserProfileReporting: true,
     },
   };
 

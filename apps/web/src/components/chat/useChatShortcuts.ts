@@ -46,6 +46,7 @@ interface ChatShortcutsInput {
   /** Takes type-to-focus keys and the composer and branch toolbar chords. */
   readonly composerRef: ComposerHandleRef;
   readonly branchToolbarRef: { readonly current: BranchToolbarHandle | null };
+  readonly interrupt?: (() => void) | undefined;
   readonly closeThreadFind: () => void;
   readonly commands: ChatShortcutCommands;
   /** Handles commands not in `commands`, such as project scripts. */
@@ -76,6 +77,20 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
+
+    if (
+      !inSideChatPane &&
+      input.interrupt &&
+      (event.key === "Escape" || (event.ctrlKey && event.key.toLowerCase() === "c")) &&
+      !shortcutContext.terminalFocus &&
+      !shortcutContext.modelPickerOpen &&
+      (event.key !== "Escape" || !document.querySelector('[data-composer-drawer-layer="true"]'))
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) input.interrupt();
+      return;
+    }
 
     if (
       !inSideChatPane &&

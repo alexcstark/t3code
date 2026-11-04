@@ -53,6 +53,7 @@ const clientSettings: ClientSettings = {
   onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
   proactivePanelsEnabled: true,
+  projectDefaultEnvironmentIds: {},
   showSkillsInSlashMenu: false,
   persistComposerContextStrip: true,
   providerModelPreferences: {},

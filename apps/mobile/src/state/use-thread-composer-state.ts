@@ -6,7 +6,10 @@ import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
 import { compactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import {
+  reconcileThreadShellRuntimeFromDetail,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
@@ -22,6 +25,7 @@ import {
   deriveLatestThreadRun,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadLastAgentUpdateAt,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -368,9 +372,15 @@ export function useThreadComposerState(input: {
     thread: selectedThreadShell,
     projection: selectedThreadProjection?.projection,
   });
-  const selectedThreadRuntime = selectedThreadProjection
+  const detailRuntime = selectedThreadProjection
     ? deriveThreadRuntime(selectedThreadProjection.projection)
-    : (selectedThreadShell?.runtime ?? null);
+    : null;
+  const selectedThreadRuntime =
+    detailRuntime === null
+      ? (selectedThreadShell?.runtime ?? null)
+      : selectedThreadShell === null || !threadRuntimeIsActive(detailRuntime)
+        ? detailRuntime
+        : reconcileThreadShellRuntimeFromDetail(selectedThreadShell, detailRuntime).runtime;
   const selectedThreadActivityRun = selectedThreadProjection
     ? deriveThreadActivityRun(selectedThreadProjection.projection)
     : (selectedThreadShell?.latestRun ?? null);
@@ -453,6 +463,9 @@ export function useThreadComposerState(input: {
       }) ?? runlessWorkStartedAt
     );
   })();
+  const lastAgentUpdateAt = selectedThreadProjection
+    ? deriveThreadLastAgentUpdateAt(selectedThreadProjection.projection)
+    : null;
   const runlessWorkActive = runlessWorkStartedAt !== null;
 
   const providerSubagentStatus = selectedThreadProjection
@@ -1055,6 +1068,7 @@ export function useThreadComposerState(input: {
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
+    lastAgentUpdateAt,
     runlessWorkActive,
     extensionStatuses: deriveProviderExtensionStatuses(
       selectedThreadProjection?.projection ?? null,

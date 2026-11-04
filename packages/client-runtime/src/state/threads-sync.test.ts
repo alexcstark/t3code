@@ -22,6 +22,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
@@ -41,6 +42,7 @@ import {
 } from "../connection/model.ts";
 import { recordServerClock, toServerClock } from "../clock.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import {
@@ -144,6 +146,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* SubscriptionRef.make(0);
   const loaderCalls = yield* Ref.make(0);
+  const subscribeInputs = yield* Queue.unbounded<number | undefined>();
+  const hostStalls = yield* PubSub.unbounded<{
+    readonly environmentId: EnvironmentId;
+    readonly detectedAt: string;
+  }>();
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
@@ -179,6 +186,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems),
         ]).pipe(
           Effect.andThen(SubscriptionRef.updateAndGet(subscriptionCount, (count) => count + 1)),
+          Effect.tap(() => Queue.offer(subscribeInputs, input.afterSequence)),
           Effect.map(
             (count) =>
               options?.streamFor?.(count) ??
@@ -261,6 +269,15 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   });
   let makeThreadState = makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    Effect.provideService(HostStallRefresh.HostStallRefresh, {
+      note: (environmentId, detectedAt) =>
+        PubSub.publish(hostStalls, { environmentId, detectedAt }).pipe(Effect.asVoid),
+      changes: (environmentId) =>
+        Stream.fromPubSub(hostStalls).pipe(
+          Stream.filter((event) => event.environmentId === environmentId),
+          Stream.map((event) => event.detectedAt),
+        ),
+    }),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader.ThreadSnapshotLoader, snapshotLoader),
     Effect.provideService(
@@ -306,6 +323,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     retryCount,
     subscriptionCount,
     loaderCalls,
+    subscribeInputs,
+    hostStalls,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
@@ -2321,6 +2340,49 @@ describe("EnvironmentThreads", () => {
       );
       expect(advanced.history.latestLocalTurnOrdinal).toBe(22);
       expect(advanced.history.historyCursor).toBe("wm-cursor");
+    }),
+  );
+
+  it.effect("warm resume restores latestLocalTurnOrdinal from progressive cache", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: {
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Warm watermark" },
+        },
+        cachedHistory: {
+          historyCursor: "warm-wm-cursor",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 33,
+        },
+      });
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) &&
+          value.data.value.thread.title === "Warm watermark" &&
+          value.history.latestLocalTurnOrdinal === 33,
+      );
+      expect(state.history).toMatchObject({
+        historyCursor: "warm-wm-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 33,
+        expanded: false,
+      });
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("reloads the open thread after a host stall instead of resuming the cursor", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      expect(yield* Queue.take(harness.subscribeInputs)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      yield* PubSub.publish(harness.hostStalls, {
+        environmentId: TARGET.environmentId,
+        detectedAt: "2026-11-02T18:02:00.000Z",
+      });
+      expect(yield* Queue.take(harness.subscribeInputs)).toBeUndefined();
     }),
   );
 

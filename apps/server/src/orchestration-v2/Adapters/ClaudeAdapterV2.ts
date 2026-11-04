@@ -2464,6 +2464,7 @@ export function makeClaudeQueryOptions(input: {
   readonly cwd: string | null;
   /** The thread's other folders: listed in the system prompt and granted as directories. */
   readonly workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"];
+  readonly systemPrompt?: string;
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
   readonly promptSuggestions?: boolean;
@@ -2635,14 +2636,24 @@ export function makeClaudeQueryOptions(input: {
           agentFeedback,
           runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
         }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              CLAUDE_SEND_TO_USER_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
+          (input.systemPrompt !== undefined
+            ? "\n\n" +
+              input.systemPrompt +
+              (input.mcpServers === undefined
+                ? ""
+                : CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                  CLAUDE_SEND_TO_USER_INSTRUCTIONS +
+                  (deviceInstructions
+                    ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                    : ""))
+            : input.mcpServers === undefined
+              ? ""
+              : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+                CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                CLAUDE_SEND_TO_USER_INSTRUCTIONS +
+                (deviceInstructions
+                  ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                  : "")),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -13593,6 +13604,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(turnInput.runtimePolicy.workspace === undefined
               ? {}
               : { workspace: turnInput.runtimePolicy.workspace }),
+            ...(turnInput.runtimePolicy.systemPrompt === undefined
+              ? {}
+              : { systemPrompt: turnInput.runtimePolicy.systemPrompt }),
             attachmentsDir,
             settings: adapterOptions.settings,
             // Delegated threads have no one typing, so they never ask for suggestions.

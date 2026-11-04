@@ -309,7 +309,7 @@ function ThreadListV2Section(props: {
   );
 }
 
-const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
+export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
@@ -784,6 +784,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
+  readonly groupsSupported?: boolean;
+  readonly groupNames?: readonly string[];
+  readonly onSetThreadGroup?: (thread: EnvironmentThreadShell, group: string | null) => void;
+  readonly onCreateThreadGroup?: (thread: EnvironmentThreadShell) => void;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
     thread: EnvironmentThreadShell,
@@ -1098,6 +1102,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       isRegeneratingTitle,
     ],
   );
+  const groupMenuItems = useMemo<MenuAction[]>(() => {
+    if (props.groupsSupported !== true) return [];
+    const names = props.groupNames ?? [];
+    return [
+      {
+        id: "group",
+        title: gt("Group"),
+        image: "folder",
+        subactions: [
+          ...names.map((name) => ({
+            id: `group:set:${encodeURIComponent(name)}`,
+            title: name,
+            state: (thread.group === name ? "on" : "off") as "on" | "off",
+          })),
+          { id: "group:new", title: gt("New group…") },
+          ...(thread.group ? [{ id: "group:none", title: gt("None") }] : []),
+        ],
+      },
+    ];
+  }, [props.groupNames, props.groupsSupported, thread.group, gt]);
   const menuActions = useMemo<MenuAction[]>(() => {
     const nested = Platform.OS === "ios";
     const localized = (action: MenuAction): MenuAction => ({ ...action, title: m(action.title) });
@@ -1126,6 +1150,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           pin: [],
           secondary: [
             ...titleMenuItems,
+            ...groupMenuItems,
             ...autoSettleMenuItems,
             localized(LEGACY_MENU_ACTIONS[0]!),
             localized(SNOOZED_MENU_ACTIONS[1]!),
@@ -1141,7 +1166,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           direct: [...direct, localized(LEGACY_MENU_ACTIONS[0]!)],
           reorder: reorderMenuItems,
           pin: pinMenuItems,
-          secondary: [...titleMenuItems, localized(LEGACY_MENU_ACTIONS[1]!)],
+          secondary: [...titleMenuItems, ...groupMenuItems, localized(LEGACY_MENU_ACTIONS[1]!)],
         },
         m,
       );
@@ -1157,6 +1182,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           pin: pinMenuItems,
           secondary: [
             ...titleMenuItems,
+            ...groupMenuItems,
             ...autoSettleMenuItems,
             localized(LEGACY_MENU_ACTIONS[0]!),
             localized(SLIM_MENU_ACTIONS[1]!),
@@ -1186,6 +1212,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: pinMenuItems,
         secondary: [
           ...titleMenuItems,
+          ...groupMenuItems,
           ...autoSettleMenuItems,
           localized(LEGACY_MENU_ACTIONS[0]!),
           localized(CARD_MENU_ACTIONS[1]!),
@@ -1207,6 +1234,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     swipeActions.secondary,
     thread.branch,
     titleMenuItems,
+    groupMenuItems,
   ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -1223,6 +1251,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
+      if (nativeEvent.event === "group:new") props.onCreateThreadGroup?.(thread);
+      if (nativeEvent.event === "group:none") props.onSetThreadGroup?.(thread, null);
+      if (nativeEvent.event.startsWith("group:set:")) {
+        props.onSetThreadGroup?.(
+          thread,
+          decodeURIComponent(nativeEvent.event.slice("group:set:".length)),
+        );
+      }
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "turn-into-project") void turnThreadIntoProject(thread);
       if (nativeEvent.event === "mark-unread") {
@@ -1294,8 +1330,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
+      props.onCreateThreadGroup,
+      props.onSetThreadGroup,
+      turnThreadIntoProject,
     ],
   );
+  /* oxlint-enable react/memo-dependencies */
   const primaryAction = useMemo(() => {
     if (swipeActions.primary === "archive") {
       return {
