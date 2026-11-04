@@ -262,6 +262,8 @@ patchedDependencies:
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
+  # Exposes the spawn call so Linux servers can start children from a small helper process.
+  "@effect/platform-node-shared@4.1.2": patches/@effect__platform-node-shared@4.1.2.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

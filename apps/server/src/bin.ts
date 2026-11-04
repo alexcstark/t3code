@@ -6,6 +6,7 @@
  */
 import { isEntrypoint } from "./entrypoint.ts";
 import { enableCliCompileCache } from "./cliCompileCache.ts";
+import { runSpawnHelper, SPAWN_HELPER_COMMAND } from "./spawnHelper/SpawnHelperMain.ts";
 
 if (
   isEntrypoint({
@@ -15,6 +16,15 @@ if (
   })
 ) {
   const command = process.argv[2];
+  if (command === SPAWN_HELPER_COMMAND) {
+    // Loads nothing else: its memory size sets the cost of every spawn it makes.
+    runSpawnHelper();
+  } else {
+    await runCliOrFastPath(command);
+  }
+}
+
+async function runCliOrFastPath(command: string | undefined) {
   // Guard sockets before either dispatch path can load outbound-capable modules.
   const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
