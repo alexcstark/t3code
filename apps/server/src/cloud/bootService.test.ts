@@ -35,6 +35,17 @@ import {
   serviceUnitLogPathOf,
 } from "./serviceProtocol.ts";
 
+const linuxRuntime = "/home/theo/.t3/runtime/versions/1.2.3/t3";
+const linuxPlan = {
+  program: [linuxRuntime, "__service-launcher"],
+  baseDir: "/home/theo/.t3",
+  logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
+  unitPath: "/home/theo/.config/systemd/user/t3code.service",
+};
+const linuxRenderOptions = {
+  environmentPath: "/home/theo/.local/bin:/usr/local/bin:/usr/bin:/bin",
+};
+
 const leaseObserver = vi.hoisted(() => ({ contended: (_destination: string) => {} }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -70,11 +81,13 @@ it("reads the served T3 home and log back out of a rendered unit, plist, or task
   });
 
   expect(
-    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.t3"))),
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServiceUnit(plan("/home/theo/.t3"), linuxRenderOptions),
+    ),
   ).toBe("/home/theo/.t3");
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
+      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%"), linuxRenderOptions),
     ),
   ).toBe("/home/theo/T3 Data/100%");
   expect(
@@ -105,12 +118,15 @@ it("reads the served T3 home and log back out of a rendered unit, plist, or task
 });
 
 it("protects the server unit from agents under CPU and memory pressure", () => {
-  const unit = BootService.renderBootServiceUnit({
-    program: ["/home/theo/.t3/runtime/versions/1.2.3/t3", "__service-launcher"],
-    baseDir: "/home/theo/.t3",
-    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
-  });
+  const unit = BootService.renderBootServiceUnit(
+    {
+      program: ["/home/theo/.t3/runtime/versions/1.2.3/t3", "__service-launcher"],
+      baseDir: "/home/theo/.t3",
+      logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
+      unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    },
+    linuxRenderOptions,
+  );
   const service = unit.slice(unit.indexOf("[Service]"), unit.indexOf("[Install]"));
   for (const line of [
     "CPUWeight=1000",
@@ -179,6 +195,12 @@ it.each([
     (char) => char.charCodeAt(0) < 0x20 || `"'\\`.includes(char),
   );
   expect(unsafe).toEqual([]);
+});
+
+it("keeps provider CLIs on the systemd service PATH", () => {
+  const unit = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
+
+  expect(unit).toContain("Environment=PATH=/home/theo/.local/bin:/usr/local/bin:/usr/bin:/bin");
 });
 
 const macInstallerPath =
@@ -1732,6 +1754,19 @@ process.disconnect();
   );
 
   // regression: #8173 keep provider CLIs available in the macOS service
+  it.effect("records the user provider bin directory in the systemd unit", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", "/usr/bin:/bin");
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+      const home = plan.baseDir.slice(0, -"/.t3".length);
+
+      expect(unit).toContain(
+        `Environment=PATH=${home}/.local/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin`,
+      );
+    }),
+  );
+
   it.effect("reconstructs a launch agent search path when the installer has no PATH", () =>
     Effect.gen(function* () {
       const { service, fs } = yield* makeHarness("darwin", "");

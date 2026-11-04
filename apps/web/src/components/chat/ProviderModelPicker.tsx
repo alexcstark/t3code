@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
@@ -91,6 +92,11 @@ export const DockedPickerContext = createContext<{ modelLabel: string }>({ model
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
   workspaceCwd?: string | null;
+  currentThreadId?: ThreadId | null;
+  /**
+   * The instance currently selected in the composer. Drives the trigger
+   * icon, label and the default-highlighted combobox row.
+   */
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
@@ -292,6 +298,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const picker = (
     <ModelPickerContent
+      currentThreadId={props.currentThreadId ?? null}
       searchInputRef={searchInputRef}
       environmentId={props.environmentId}
       workspaceCwd={props.workspaceCwd ?? null}

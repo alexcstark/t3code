@@ -254,6 +254,13 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "system-prompts",
+    title: "System prompts",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["injected instructions prompt presets saved system developer agent"],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: msg("Keep worktrees with local changes"),

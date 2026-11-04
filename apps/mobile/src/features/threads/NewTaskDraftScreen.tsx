@@ -16,6 +16,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { ThreadSystemPromptPicker } from "./ThreadSystemPromptPicker";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -1035,6 +1036,15 @@ export function NewTaskDraftScreen(props: {
       ) : null}
       {viewportHeight < SHORT_DRAFT_VIEWPORT_HEIGHT ? contextControls : null}
       {flow.canChooseWorkspace ? workspaceControls : null}
+      {selectedEnvironmentServerConfig?.environment.capabilities.systemPrompts === true ||
+      flow.systemPrompt ? (
+        <ThreadSystemPromptPicker
+          selected={flow.systemPrompt}
+          prompts={flow.systemPrompts}
+          disabled={isComposerInteractionLocked}
+          onChange={flow.setSystemPrompt}
+        />
+      ) : null}
     </View>
   );
 

@@ -14,6 +14,7 @@ import { connectionRoutes, hasRelayRoute } from "./routes.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as HostStallRefresh from "./hostStallRefresh.ts";
 import * as RpcSession from "../rpc/session.ts";
 
 export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscoveredCompatibility")(
@@ -82,6 +83,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
     RelayEnvironmentDiscovery.layer,
     layerOnboarding,
     ConnectionResolver.layer,
+    HostStallRefresh.layer,
   );
   const layerConnectionStartup = Layer.effectDiscard(
     Effect.gen(function* () {

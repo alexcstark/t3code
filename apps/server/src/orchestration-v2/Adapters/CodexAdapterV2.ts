@@ -50,6 +50,7 @@ import {
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { ProviderOutOfMemoryError } from "@t3tools/provider-core/server/failure";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   COMPUTER_USE_TOOL_SOURCE,
@@ -972,7 +973,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ]),
     );
     const t3Context =
-      input.hasT3Mcp === true
+      input.hasT3Mcp === true || input.runtimePolicy.systemPrompt !== undefined
         ? buildCodexAdditionalContext(
             {
               model: input.modelSelection.model,
@@ -980,9 +981,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               agentFeedback: input.agentFeedback ?? "off",
             },
             {
-              browser: input.browserToolsAvailable ?? true,
-              device: input.deviceToolsAvailable ?? false,
+              browser: input.hasT3Mcp === true && (input.browserToolsAvailable ?? true),
+              device: input.hasT3Mcp === true && (input.deviceToolsAvailable ?? false),
             },
+            input.runtimePolicy.systemPrompt,
           )
         : undefined;
     // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
@@ -2133,6 +2135,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
         const scope = yield* Scope.Scope;
+        const agentScope = yield* AgentScope;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
             ? undefined
@@ -2285,7 +2288,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const rejectIfRetired = Effect.suspend(() =>
           retired ? Effect.fail(new CodexAppServerRetiredError()) : Effect.void,
         );
-        yield* client.awaitTermination.pipe(Effect.catch(retireAppServer), Effect.forkScoped);
+        yield* client.awaitTermination.pipe(
+          Effect.catch((cause) =>
+            agentScope
+              .oomKilled(input.threadId)
+              .pipe(
+                Effect.flatMap((outOfMemory) =>
+                  retireAppServer(outOfMemory ? new ProviderOutOfMemoryError({ cause }) : cause),
+                ),
+              ),
+          ),
+          Effect.forkScoped,
+        );
         // The outcome of an unanswered request is unknown, so it fails rather than retries.
         const withAppServerDeadline =
           (method: string) =>

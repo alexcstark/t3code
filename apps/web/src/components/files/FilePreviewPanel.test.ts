@@ -9,6 +9,7 @@ import { promptFileCommentEntries, remapFileCommentAnnotations } from "./fileCom
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  resolvedFilePreviewPath,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
   workspaceAssetResource,
@@ -754,4 +755,21 @@ Third}`;
       expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
     },
   );
+});
+
+describe("resolvedFilePreviewPath", () => {
+  it("keeps a workspace-relative request until a host path is returned", () => {
+    expect(resolvedFilePreviewPath("a1-strategies/src/Score.kt", undefined)).toBe(
+      "a1-strategies/src/Score.kt",
+    );
+    expect(
+      resolvedFilePreviewPath("a1-strategies/src/Score.kt", "a1-strategies/src/Score.kt"),
+    ).toBe("a1-strategies/src/Score.kt");
+  });
+
+  it("switches to the loaded absolute path so sibling files stay read-only", () => {
+    expect(
+      resolvedFilePreviewPath("a1-strategies/src/Score.kt", "/repos/a1-strategies/src/Score.kt"),
+    ).toBe("/repos/a1-strategies/src/Score.kt");
+  });
 });

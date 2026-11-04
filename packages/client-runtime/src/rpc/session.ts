@@ -32,7 +32,7 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+import { makeWsRpcProtocolClient, rpcPingTimeout, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -73,6 +73,7 @@ export interface RpcSessionOptions {
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
   readonly providerStatusDeltas?: boolean;
+  readonly eventLoopStalls?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -136,7 +137,6 @@ function serverConfigReplayEvents(
 }
 
 const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
-const PING_TIMEOUT_SECONDS = Duration.toSeconds(PING_TIMEOUT);
 
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError | ConnectionAttemptError,
@@ -190,6 +190,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
     ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
     ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
+    ...(options.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
   };
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
   const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
@@ -223,7 +224,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             ? translatableDetail(
                 msg("{host} stopped responding for {seconds}s.", {
                   host: connection.label,
-                  seconds: String(PING_TIMEOUT_SECONDS),
+                  seconds: String(
+                    Duration.toSeconds(Duration.fromInputUnsafe(rpcPingTimeout(connection))),
+                  ),
                 }),
                 UNRESPONSIVE_HOST_HINT,
               )
@@ -264,7 +267,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
-        pingTimeout: PING_TIMEOUT,
+        pingTimeout: rpcPingTimeout(connection),
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
         // RpcClient runs this before it fails the open requests.

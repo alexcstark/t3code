@@ -351,6 +351,12 @@ export function usePendingThreadRequests(input: {
     : false;
   const activePendingApproval = pendingApprovals[0] ?? null;
 
+  const pendingIds = new Set(pendingUserInputs.map((input) => input.requestId));
+  const retainedRespondingIds = respondingUserInputRequestIds.filter((id) => pendingIds.has(id));
+  if (retainedRespondingIds.length !== respondingUserInputRequestIds.length) {
+    setRespondingUserInputRequestIds(retainedRespondingIds);
+  }
+
   const onRespondToApproval = async (
     requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,

@@ -71,8 +71,9 @@ through `/api/preview/tunnel` on the environment's own origin:
 ## Access and process ownership are separate
 
 - Tailscale supplies an endpoint for normal pairing; auth remains the environment's responsibility.
-- [SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only if the launcher started
-  it; a server discovered already running must survive client disconnect.
+- [SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only on an explicit
+  environment disconnect, and only if the launcher started it. Quitting the desktop or replacing
+  a stale forward leaves remote agents running. A server it discovered stays running.
 - Remote servers outlive client releases. Clients negotiate features via advertised capabilities
   rather than assuming version parity. Process replacement uses the
   [update protocol](./07_server-updates.md).

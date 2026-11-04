@@ -38,6 +38,7 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  resolveSidebarReasoningLabel,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,
 } from "./Sidebar.logic";
@@ -49,7 +50,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1108,6 +1116,7 @@ describe("Working shelf (beta)", () => {
     expect(isSidebarThreadWorking(idle)).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingApprovals: true })).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(false);
+    expect(isSidebarThreadWorking({ ...waiting, hasPendingUserInput: true })).toBe(false);
     expect(
       isSidebarThreadWorking({
         ...waiting,
@@ -1854,5 +1863,65 @@ describe("filterSidebarProjectScopeItems", () => {
 
     expect(filter("")).toEqual([ADD_PROJECT_SCOPE_ITEM_VALUE, "all", "p1"]);
     expect(filter("project")).toEqual(["p1"]);
+  });
+});
+
+describe("resolveSidebarReasoningLabel", () => {
+  const model = {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    },
+  } satisfies ServerProviderModel;
+
+  it("uses the selected model capability label", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: model.slug,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      }),
+    ).toBe("Extra High");
+  });
+
+  it("falls back to a readable raw option when model capabilities are unavailable", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "max" }],
+        },
+      }),
+    ).toBe("Max");
+  });
+
+  it("does not treat unrelated provider options as reasoning", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+          options: [{ id: "agent", value: "build" }],
+        },
+      }),
+    ).toBeNull();
   });
 });

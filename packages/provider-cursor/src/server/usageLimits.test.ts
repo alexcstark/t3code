@@ -1,10 +1,14 @@
-import { describe, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
 
-describe("Cursor usage limits", () => {
+it.layer(NodeServices.layer)("Cursor usage limits", (it) => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
 
   it("uses the advertised percentages and billing-cycle reset", () => {
@@ -207,5 +211,78 @@ describe("Cursor usage limits", () => {
         expect(limits.unavailable?.message).toContain("default Cursor endpoint");
       }
     }),
+  );
+  it.effect("reads each instance's usage login file and picks up refreshed credentials", () =>
+    Effect.provide(NodeServices.layer)(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const client = HttpClient.make((request) => {
+          const usedPercent = {
+            "Bearer personal-token": 1.3,
+            "Bearer work-token": 87.3,
+            "Bearer refreshed-work-token": 88,
+          }[request.headers.authorization ?? ""];
+          expect(usedPercent).toBeDefined();
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ planUsage: { totalPercentUsed: usedPercent } }),
+            ),
+          );
+        });
+        for (const [name, token, usedPercent] of [
+          ["personal", "personal-token", 1.3],
+          ["work", "work-token", 87.3],
+          ["work", "refreshed-work-token", 88],
+        ] as const) {
+          const authFile = path.join(directory, `${name}.json`);
+          yield* fs.writeFileString(authFile, JSON.stringify({ accessToken: token }));
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "" },
+            {
+              CURSOR_API_KEY: "sdk-browser-key",
+              CURSOR_USAGE_AUTH_FILE: authFile,
+              AGENT_CLI_CREDENTIAL_STORE: "memory",
+            },
+          ).pipe(Effect.provideService(HttpClient.HttpClient, client));
+          expect(limits.windows[0]?.usedPercent).toBe(usedPercent);
+        }
+      }).pipe(Effect.scoped),
+    ),
+  );
+
+  it.effect("does not fall back to another login when the configured usage file is invalid", () =>
+    Effect.provide(NodeServices.layer)(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(directory, "cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, "cursor", "auth.json"),
+          JSON.stringify({ accessToken: "unrelated-account-token" }),
+        );
+        const authFile = path.join(directory, "usage-login.json");
+        for (const contents of [undefined, "invalid json", "{}", '{"accessToken":"  "}']) {
+          if (contents !== undefined) yield* fs.writeFileString(authFile, contents);
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "" },
+            { CURSOR_USAGE_AUTH_FILE: authFile, XDG_CONFIG_HOME: directory },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("must not request another account's usage")),
+            ),
+          );
+          expect(limits.windows).toEqual([]);
+          expect(limits.unavailable?.reason).toBe(
+            contents === undefined || contents === "invalid json" ? "probeFailed" : "unsupported",
+          );
+        }
+      }).pipe(Effect.scoped),
+    ),
   );
 });

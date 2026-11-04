@@ -21,6 +21,10 @@ export type ThreadActionMenuId =
   | `snooze:${string}`
   | "unsnooze"
   | "rename"
+  | "group"
+  | "group:new"
+  | "group:none"
+  | `group:set:${string}`
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
@@ -115,6 +119,11 @@ export interface ThreadActionMenuState {
   readonly isRunning: boolean;
   /** The server marks unread against the latest run's completion, so in-flight runs cannot be. */
   readonly hasCompletedRun: boolean;
+  /** Null hides the item. Names are the groups already used in this project. */
+  readonly group?: {
+    readonly current: string | null;
+    readonly names: readonly string[];
+  } | null;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -221,6 +230,36 @@ export function buildThreadActionMenuItems(
       disabled: state.canRename === false,
       separatorBefore: true,
     },
+    ...(state.group
+      ? [
+          {
+            id: "group" as const,
+            label: resolve(msg("Group")),
+            icon: "folder",
+            children: [
+              ...state.group.names.map((name) => ({
+                id: `group:set:${encodeURIComponent(name)}` as const,
+                label: name,
+                checked: name === state.group?.current,
+              })),
+              {
+                id: "group:new" as const,
+                label: resolve(msg("New group…")),
+                separatorBefore: state.group.names.length > 0,
+              },
+              ...(state.group.current
+                ? [
+                    {
+                      id: "group:none" as const,
+                      label: resolve(msg("None")),
+                      separatorBefore: true,
+                    },
+                  ]
+                : []),
+            ],
+          },
+        ]
+      : []),
     ...(state.supports.titleRegeneration
       ? [
           {

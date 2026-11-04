@@ -14,6 +14,7 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as GuestRouteImport } from './routes/guest'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as AutomationsRouteImport } from './routes/automations'
 import { Route as ApproveAgentRouteImport } from './routes/approve-agent'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
@@ -79,6 +80,11 @@ const ConnectAgentRoute = ConnectAgentRouteImport.update({
 const ConnectRoute = ConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomationsRoute = AutomationsRouteImport.update({
+  id: '/automations',
+  path: '/automations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApproveAgentRoute = ApproveAgentRouteImport.update({
@@ -298,6 +304,7 @@ const ChatLinkedViaEnvironmentIdLinkedEnvironmentIdLinkedThreadIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/approve-agent': typeof ApproveAgentRoute
+  '/automations': typeof AutomationsRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
@@ -344,6 +351,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/approve-agent': typeof ApproveAgentRoute
+  '/automations': typeof AutomationsRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
@@ -393,6 +401,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
   '/approve-agent': typeof ApproveAgentRoute
+  '/automations': typeof AutomationsRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
@@ -443,6 +452,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/approve-agent'
+    | '/automations'
     | '/connect'
     | '/connect-agent'
     | '/guest'
@@ -489,6 +499,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/approve-agent'
+    | '/automations'
     | '/connect'
     | '/connect-agent'
     | '/guest'
@@ -537,6 +548,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_chat'
     | '/approve-agent'
+    | '/automations'
     | '/connect'
     | '/connect-agent'
     | '/guest'
@@ -586,6 +598,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ApproveAgentRoute: typeof ApproveAgentRoute
+  AutomationsRoute: typeof AutomationsRoute
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
   GuestRoute: typeof GuestRoute
@@ -630,6 +643,13 @@ declare module '@tanstack/react-router' {
       path: '/connect'
       fullPath: '/connect'
       preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automations': {
+      id: '/automations'
+      path: '/automations'
+      fullPath: '/automations'
+      preLoaderRoute: typeof AutomationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/approve-agent': {
@@ -1018,6 +1038,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ApproveAgentRoute: ApproveAgentRoute,
+  AutomationsRoute: AutomationsRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
   GuestRoute: GuestRoute,

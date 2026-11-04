@@ -34,6 +34,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
@@ -260,6 +261,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
   );
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
+  const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
   const environmentId = supervisor.target.environmentId;
   const candidate = resumeCache?.snapshot;
   const retained =
@@ -1060,6 +1062,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // way from the same cursor, so later attempts reload the full snapshot until one applies.
   const resuming = yield* Ref.make(false);
   const forceSnapshot = yield* Ref.make(false);
+  const stallResubscriptions = HostStallRefresh.reloadOnHostStall(
+    hostStalls,
+    environmentId,
+    Ref.set(forceSnapshot, true),
+  );
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -1215,7 +1222,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),
         retryExpectedFailureAfter: THREAD_SUBSCRIPTION_RETRY_DELAY,
-        resubscribe: Stream.merge(foregroundResubscriptions, Stream.fromQueue(resubscribes)),
+        resubscribe: Stream.merge(
+          stallResubscriptions,
+          Stream.merge(foregroundResubscriptions, Stream.fromQueue(resubscribes)),
+        ),
       },
     ).pipe(
       Stream.runForEachArray((items) =>

@@ -71,6 +71,32 @@ describe("project thread title", () => {
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });
 
+  it("passes a saved system prompt through thread creation", () => {
+    const systemPrompt = { id: "empty", name: "Empty", content: "" };
+    const input = buildProjectThreadStartTurnInput({
+      systemPrompt,
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "new-thread",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-09-06T00:00:00Z",
+      text: "Start fresh",
+      workspaceMode: "local",
+      branch: "feature/existing",
+      worktreePath: "/worktrees/existing",
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
+
+    expect(input.bootstrap.createThread).toMatchObject({
+      systemPrompt,
+      branch: "feature/existing",
+      worktreePath: "/worktrees/existing",
+    });
+    expect(input.bootstrap).not.toHaveProperty("prepareWorktree");
+  });
+
   it("starts a worktree of a plain project folder from each repository's default branch", () => {
     const input = buildProjectThreadStartTurnInput({
       projectId: ProjectId.make("project"),

@@ -3212,7 +3212,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
+      "c": [
+        " ",
+        "sur l’ordinateur qui a ouvert cette page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3224,7 +3227,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· quiconque l’exécute obtient cet accès"]
+      "c": [
+        " ",
+        "· quiconque l’exécute obtient cet accès"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -12981,5 +12987,63 @@
   "201490988858b511": "retirée par {by}",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "92e129bf413a1220": "retirée"
+  "92e129bf413a1220": "retirée",
+  "d070223b19f6dbc8": "Restore T3 default text",
+  "2cfefe0638c75edd": " Last checked {time}.",
+  "fe326fe068b693e6": "Choose a prompt before sending a new thread’s first message. Editing a saved prompt affects future threads.",
+  "909daf0ae81bfcaf": "Default (current checkout)",
+  "aac543a83301ad41": "New window",
+  "460218bb3fe0792e": "Provider capacity",
+  "428f367e54e5cd73": "T3 default",
+  "2e274c6f51c4e594": "Replaces T3’s default orchestration guidance. Provider instructions, mode instructions, and tool guidance still apply. An empty prompt removes the default guidance.",
+  "e8918c1736ffa601": "Default (current checkout)",
+  "a6016eb6f53d02d6": "Threads in this group stay in the same project folder.",
+  "1c6b9dbd144a02ed": "Usage needs refresh",
+  "9d1979983b93081a": "Instructions saved when this thread started.",
+  "961793b5d466f699": "New group",
+  "c9c6dc52ea795090": "No automated threads",
+  "512c5f1a156a62d8": "Save prompt",
+  "8a135e63b19b5636": "Settings",
+  "ad4ae54fe532baf1": "Move to window ({count})",
+  "81950dcace34c5a2": "Main window",
+  "b2ab1546171cebec": "Usage not reported",
+  "b53f9afef4553c57": "{remaining}% left · {window}",
+  "da19f362e6f0ef9f": "Idle in T3",
+  "0d77193caba260bf": "Prompt name",
+  "3e83311c08783f52": "Saved prompts",
+  "d4b3fe97dd0501a8": "Instructions",
+  "1b1a009ce1bf93a2": "Not showing automations from ",
+  "f8a80be6f2c8c867": "New group…",
+  "095b0939b59bd339": "Open {project} in a new window",
+  "4ac31839a6152c22": "{name} group actions",
+  "43640c6c13a2679f": "Most remaining first · activity across your T3 environments",
+  "2dde592d739be542": "Rename group",
+  "0f6dd15045104446": "Create a scheduled task that runs in an existing thread, and that thread moves here from the sidebar. Manage tasks in",
+  "9b20df3e21a3d401": "Rename",
+  "4f4119017d7cb43c": "System prompt",
+  "0c9abecf4d94c5cb": "System prompt instructions",
+  "77657af141324051": "Group",
+  "bcfce902371de832": "Move to window",
+  "4d1555ed9d539064": "Remove group",
+  "89b585f966505a58": "New prompt",
+  "1b6a4247e311afc8": "Window {number}",
+  "eb2baf0dcf95b9c2": "System prompts",
+  "aba29e77e52bca46": "Delete",
+  "a3bf9c945c7318bb": "Automations",
+  "8fd76fb760f07d7b": "Actions",
+  "a563bea1eab8c078": "T3 default",
+  "cbb48f2ee10715eb": "project default location",
+  "a237c2f8596768d9": "Activity unknown",
+  "ba533c03831f1a29": "Manage prompts",
+  "7aa82c7c51e09124": "Select one environment to manage its prompts.",
+  "38121f3d72cac7e8": "Usage unavailable",
+  "4e536e7ede49a86a": " until",
+  "f8afe93e3b9523fd": "Edit system prompt",
+  "83673a2763dce1f3": "Where new threads in this project run when it has checkouts on multiple connected environments.",
+  "985a7f20cae4a1b1": "Update this environment’s server to manage system prompts.",
+  "ca23c6a1ec96c4ba": "New-thread location",
+  "b2fc5d2525d53e1b": "{count} running elsewhere",
+  "f620fc0cef72e7e1": "Instructions for this new thread.",
+  "f096d91b46c15db8": "System prompt",
+  "00513a3b28638818": "View"
 }

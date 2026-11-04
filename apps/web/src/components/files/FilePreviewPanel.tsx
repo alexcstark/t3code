@@ -132,6 +132,7 @@ import { projectFileCacheKey } from "./fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  resolvedFilePreviewPath,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
   workspaceAssetResource,
@@ -1286,8 +1287,6 @@ export default function FilePreviewPanel({
       officePreviewKind({ name: relativePath }) !== null ||
       isWorkspaceFontPreviewPath(relativePath));
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
-  const isHostFile =
-    attachment !== undefined || (relativePath !== null && isHostPath(relativePath));
   const fileAccess = useFilesystemReadAccess(environmentId, m);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -1300,10 +1299,18 @@ export default function FilePreviewPanel({
   );
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0);
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
+  // Sibling-repo reads come back as an absolute host path. Use that for display
+  // and to keep the file read-only; the query still keys on the requested path.
+  const previewRelativePath = resolvedFilePreviewPath(relativePath, file.data?.relativePath);
+  // A file outside the workspace (an absolute path) is shown, never edited.
+  const isHostFile =
+    attachment !== undefined || (previewRelativePath !== null && isHostPath(previewRelativePath));
   // Folder links fail file reads; retain mutation refresh to detect conversion to files. Host folders own
   // roots; folderTrail keeps descendants.
   const breadcrumbPath =
-    attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
+    attachment !== undefined
+      ? null
+      : (previewRelativePath ?? (folderTrail === undefined ? null : ""));
   // Reset crumbs when a host trail reaches the workspace root and no longer passes through the current path.
   const breadcrumbTrail =
     breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath);
@@ -1311,7 +1318,7 @@ export default function FilePreviewPanel({
   const isFolder =
     attachment === undefined &&
     (file.isNotFile || (folderTrail !== undefined && file.data === null && file.error === null));
-  const hostFolderPath = isFolder && isHostFile ? relativePath : null;
+  const hostFolderPath = isFolder && isHostFile ? previewRelativePath : null;
   // A chat-linked folder reads as a file until its read settles, and a trail only implies a folder.
   const fileManagerAction = fileManagerActionForPath({
     isFolder: relativePath === null || file.isNotFile,
@@ -1319,7 +1326,7 @@ export default function FilePreviewPanel({
     canReveal: serverConfig?.shellRevealInFileManager === true,
   });
   // Everything preview-related keys off previewPath; a folder has no preview.
-  const previewPath = isFolder ? null : relativePath;
+  const previewPath = isFolder ? null : previewRelativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const showExplorer = shouldShowFileExplorer({
     relativePath: previewPath,
@@ -1494,8 +1501,8 @@ export default function FilePreviewPanel({
   const absolutePath =
     breadcrumbPath === ""
       ? cwd
-      : relativePath && attachment === undefined
-        ? resolvePathLinkTarget(relativePath, cwd)
+      : previewRelativePath && attachment === undefined
+        ? resolvePathLinkTarget(previewRelativePath, cwd)
         : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.

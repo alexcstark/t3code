@@ -67,6 +67,30 @@ const layerTest = (input: {
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
   readonly existingPaths?: ReadonlyArray<string>;
 }) => {
+  const layerFileSystem = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      if (input.platform !== "darwin") return fs;
+      // Editor discovery must see fixture bundles rather than host applications.
+      return {
+        ...fs,
+        stat: (file: string) =>
+          file.startsWith("/Applications/")
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "stat",
+                  pathOrDescriptor: file,
+                }),
+              )
+            : fs.stat(file),
+        readDirectory: (directory: string) =>
+          directory === "/Applications" ? Effect.succeed([]) : fs.readDirectory(directory),
+      };
+    }),
+  );
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
@@ -103,7 +127,7 @@ const layerTest = (input: {
                   ? Effect.succeed(true)
                   : fileSystem.exists(path),
             })),
-          ).pipe(Layer.provide(NodeServices.layer)),
+          ).pipe(Layer.provide(layerFileSystem), Layer.provide(NodeServices.layer)),
         ),
       ),
     ),

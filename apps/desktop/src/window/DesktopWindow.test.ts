@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -297,6 +298,13 @@ function layerTest(input: {
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    updateWindowLayout: (update) =>
+      Effect.sync(() => {
+        const windowLayout = update(desktopSettings.windowLayout);
+        const changed = windowLayout !== desktopSettings.windowLayout;
+        desktopSettings = { ...desktopSettings, windowLayout };
+        return { settings: desktopSettings, changed };
+      }),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
   const layerElectronWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
@@ -316,6 +324,15 @@ function layerTest(input: {
       input.focusedWindow === undefined
         ? Ref.get(input.mainWindow)
         : Effect.succeedSome(input.focusedWindow),
+    forWebContentsId: (webContentsId) =>
+      Ref.get(input.mainWindow).pipe(
+        Effect.map((window) =>
+          Option.filter(
+            window,
+            (entry) => !entry.isDestroyed() && entry.webContents.id === webContentsId,
+          ),
+        ),
+      ),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
     prepareReveal: () => Effect.succeed(false),
@@ -344,6 +361,8 @@ function layerTest(input: {
         input.platform === undefined
           ? layerDesktopEnvironment
           : layerDesktopEnvironmentFor(input.platform),
+        NodeServices.layer,
+        SecureRandom.layerWebCrypto,
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
@@ -376,7 +395,7 @@ function layerTest(input: {
         }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
-          setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
+          addHostWindow: input.setPreviewMainWindow ?? (() => Effect.void),
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
@@ -447,6 +466,15 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       main: Ref.get(mainWindow),
       currentMainOrFirst,
       focusedMainOrFirst: currentMainOrFirst,
+      forWebContentsId: (webContentsId) =>
+        Ref.get(mainWindow).pipe(
+          Effect.map((window) =>
+            Option.filter(
+              window,
+              (entry) => !entry.isDestroyed() && entry.webContents.id === webContentsId,
+            ),
+          ),
+        ),
       setMain: (window) => Ref.set(mainWindow, Option.some(window)),
       clearMain: () => Ref.set(mainWindow, Option.none()),
       prepareReveal: () => Effect.succeed(false),
@@ -467,6 +495,8 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             shutdown: Effect.void,
           }),
           layerDesktopEnvironment,
+          NodeServices.layer,
+          SecureRandom.layerWebCrypto,
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,
           layerDesktopServerExposure,
@@ -488,7 +518,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
-            setMainWindow: () => Effect.void,
+            addHostWindow: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
@@ -582,6 +612,20 @@ describe("DesktopWindow", () => {
         navigationUrl: "data:text/html,other",
       }),
     );
+  });
+
+  it("cascades an additional window over the current one while it stays on screen", () => {
+    const display = { x: 0, y: 0, width: 1920, height: 1080 };
+    const current = { x: 100, y: 80, width: 1200, height: 800 };
+
+    assert.deepEqual(DesktopWindow.resolveCascadedWindowBounds(current, [display]), {
+      x: 128,
+      y: 108,
+      width: 1200,
+      height: 800,
+    });
+    const atEdge = { x: 720, y: 280, width: 1200, height: 800 };
+    assert.deepEqual(DesktopWindow.resolveCascadedWindowBounds(atEdge, [display]), atEdge);
   });
 
   it.effect(

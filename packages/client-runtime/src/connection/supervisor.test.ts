@@ -3056,3 +3056,27 @@ describe("EnvironmentSupervisor background fibers", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
+it.effect("keeps waiting on a cold SSH bootstrap past the default setup timeout", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      prepare: (attempt) =>
+        attempt === 1
+          ? Effect.sleep("40 seconds").pipe(Effect.as(PREPARED_CONNECTION))
+          : Effect.succeed(PREPARED_CONNECTION),
+    });
+    const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+      initiallyDesired: true,
+    }).pipe(Effect.provide(harness.dependencies));
+
+    yield* awaitState(
+      supervisor.state,
+      (state) => state.phase === "connecting" && state.stage === "preparing",
+    );
+    yield* TestClock.adjust("30 seconds");
+    expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connecting");
+
+    yield* TestClock.adjust("10 seconds");
+    const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+    expect(connected.attempt).toBe(1);
+  }).pipe(Effect.provide(TestClock.layer())),
+);

@@ -319,6 +319,11 @@ function openIntentView(
         addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: NEW_THREAD_IN_GROUP, label: resolve(msg("Projects")), items: [] }],
       };
+    case "switch-project":
+      return {
+        addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: "switch-project", label: "Projects", items: [] }],
+      };
     case "change-theme":
       return {
         addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
@@ -1412,6 +1417,17 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: NEW_THREAD_IN_GROUP, label: gt("Projects"), items: projectThreadItems }],
     });
+
+    actionItems.push({
+      kind: "submenu",
+      value: "action:switch-project",
+      searchTerms: ["switch project", "open project", "go to project", "jump"],
+      title: "Switch project...",
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      shortcutCommand: "project.switch",
+      groups: [{ value: "switch-project", label: "Projects", items: projectSearchItems }],
+    });
   }
 
   if (scratchTargetEnvironmentId !== null) {
@@ -1942,13 +1958,15 @@ function OpenCommandPaletteDialog(props: {
                 items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
               },
             ]
-          : currentView?.groups[0]?.value.startsWith(PORT_FORWARD_GROUP_PREFIX) && portForwardItem
-            ? portForwardItem.groups
-            : currentView?.groups[0]?.value === "themes"
-              ? changeThemeItem.groups
-              : currentView?.groups[0]?.value === "appearance"
-                ? changeAppearanceItem.groups
-                : (currentView?.groups ?? rootGroups);
+          : currentView?.groups[0]?.value === "switch-project"
+            ? [{ value: "switch-project", label: "Projects", items: projectSearchItems }]
+            : currentView?.groups[0]?.value.startsWith(PORT_FORWARD_GROUP_PREFIX) && portForwardItem
+              ? portForwardItem.groups
+              : currentView?.groups[0]?.value === "themes"
+                ? changeThemeItem.groups
+                : currentView?.groups[0]?.value === "appearance"
+                  ? changeAppearanceItem.groups
+                  : (currentView?.groups ?? rootGroups);
 
   const isLinkedThreadSearch =
     linkedThreadSearch?.linkedThreads !== undefined && deferredQuery === linkedThreadSearch.query;

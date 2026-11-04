@@ -67,6 +67,7 @@ import {
   fileRoutePathSegments,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
+  isAbsolutePath,
   isAudioPreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
@@ -800,6 +801,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     // One selectable view lays out the whole text; past the 1 MB preview that stalls.
     fileContents.length <= 1024 * 1024;
   const selectingText = canSelectText && textSelectionPath === relativePath;
+  const previewRelativePath =
+    fileData !== null && isAbsolutePath(fileData.relativePath)
+      ? fileData.relativePath
+      : relativePath;
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -1077,7 +1082,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     );
   }
 
-  const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
+  const headerSubtitle = fileHeaderSubtitle(projectName, previewRelativePath ?? relativePath);
 
   return withInspector(
     <View className="flex-1 bg-sheet">

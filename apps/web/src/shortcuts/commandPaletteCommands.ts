@@ -91,6 +91,11 @@ export function installCommandPaletteCommands(
         if (event.repeat) return;
         dispatchCommandPalette({ _tag: "OpenChangeTheme" });
       },
+      "project.switch": (event) => {
+        consume(event);
+        if (event.repeat) return;
+        dispatchCommandPalette({ _tag: "OpenSwitchProject" });
+      },
       "themeEditor.toggle": (event) => {
         consume(event);
         if (event.repeat) return;

@@ -20,6 +20,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
+import { ThreadGroupNameDialogHost } from "../components/ThreadGroupNameDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { WorktreeLayoutApprovalDialogHost } from "../components/WorktreeLayoutApprovalDialogHost";
@@ -202,6 +203,7 @@ function RootRouteBranch() {
       <ConfirmDialogHost />
       <WorktreeLayoutApprovalDialogHost />
       <CustomSnoozeDialogHost />
+      <ThreadGroupNameDialogHost />
       <GuestShareDialogHost />
       <ProjectCloneToastCoordinator />
       <ConnectDeviceApprovalCoordinator />

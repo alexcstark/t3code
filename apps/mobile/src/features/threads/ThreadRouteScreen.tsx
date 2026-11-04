@@ -930,6 +930,9 @@ function ThreadRouteContent(
         text: setupMessage.text,
         titleText: selectedThread.title,
         ...(setupMessage.context ? { context: setupMessage.context } : {}),
+        ...(selectedThreadDetail?.thread.systemPrompt
+          ? { systemPrompt: selectedThreadDetail.thread.systemPrompt }
+          : {}),
         uploadedAttachments: setupMessage.attachments,
         modelSelection: selectedThread.modelSelection,
         runtimeMode: selectedThread.runtimeMode,
@@ -1051,6 +1054,7 @@ function ThreadRouteContent(
               />
             )
           }
+          systemPrompt={selectedThreadDetail?.thread.systemPrompt}
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}
@@ -1067,6 +1071,7 @@ function ThreadRouteContent(
           selectedThreadFeed={composer.selectedThreadFeed}
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}
+          lastAgentUpdateAt={composer.lastAgentUpdateAt}
           activeWorkStartedAt={
             creationState?.kind === "preparing" ||
             (worktreeSetup !== null && setupTurnStartedAt === null)

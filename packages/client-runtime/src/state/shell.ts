@@ -30,6 +30,7 @@ import { observeServerTime } from "../clock.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase, type PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -185,6 +186,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const cache = yield* Persistence.EnvironmentCacheStore;
   const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
+  const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
   const environmentId = supervisor.target.environmentId;
   const cached = yield* cache.loadShell(environmentId).pipe(
     Effect.catch((error) =>
@@ -570,6 +572,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       projectIdentities: answer.value.projectIdentities,
     } satisfies HttpShellOutcome;
   });
+  // A stall can freeze the socket across the completion, so the next subscribe reloads.
+  const forceAuthoritativeSnapshot = yield* Ref.make(false);
+  const stallResubscriptions = HostStallRefresh.reloadOnHostStall(
+    hostStalls,
+    environmentId,
+    Ref.set(forceAuthoritativeSnapshot, true),
+  );
 
   // A server whose descriptor names its shell flags is asked for the shell as soon as the
   // connection is prepared, while the socket opens and the config downloads. The subscription
@@ -674,15 +683,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
+        const forceReload = yield* Ref.getAndSet(forceAuthoritativeSnapshot, false);
         // Rows from a recent server snapshot with the same omissions and server build resume
         // from their cursor, in memory or from the cache. Anything else reloads the HTTP
         // snapshot so a valid cursor cannot preserve stale or incomplete data. A `resumable`
         // answer is checked again too: the rows can pass their age limit while the socket opens.
         const resumingHeldRows =
+          !forceReload &&
           loaded?.kind !== "snapshot" &&
           Option.isSome((yield* SubscriptionRef.get(state)).snapshot) &&
           canResumeFrom(yield* Ref.get(origin), identity, yield* Clock.currentTimeMillis);
-        if (!resumingHeldRows && loaded === null) {
+        if (forceReload || (!resumingHeldRows && loaded === null)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -730,7 +741,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ),
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: resubscriptions,
+        resubscribe: Stream.merge(resubscriptions, stallResubscriptions),
       },
     ).pipe(
       Stream.runForEachArray((entries) =>

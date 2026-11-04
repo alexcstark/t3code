@@ -3,6 +3,7 @@ import type { CursorSettings } from "../settings.ts";
 import { CURSOR_USAGE_WINDOWS } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -74,6 +75,21 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
+    const usageAuthFile = environment.CURSOR_USAGE_AUTH_FILE?.trim();
+    if (!token && usageAuthFile) {
+      const fs = yield* FileSystem.FileSystem;
+      const credentials = yield* fs
+        .readFileString(usageAuthFile)
+        .pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Struct({ accessToken: Schema.optional(Schema.String) })),
+            ),
+          ),
+        );
+      token = credentials.accessToken?.trim();
+      if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+    }
     const apiKey = environment.CURSOR_API_KEY?.trim();
     if (!token && apiKey) {
       if (endpoint !== DEFAULT_CURSOR_API_ENDPOINT) {

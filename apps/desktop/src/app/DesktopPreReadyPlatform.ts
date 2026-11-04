@@ -18,6 +18,13 @@ import {
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
+
+// Pre-ready startup has no config layer yet; the packaged app carries its fork
+// branding in the environment.
+function desktopDisplayNameFromEnvironment(): Option.Option<string> {
+  const displayName = process.env.T3CODE_DESKTOP_DISPLAY_NAME?.trim();
+  return displayName ? Option.some(displayName) : Option.none();
+}
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
 export interface DesktopPreReadyCommandLineReader {
@@ -145,6 +152,9 @@ export const make = Effect.gen(function* () {
             displayName: resolveDesktopAppBranding({
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
+              // Pre-ready startup has no config layer yet; the packaged app carries
+              // its fork branding in the environment.
+              displayName: desktopDisplayNameFromEnvironment(),
             }).displayName,
             execTarget:
               Option.getOrUndefined(

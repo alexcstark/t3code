@@ -50,6 +50,7 @@ import {
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
 } from "./runtime.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -487,6 +488,7 @@ export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly eventLoopStalls?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
   readonly providerStatusDeltas?: boolean;
@@ -572,6 +574,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
   ) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
+    const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
     const environmentId = supervisor.target.environmentId;
     const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
       Effect.catch((error) =>
@@ -662,6 +665,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
       ...(subscription.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
       ...(subscription.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
+      ...(subscription.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
     }).pipe(
       Stream.map((event): Update => (current) => {
         const next = applyServerConfigProjection(current, event);
@@ -689,6 +693,9 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
           const next = update(current);
           if (Option.isNone(next) || next.value === Option.getOrUndefined(current)) {
             return;
+          }
+          if (event.type === "eventLoopStall" && Option.isSome(hostStalls)) {
+            yield* hostStalls.value.note(environmentId, event.payload.detectedAt);
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
           yield* SubscriptionRef.set(state, next);
@@ -971,6 +978,7 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly providerStatusDeltas?: boolean;
     /** Machine refresh replies carry no providers; the config stream already delivers them. */
     readonly omitRefreshedProviders?: boolean;
+    readonly eventLoopStalls?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -991,6 +999,7 @@ export function createServerEnvironmentAtoms<R, E>(
         serverConfigStateChanges(
           environmentId,
           {
+            ...(options.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
             ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
             ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
             ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),

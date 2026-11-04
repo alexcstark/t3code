@@ -73,6 +73,15 @@ const trackLabel = (channel: DesktopUpdateChannel) =>
   channel === "nightly"
     ? m(msg("Nightly", { $context: "release track" }))
     : m(msg("Stable", { $context: "release track" }));
+const openNewWindow = Effect.gen(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.openWindow({});
+}).pipe(Effect.withSpan("desktop.menu.openNewWindow"));
+
+const mergeAllWindows = Effect.gen(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.mergeWindows;
+}).pipe(Effect.withSpan("desktop.menu.mergeAllWindows"));
 
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -230,6 +239,12 @@ export const make = Effect.gen(function* () {
       }
       runMenuEffect("paste-as-text", dispatchMenuAction("paste-as-text"));
     };
+    const newWindowClick = () => {
+      runMenuEffect("new-window", openNewWindow);
+    };
+    const mergeWindowsClick = () => {
+      runMenuEffect("merge-all-windows", mergeAllWindows);
+    };
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
       runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
     };
@@ -272,6 +287,17 @@ export const make = Effect.gen(function* () {
       {
         label: m(msg("File", { $context: "menu bar title" })),
         submenu: [
+          {
+            label: m(msg("New Window")),
+            // The shorter Shift and Alt chords are new-thread shortcuts.
+            accelerator: "CmdOrCtrl+Alt+Shift+N",
+            click: newWindowClick,
+          },
+          {
+            label: m(msg("Merge All Windows")),
+            click: mergeWindowsClick,
+          },
+          { type: "separator" },
           ...(environment.platform === "darwin"
             ? []
             : [

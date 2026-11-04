@@ -3409,6 +3409,9 @@ const make = Effect.gen(function* () {
                   modelSelection: target.modelSelection,
                   runtimeMode,
                   interactionMode,
+                  ...(parent.thread.systemPrompt === undefined
+                    ? {}
+                    : { systemPrompt: parent.thread.systemPrompt }),
                   branch: parent.thread.branch,
                   worktreePath: parent.thread.worktreePath,
                   ...(parent.thread.linkOrigin === undefined

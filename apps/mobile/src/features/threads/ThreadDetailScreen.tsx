@@ -3,6 +3,7 @@ import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
+import { ThreadSystemPromptPicker } from "./ThreadSystemPromptPicker";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -43,6 +44,7 @@ import {
   type NativeLayoutMetrics,
 } from "../../lib/reserved-regions";
 import type {
+  SystemPrompt,
   EnvironmentId,
   MessageId,
   RuntimeRequestId,
@@ -240,6 +242,7 @@ export interface ThreadDetailScreenProps {
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
   };
+  readonly systemPrompt?: SystemPrompt;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly canOperateThread: boolean;
   readonly selectedThread: EnvironmentThreadShell;
@@ -255,6 +258,8 @@ export interface ThreadDetailScreenProps {
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly lastAgentUpdateAt?: string | null;
+  /** The live work is a provider-native subagent's runless root turn. */
   readonly runlessWorkActive?: boolean;
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
   readonly extensionStatuses?: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
@@ -1927,6 +1932,13 @@ function ThreadDetailBody(
                     </View>
                   ) : (
                     <>
+                      {props.systemPrompt ? (
+                        <ThreadSystemPromptPicker
+                          selected={props.systemPrompt}
+                          prompts={[]}
+                          disabled={false}
+                        />
+                      ) : null}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

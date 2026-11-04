@@ -31,6 +31,7 @@ import { preserveReadingPosition } from "~/lib/preserveReadingPosition";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const NOOP_RESPONSE_CLICK = () => {};
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds"] = [];
 
@@ -245,6 +246,7 @@ interface MessagesTimelineProps {
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
   onReplyToResponse?: TimelineRowSharedState["onReplyToResponse"];
+  onResponseClick?: () => void;
   isWorking: boolean;
   /** The thread is catching up from a cached copy, whose working state may be stale. */
   syncing?: boolean;
@@ -371,6 +373,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
   onReplyToResponse,
+  onResponseClick = NOOP_RESPONSE_CLICK,
   isWorking,
   syncing = false,
   runlessWorkActive = false,
@@ -1179,6 +1182,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       pending.ready = pending.contentKey === undefined;
       scheduleDisclosureReveal();
     },
+    onResponseClick,
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,

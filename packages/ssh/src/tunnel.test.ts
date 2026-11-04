@@ -283,6 +283,20 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it("installs the upstream release a fork build is cut from", () => {
+    assert.equal(SshTunnel.resolveRemoteArchiveVersion("0.0.42-t4.0.0"), "0.0.42");
+    assert.equal(SshTunnel.resolveRemoteArchiveVersion(" 0.0.41-t4.0.5 "), "0.0.41");
+    assert.equal(SshTunnel.resolveRemoteArchiveVersion("0.0.42"), "0.0.42");
+    assert.equal(
+      SshTunnel.resolveRemoteArchiveVersion("0.0.46-nightly.20261005.2702-t4.0.0"),
+      "0.0.46-nightly.20261005.2702",
+    );
+    assert.equal(
+      SshTunnel.resolveRemoteArchiveVersion("0.0.43-nightly.20260917.1866"),
+      "0.0.43-nightly.20260917.1866",
+    );
+  });
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
