@@ -10,6 +10,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  BellIcon,
   Clock3Icon,
   CornerUpRightIcon,
   GripVerticalIcon,
@@ -107,6 +108,9 @@ export function QueuedRunsControl({
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
+  // Shortcuts act on the user's own messages, never on held automatic updates.
+  const steerTarget = queued.find(({ automatic }) => !automatic);
+  const editTarget = queued.findLast(({ automatic }) => !automatic);
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -117,8 +121,9 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments, automatic }, serverIndex) => ({
       key: run.id,
+      automatic,
       runId: run.id,
       messageId: run.userMessageId,
       serverIndex,
@@ -138,6 +143,7 @@ export function QueuedRunsControl({
       runId: null,
       messageId: null,
       serverIndex: null,
+      automatic: false,
       text: message.text,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
       thumbnails: (message.attachments ?? [])
@@ -184,23 +190,21 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
-      if (!repeat && busyRunId === null) void steer(next.run.id);
+      if (!steerTarget || !workflow?.canPromoteToSteer) return false;
+      if (!repeat && busyRunId === null) void steer(steerTarget.run.id);
       return true;
     },
     // Declines while a queued message is already being edited so the key keeps
     // moving the caret inside that draft.
     editLatest(repeat) {
-      const latest = queued.at(-1);
-      if (!latest || props.editingRunId !== null || busyRunId !== null) return false;
+      if (!editTarget || props.editingRunId !== null || busyRunId !== null) return false;
       if (!repeat) {
         setExpanded(true);
         props.onEditQueuedRun({
-          runId: latest.run.id,
-          messageId: latest.run.userMessageId,
-          text: latest.text,
-          attachments: latest.attachments,
+          runId: editTarget.run.id,
+          messageId: editTarget.run.userMessageId,
+          text: editTarget.text,
+          attachments: editTarget.attachments,
         });
       }
       return true;
@@ -238,7 +242,9 @@ export function QueuedRunsControl({
           <ComposerBanner.Icon>
             <ListOrderedIcon />
           </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">Queued</ComposerBanner.Content>
+          <ComposerBanner.Content className="text-muted-foreground">
+            {workflow?.isHeld ? "Queue paused" : "Queued"}
+          </ComposerBanner.Content>
           <ComposerBanner.Actions>
             <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
             <ComposerBanner.ToggleIcon expanded={expanded} />
@@ -348,6 +354,12 @@ export function QueuedRunsControl({
                         className="size-3 shrink-0 text-muted-foreground/60"
                       />
                     ) : null}
+                    {item.automatic ? (
+                      <BellIcon
+                        aria-label="Automatic update"
+                        className="size-3 shrink-0 text-muted-foreground/60"
+                      />
+                    ) : null}
                     {item.thumbnails.length > 0 ? (
                       <span className="flex shrink-0 items-center gap-0.5">
                         {item.thumbnails.map((thumbnail) => (
@@ -392,59 +404,63 @@ export function QueuedRunsControl({
                       </Button>
                     ) : (
                       <>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                aria-label="Edit queued message"
-                                disabled={item.runId === null || busyRunId !== null}
-                                onClick={() => {
-                                  if (item.runId !== null && item.messageId !== null) {
-                                    props.onEditQueuedRun({
-                                      runId: item.runId,
-                                      messageId: item.messageId,
-                                      text: item.text,
-                                      attachments: item.attachments,
-                                    });
-                                  }
-                                }}
-                              />
-                            }
-                          >
-                            <PencilIcon />
-                          </TooltipTrigger>
-                          <TooltipPopup>
-                            {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
-                          </TooltipPopup>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger render={<span className="flex shrink-0" />}>
-                            <Button
-                              size="xs"
-                              variant="ghost-muted"
-                              disabled={
-                                item.runId === null ||
-                                busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
-                              }
-                              onClick={() => {
-                                if (item.runId !== null) {
-                                  void steer(item.runId);
+                        {item.automatic ? null : (
+                          <>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost-muted"
+                                    aria-label="Edit queued message"
+                                    disabled={item.runId === null || busyRunId !== null}
+                                    onClick={() => {
+                                      if (item.runId !== null && item.messageId !== null) {
+                                        props.onEditQueuedRun({
+                                          runId: item.runId,
+                                          messageId: item.messageId,
+                                          text: item.text,
+                                          attachments: item.attachments,
+                                        });
+                                      }
+                                    }}
+                                  />
                                 }
-                              }}
-                            >
-                              <CornerUpRightIcon />
-                              Steer
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipPopup>
-                            {activeRun === null
-                              ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
-                          </TooltipPopup>
-                        </Tooltip>
+                              >
+                                <PencilIcon />
+                              </TooltipTrigger>
+                              <TooltipPopup>
+                                {`Edit in the composer${item.runId === editTarget?.run.id && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                              </TooltipPopup>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger render={<span className="flex shrink-0" />}>
+                                <Button
+                                  size="xs"
+                                  variant="ghost-muted"
+                                  disabled={
+                                    item.runId === null ||
+                                    busyRunId !== null ||
+                                    !workflow?.canPromoteToSteer
+                                  }
+                                  onClick={() => {
+                                    if (item.runId !== null) {
+                                      void steer(item.runId);
+                                    }
+                                  }}
+                                >
+                                  <CornerUpRightIcon />
+                                  Steer
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipPopup>
+                                {activeRun === null
+                                  ? "There is no active run to steer"
+                                  : `Send as a steer instead${item.runId === steerTarget?.run.id && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                              </TooltipPopup>
+                            </Tooltip>
+                          </>
+                        )}
                         <Tooltip>
                           <TooltipTrigger
                             render={

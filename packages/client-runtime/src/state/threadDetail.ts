@@ -4,7 +4,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   deriveThreadQueueWorkflowState,
-  getUserQueuedThreadRuns,
+  getVisibleQueuedThreadRuns,
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
@@ -102,7 +102,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
       } else if (projection.runs !== previous?.runs || projection.messages !== previous?.messages) {
         const { runs, messages } = projection;
         previous = { runs, messages };
-        count = getUserQueuedThreadRuns(previous).length;
+        count = getVisibleQueuedThreadRuns(previous).length;
       }
       return count;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue-count:${key}`));

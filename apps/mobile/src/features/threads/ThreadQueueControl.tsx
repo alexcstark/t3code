@@ -209,7 +209,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments }, index) => {
+      {queuedRuns.map(({ run, text, attachments, automatic }, index) => {
         const layout = dragRows?.find((row) => row.id === run.id);
         const offset =
           sourceLayout?.y !== undefined &&
@@ -219,6 +219,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             ? threadDragGapOffset(layout.y, sourceLayout.y, sourceLayout.height, insertionOffset)
             : 0;
         const controls = resolveThreadQueueRowControls({
+          automatic,
           busy: busyRunId !== null || draggedRunId !== null,
           canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
           canReorder: workflow?.canReorder ?? false,
