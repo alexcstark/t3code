@@ -556,7 +556,7 @@ function ThreadDetailBody(
           status: props.threadSyncStatus,
           error: props.threadSyncError,
           detailExists: contentPresentationKind === "ready",
-          shellExists: contentPresentationKind === "ready" || contentPresentationKind === "loading",
+          shellExists: props.selectedThreadDetailRef !== null,
         });
   const threadSyncPhase = useDelayedStatus(selectedThreadKey, realThreadSyncPhase);
   const retryMessageSync = useAtomCommand(environmentThreads.retrySync);

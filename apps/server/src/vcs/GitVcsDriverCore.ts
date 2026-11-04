@@ -1220,12 +1220,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) => {
-    const key = sharedReadKey(input);
-    if (key !== null) return joinSharedRead(key, input);
-    if (!keepsConfigAndRemotes(input.args)) sharedReads.clear();
-    return runExecute(input);
-  };
+  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
+    Effect.suspend(() => {
+      const key = sharedReadKey(input);
+      if (key !== null) return joinSharedRead(key, input);
+      if (keepsConfigAndRemotes(input.args)) return runExecute(input);
+      sharedReads.clear();
+      return runExecute(input).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            sharedReads.clear();
+          }),
+        ),
+      );
+    });
 
   const executeGit = (
     operation: string,
