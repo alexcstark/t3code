@@ -327,7 +327,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ) : null}
           <SidebarUtilityItem
             icon={<CalendarClockIcon />}
-            label="Automations"
+            label={gt("Automations")}
             onClick={handleAutomationsClick}
           />
           <SidebarUtilityItem

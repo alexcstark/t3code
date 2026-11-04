@@ -1259,7 +1259,6 @@ describe("CodexAdapterV2 session initialize", () => {
           }),
         initializeRequests: () => initializeRequests,
         runtime,
-        events: runtime.events,
       };
     });
 

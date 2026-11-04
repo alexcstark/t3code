@@ -318,7 +318,7 @@ function openIntentView(
     case "switch-project":
       return {
         addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
-        groups: [{ value: "switch-project", label: "Projects", items: [] }],
+        groups: [{ value: "switch-project", label: resolve(msg("Projects")), items: [] }],
       };
     case "change-theme":
       return {
@@ -1392,11 +1392,11 @@ function OpenCommandPaletteDialog(props: {
       kind: "submenu",
       value: "action:switch-project",
       searchTerms: ["switch project", "open project", "go to project", "jump"],
-      title: "Switch project...",
+      title: gt("Switch project..."),
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
       shortcutCommand: "project.switch",
-      groups: [{ value: "switch-project", label: "Projects", items: projectSearchItems }],
+      groups: [{ value: "switch-project", label: gt("Projects"), items: projectSearchItems }],
     });
   }
 
@@ -1927,7 +1927,7 @@ function OpenCommandPaletteDialog(props: {
               },
             ]
           : currentView?.groups[0]?.value === "switch-project"
-            ? [{ value: "switch-project", label: "Projects", items: projectSearchItems }]
+            ? [{ value: "switch-project", label: gt("Projects"), items: projectSearchItems }]
             : currentView?.groups[0]?.value.startsWith(PORT_FORWARD_GROUP_PREFIX) && portForwardItem
               ? portForwardItem.groups
               : currentView?.groups[0]?.value === "themes"

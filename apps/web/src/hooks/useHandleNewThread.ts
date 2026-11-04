@@ -246,8 +246,6 @@ export function createNewThreadHandler(router: AnyRouter) {
     const resolvedProjectRef = project
       ? scopeProjectRef(project.environmentId, project.id)
       : projectRef;
-    const abandonedSinceRequest = () =>
-      routeChangedSinceRequest() || (project !== null && readProject(resolvedProjectRef) === null);
     const targetServerSettings =
       environmentServerConfigs.get(resolvedProjectRef.environmentId)?.settings ??
       DEFAULT_SERVER_SETTINGS;

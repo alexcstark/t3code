@@ -33,7 +33,6 @@ import * as Queue from "effect/Queue";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";

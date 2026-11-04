@@ -317,6 +317,10 @@ export const make = Effect.gen(function* () {
   // Every window's renderer can open projects; requests go to the main
   // (most recently focused) window when its renderer is ready.
   const readyRenderers = new Map<Electron.WebContents, () => void>();
+  let activeRequest: {
+    readonly requestId: string;
+    readonly renderer: Electron.WebContents;
+  } | null = null;
 
   const broker = new DesktopAppActivationBroker({
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
@@ -342,6 +346,7 @@ export const make = Effect.gen(function* () {
     broker.registerRenderer((request) => {
       const webContents = pickRenderer();
       if (webContents === null) throw new Error("No desktop renderer is ready.");
+      activeRequest = { requestId: request.requestId, renderer: webContents };
       webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
     });
   };
@@ -351,8 +356,11 @@ export const make = Effect.gen(function* () {
     if (detach === undefined) return;
     detach();
     readyRenderers.delete(webContents);
-    broker.clearRenderer();
-    registerReadyRenderers();
+    if (activeRequest?.renderer === webContents || readyRenderers.size === 0) {
+      activeRequest = null;
+      broker.clearRenderer();
+      registerReadyRenderers();
+    }
   };
 
   return DesktopAppActivation.of({
@@ -363,7 +371,10 @@ export const make = Effect.gen(function* () {
             ...address,
             userId,
             handle: (request) => broker.request(request),
-            cancel: (requestId) => broker.cancel(requestId),
+            cancel: (requestId) => {
+              if (activeRequest?.requestId === requestId) activeRequest = null;
+              broker.cancel(requestId);
+            },
             onReclaimError: (cause) =>
               void runPromise(
                 logWarning("failed to restore the desktop app control socket", { cause }),
@@ -406,7 +417,10 @@ export const make = Effect.gen(function* () {
     }),
     // The IPC handler owns the activation-completion span.
     complete: Effect.fnUntraced(function* (response) {
-      return yield* Effect.sync(() => broker.complete(response));
+      return yield* Effect.sync(() => {
+        if (activeRequest?.requestId === response.requestId) activeRequest = null;
+        broker.complete(response);
+      });
     }),
   });
 });
