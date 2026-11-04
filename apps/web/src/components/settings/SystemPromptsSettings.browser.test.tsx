@@ -15,10 +15,6 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.save }));
-vi.mock(import("../../lib/utils"), async (original) => ({
-  ...(await original()),
-  randomUUID: () => "new-prompt",
-}));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope: { kind: "environment" },
@@ -61,7 +57,7 @@ it("saves an empty prompt alongside existing presets, then deletes a preset", as
     environmentId: "environment-a",
     input: {
       patch: {
-        systemPrompts: [...state.prompts, { id: "new-prompt", name: "Empty", content: "" }],
+        systemPrompts: [...state.prompts, { id: expect.any(String), name: "Empty", content: "" }],
       },
     },
   });
