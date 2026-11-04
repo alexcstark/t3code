@@ -424,10 +424,10 @@ describe("DesktopSettings", () => {
 });
 
 describe("DesktopAppSettings window layout", () => {
-  const home = { id: "home", projectScopeKey: null, bounds: null, maximized: false };
+  const home = { id: "home", projectScopeKeys: [], bounds: null, maximized: false };
   const second = {
     id: "second",
-    projectScopeKey: "repo",
+    projectScopeKeys: ["repo"],
     bounds: { x: 40, y: 40, width: 1100, height: 780 },
     maximized: false,
   };
@@ -436,22 +436,37 @@ describe("DesktopAppSettings window layout", () => {
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* settings.updateWindowLayout((layout) =>
-          DesktopAppSettings.assignLayoutThreads(
-            DesktopAppSettings.addLayoutWindow(
-              DesktopAppSettings.addLayoutWindow(layout, home),
-              second,
-            ),
-            ["env:thread-1"],
-            "second",
-          ),
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          JSON.stringify({
+            windowLayout: {
+              windows: [
+                { id: "home", projectScopeKey: null, bounds: null, maximized: false },
+                { id: "second", projectScopeKey: "repo", bounds: second.bounds, maximized: false },
+              ],
+              assignments: { "env:thread-1": "second" },
+            },
+          }),
         );
-
-        const loaded = yield* settings.load;
-        assert.deepEqual(loaded.windowLayout, {
+        assert.deepEqual((yield* settings.load).windowLayout, {
           windows: [home, second],
           assignments: { "env:thread-1": "second" },
         });
+
+        const projectScopeKeys = ["repo", "other"];
+        yield* settings.updateWindowLayout((layout) =>
+          DesktopAppSettings.updateLayoutWindow(layout, "second", { projectScopeKeys }),
+        );
+        const expected = {
+          windows: [home, { ...second, projectScopeKeys }],
+          assignments: { "env:thread-1": "second" },
+        };
+        assert.deepEqual((yield* settings.load).windowLayout, expected);
+        const saved = yield* fileSystem.readFileString(environment.desktopSettingsPath);
+        assert.deepEqual(JSON.parse(saved).windowLayout, expected);
       }),
     ),
   );
@@ -478,7 +493,7 @@ describe("DesktopAppSettings window layout", () => {
   it("drops duplicate windows and moves that point at no window", () => {
     assert.deepEqual(
       DesktopAppSettings.normalizeWindowLayout({
-        windows: [home, second, { ...second, projectScopeKey: null }],
+        windows: [home, second, { ...second, projectScopeKeys: [] }],
         assignments: { "env:a": "second", "env:b": "gone" },
       }),
       { windows: [home, second], assignments: { "env:a": "second" } },

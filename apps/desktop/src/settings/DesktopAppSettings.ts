@@ -61,7 +61,7 @@ export const DesktopWindowBoundsSchema = Schema.Struct({
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
 const DesktopWindowLayoutEntrySchema = Schema.Struct({
   id: Schema.String,
-  projectScopeKey: Schema.NullOr(Schema.String),
+  projectScopeKeys: Schema.Array(Schema.String),
   bounds: Schema.NullOr(DesktopWindowBoundsSchema),
   maximized: Schema.Boolean,
 });
@@ -126,7 +126,22 @@ const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
-const decodeDesktopWindowLayout = Schema.decodeUnknownOption(DesktopWindowLayoutSchema);
+const decodeDesktopWindowLayout = Schema.decodeUnknownOption(
+  Schema.Struct({
+    windows: Schema.Array(
+      Schema.Union([
+        DesktopWindowLayoutEntrySchema,
+        Schema.Struct({
+          id: Schema.String,
+          projectScopeKey: Schema.NullOr(Schema.String),
+          bounds: Schema.NullOr(DesktopWindowBoundsSchema),
+          maximized: Schema.Boolean,
+        }),
+      ]),
+    ),
+    assignments: Schema.Record(Schema.String, Schema.String),
+  }),
+);
 
 const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSettingsChange => ({
   settings,
@@ -320,10 +335,17 @@ export function normalizeWindowLayout(value: unknown): DesktopWindowLayout {
   const decoded = decodeDesktopWindowLayout(value);
   if (Option.isNone(decoded)) return EMPTY_WINDOW_LAYOUT;
   const seenIds = new Set<string>();
-  const windows = decoded.value.windows.filter((window) => {
-    if (seenIds.has(window.id)) return false;
+  const windows = decoded.value.windows.flatMap((window) => {
+    if (seenIds.has(window.id)) return [];
     seenIds.add(window.id);
-    return true;
+    const { id, bounds, maximized } = window;
+    const projectScopeKeys =
+      "projectScopeKeys" in window
+        ? window.projectScopeKeys
+        : window.projectScopeKey === null
+          ? []
+          : [window.projectScopeKey];
+    return [{ id, projectScopeKeys, bounds, maximized }];
   });
   return { windows, assignments: assignmentsWithin(windows, decoded.value.assignments) };
 }
@@ -353,7 +375,8 @@ export function updateLayoutWindow(
   if (current === undefined) return layout;
   const next = { ...current, ...patch };
   const unchanged =
-    next.projectScopeKey === current.projectScopeKey &&
+    next.projectScopeKeys.length === current.projectScopeKeys.length &&
+    next.projectScopeKeys.every((key, index) => key === current.projectScopeKeys[index]) &&
     next.maximized === current.maximized &&
     (next.bounds === current.bounds ||
       (next.bounds !== null &&

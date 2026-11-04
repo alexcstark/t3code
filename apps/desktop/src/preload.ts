@@ -222,8 +222,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_LAYOUT_CHANNEL, wrappedListener);
     };
   },
-  setWindowProjectScope: (projectScopeKey) =>
-    ipcRenderer.invoke(IpcChannels.SET_WINDOW_PROJECT_SCOPE_CHANNEL, { projectScopeKey }),
+  setWindowProjectScope: (projectScopeKeys) =>
+    ipcRenderer.invoke(IpcChannels.SET_WINDOW_PROJECT_SCOPE_CHANNEL, { projectScopeKeys }),
   moveThreadsToWindow: (input) =>
     ipcRenderer.invoke(IpcChannels.MOVE_THREADS_TO_WINDOW_CHANNEL, input),
   onMenuAction: (listener) => {

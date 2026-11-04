@@ -3,6 +3,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeEvents from "node:events";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
   ProjectId,
@@ -14,9 +16,17 @@ import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppContr
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import { afterEach, describe, expect } from "vite-plus/test";
+import type * as Electron from "electron";
 
 import { startDesktopAppControlServer } from "./DesktopAppActivation.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const openServers: Array<{ close: () => Promise<void> }> = [];
 
@@ -81,6 +91,83 @@ function exchange(address: string, payload: DesktopAppActivationRequest) {
 }
 
 describe("desktop app control server", () => {
+  it.live("only cancels activation when the window handling it becomes unavailable", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const userId = yield* HostProcess.UserId;
+      const root = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-windows-"))),
+        (directory) =>
+          Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+      );
+      let delivery = Promise.withResolvers<DesktopAppActivationRequest>();
+      const renderer = () =>
+        Object.assign(new NodeEvents.EventEmitter(), {
+          isDestroyed: () => false,
+          send: (_channel: string, input: DesktopAppActivationRequest) => delivery.resolve(input),
+        });
+      // The fixture implements the availability events and request delivery this adapter uses.
+      const owner = renderer() as unknown as Electron.WebContents;
+      const other = renderer() as unknown as Electron.WebContents;
+      const stateDir = NodePath.join(root, "userdata");
+      const environment = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+        Effect.provide(
+          DesktopEnvironment.layer({
+            dirname: root,
+            homeDirectory: root,
+            platform,
+            processArch: "arm64",
+            appVersion: "1.2.3",
+            appPath: root,
+            isPackaged: false,
+            resourcesPath: root,
+            runningUnderArm64Translation: false,
+          }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({})))),
+        ),
+      );
+      const activation = yield* DesktopAppActivation.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, { ...environment, stateDir }),
+            Layer.mock(DesktopWindow.DesktopWindow)({ activate: Effect.void }),
+            Layer.mock(ElectronWindow.ElectronWindow)({
+              main: Effect.succeedSome({ webContents: owner } as Electron.BrowserWindow),
+            }),
+          ),
+        ),
+      );
+      yield* activation.start;
+      yield* activation.setRendererReady(true, owner);
+      yield* activation.setRendererReady(true, other);
+      const target = makeTarget(stateDir, platform, userId);
+      const pending = yield* Effect.promise(() =>
+        exchange(target.address, request("other-window-closes", platform)),
+      ).pipe(Effect.forkChild);
+      expect((yield* Effect.promise(() => delivery.promise)).requestId).toBe("other-window-closes");
+      other.emit("destroyed");
+      yield* activation.complete({
+        version: 1,
+        requestId: "other-window-closes",
+        ok: true,
+        projectId: ProjectId.make("project-1"),
+        threadId: ThreadId.make("thread-1"),
+      });
+      expect(yield* Fiber.join(pending)).toMatchObject({ ok: true });
+
+      delivery = Promise.withResolvers<DesktopAppActivationRequest>();
+      const canceled = yield* Effect.promise(() =>
+        exchange(target.address, request("owner-closes", platform)),
+      ).pipe(Effect.forkChild);
+      expect((yield* Effect.promise(() => delivery.promise)).requestId).toBe("owner-closes");
+      owner.emit("destroyed");
+      expect(yield* Fiber.join(canceled)).toMatchObject({
+        ok: false,
+        code: "renderer-unavailable",
+      });
+    }),
+  );
+
   it.effect("cancels a queued request when the client disconnects", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;

@@ -246,7 +246,7 @@ describe("uiStateStore persistence", () => {
     });
   });
 
-  it("restores the sidebar project scope across reloads", () => {
+  it("restores the sidebar project scope across reloads", async () => {
     const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
     persistState(makeUiState({ sidebarProjectScopeKeys: keys }));
 
@@ -255,6 +255,30 @@ describe("uiStateStore persistence", () => {
     ) as PersistedUiState;
 
     expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual(keys);
+
+    persistState(makeUiState({ sidebarProjectScopeKeys: ["web-only-project"] }));
+    const setWindowProjectScope = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("window", {
+      localStorage: localStorageStub,
+      desktopBridge: {
+        getWindowLayout: () => ({
+          windowId: "second",
+          layout: {
+            windows: [
+              { id: "home", projectScopeKeys: [] },
+              { id: "second", projectScopeKeys: keys },
+            ],
+            assignments: {},
+          },
+        }),
+        setWindowProjectScope,
+      },
+    });
+    vi.resetModules();
+    const { useUiStateStore } = await import("./uiStateStore");
+    expect(useUiStateStore.getState().sidebarProjectScopeKeys).toEqual(keys);
+    useUiStateStore.getState().setSidebarProjectScopeKeys(keys);
+    expect(setWindowProjectScope).toHaveBeenCalledWith(keys);
   });
 
   it("keeps a single-project scope readable by older clients", () => {

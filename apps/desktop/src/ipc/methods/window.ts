@@ -402,7 +402,7 @@ export const openWindow = DesktopIpc.makeIpcMethod({
 
 const DesktopWindowLayoutSchema = Schema.Struct({
   windows: Schema.Array(
-    Schema.Struct({ id: Schema.String, projectScopeKey: Schema.NullOr(Schema.String) }),
+    Schema.Struct({ id: Schema.String, projectScopeKeys: Schema.Array(Schema.String) }),
   ),
   assignments: Schema.Record(Schema.String, Schema.String),
 });
@@ -421,12 +421,12 @@ export const getWindowLayout = DesktopIpc.makeSyncIpcMethod({
 
 export const setWindowProjectScope = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_WINDOW_PROJECT_SCOPE_CHANNEL,
-  payload: Schema.Struct({ projectScopeKey: Schema.NullOr(Schema.String) }),
+  payload: Schema.Struct({ projectScopeKeys: Schema.Array(Schema.String) }),
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.setWindowProjectScope")(function* (input, event) {
     if (event === undefined) return;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    yield* desktopWindow.setWindowProjectScope(event.sender.id, input.projectScopeKey);
+    yield* desktopWindow.setWindowProjectScope(event.sender.id, input.projectScopeKeys);
   }),
 });
 

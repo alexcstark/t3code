@@ -30,7 +30,7 @@ describe("createWindowThreadFilter", () => {
       visibleIn(
         {
           windowId: "home",
-          layout: { windows: [{ id: "home", projectScopeKey: null }], assignments: {} },
+          layout: { windows: [{ id: "home", projectScopeKeys: [] }], assignments: {} },
         },
         threads,
       ),
@@ -39,8 +39,8 @@ describe("createWindowThreadFilter", () => {
 
   it("opens a second window on the same project empty, then shows what moves in", () => {
     const windows = [
-      { id: "home", projectScopeKey: "alpha" },
-      { id: "second", projectScopeKey: "alpha" },
+      { id: "home", projectScopeKeys: ["alpha"] },
+      { id: "second", projectScopeKeys: ["alpha"] },
     ];
     const alphaRefs = new Set(["env:alpha"]);
     expect(
@@ -52,25 +52,39 @@ describe("createWindowThreadFilter", () => {
     expect(visibleIn({ windowId: "home", layout }, threads, alphaRefs)).toEqual(["env:a1"]);
   });
 
-  it("gives a project window its project's threads and leaves the rest home", () => {
-    const layout = {
-      windows: [
-        { id: "home", projectScopeKey: null },
-        { id: "beta", projectScopeKey: "beta" },
-      ],
-      assignments: {},
-    };
-    expect(visibleIn({ windowId: "home", layout }, threads)).toEqual(["env:a1", "env:a2"]);
-    expect(visibleIn({ windowId: "beta", layout }, threads, new Set(["env:beta"]))).toEqual([
-      "env:b1",
-    ]);
-  });
+  it.each([
+    { projectScopeKeys: ["beta"], homeThreads: ["env:a1", "env:a2"], scopedThreads: ["env:b1"] },
+    {
+      projectScopeKeys: ["alpha", "beta"],
+      homeThreads: [],
+      scopedThreads: ["env:a1", "env:a2", "env:b1"],
+    },
+  ])(
+    "gives a window its selected projects: $projectScopeKeys",
+    ({ projectScopeKeys, homeThreads, scopedThreads }) => {
+      const layout = {
+        windows: [
+          { id: "home", projectScopeKeys: [] },
+          { id: "second", projectScopeKeys },
+        ],
+        assignments: {},
+      };
+      expect(visibleIn({ windowId: "home", layout }, threads)).toEqual(homeThreads);
+      expect(
+        visibleIn(
+          { windowId: "second", layout },
+          threads,
+          new Set(projectScopeKeys.map((key) => `env:${key}`)),
+        ),
+      ).toEqual(scopedThreads);
+    },
+  );
 
   it("shows a moved thread even outside the window's project scope", () => {
     const layout = {
       windows: [
-        { id: "home", projectScopeKey: null },
-        { id: "second", projectScopeKey: "alpha" },
+        { id: "home", projectScopeKeys: [] },
+        { id: "second", projectScopeKeys: ["alpha"] },
       ],
       assignments: { "env:b1": "second" },
     };
@@ -84,8 +98,8 @@ describe("createWindowThreadFilter", () => {
   it("falls back to every thread when the layout does not know this window", () => {
     const layout = {
       windows: [
-        { id: "home", projectScopeKey: null },
-        { id: "second", projectScopeKey: null },
+        { id: "home", projectScopeKeys: [] },
+        { id: "second", projectScopeKeys: [] },
       ],
       assignments: {},
     };

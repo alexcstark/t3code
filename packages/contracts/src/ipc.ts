@@ -42,7 +42,10 @@ export type QuitShortcutHintEvent =
  * The first window is home. Assignment keys are scoped thread keys.
  */
 export interface DesktopWindowLayout {
-  readonly windows: ReadonlyArray<{ readonly id: string; readonly projectScopeKey: string | null }>;
+  readonly windows: ReadonlyArray<{
+    readonly id: string;
+    readonly projectScopeKeys: readonly string[];
+  }>;
   readonly assignments: Readonly<Record<string, string>>;
 }
 
@@ -1137,7 +1140,7 @@ export interface DesktopBridge {
     readonly layout: DesktopWindowLayout;
   } | null;
   onWindowLayout?: (listener: (layout: DesktopWindowLayout) => void) => () => void;
-  setWindowProjectScope?: (projectScopeKey: string | null) => Promise<void>;
+  setWindowProjectScope?: (projectScopeKeys: readonly string[]) => Promise<void>;
   /** Resolves false when nothing moved, such as a drop with no other window under the cursor. */
   moveThreadsToWindow?: (input: {
     readonly threadKeys: readonly string[];

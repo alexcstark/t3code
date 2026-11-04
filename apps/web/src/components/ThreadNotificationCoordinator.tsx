@@ -24,17 +24,18 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import {
-  buildProjectGroups,
-  selectProjectGroupingSettings,
-} from "@t3tools/client-runtime/state/project-grouping";
+  buildSidebarProjectSnapshots,
+  resolveSidebarProjectScopeKeys,
+} from "../sidebarProjectGrouping";
 import { createWindowThreadFilter, useDesktopWindowLayoutStore } from "../desktopWindowLayout";
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { environmentProjects } from "../state/projects";
 import { useUiStateStore } from "../uiStateStore";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
-import { environmentShell } from "../state/shell";
+import { allEnvironmentProjectSnapshotsReadyAtom, environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import {
   hasDesktopNotifications,
@@ -92,26 +93,41 @@ export function startThreadNotifications(
     projectId: ProjectId,
     threadId: ThreadId,
   ) => {
-    const scopeKeys = useUiStateStore.getState().sidebarProjectScopeKeys;
-    let groups = [] as ReturnType<typeof buildProjectGroups>;
-    try {
-      const projects = registry.get(environmentProjects.projectsAtom);
-      if (Array.isArray(projects) && projects.length > 0) {
-        groups = buildProjectGroups({
-          projects,
-          settings: selectProjectGroupingSettings(getClientSettings()),
-        });
-      }
-    } catch {
-      // Tests and early startup can observe threads before the project atom exists.
-    }
-    const allowed = new Set<string>(scopeKeys);
+    const settings = selectProjectGroupingSettings(getClientSettings());
+    const groups = buildSidebarProjectSnapshots({
+      projects: registry.get(environmentProjects.projectsAtom),
+      settings,
+      groupScratchProjects: true,
+      primaryEnvironmentId: null,
+      resolveEnvironmentLabel: () => null,
+    });
+    const archivedProjectKeys = new Set(
+      groups.filter((group) => group.archived).map((group) => group.projectKey),
+    );
+    const scopeKeys = resolveSidebarProjectScopeKeys({
+      groups,
+      keys: useUiStateStore.getState().sidebarProjectScopeKeys,
+      settings,
+      canClearMissingScope:
+        registry.get(allEnvironmentProjectSnapshotsReadyAtom) &&
+        registry.get(environmentProjects.projectConfigsReadyAtom),
+    }).filter((key) => !archivedProjectKeys.has(key));
+    const selectedGroups = groups.filter(
+      (group) => !group.archived && scopeKeys.includes(group.projectKey),
+    );
+    const allowed =
+      selectedGroups.length === 0
+        ? null
+        : new Set(
+            selectedGroups.flatMap((group) =>
+              group.memberProjectRefs.map((ref) => scopedProjectKey(ref)),
+            ),
+          );
     const projectKeyByProjectRef = new Map<string, string>();
     for (const group of groups) {
       for (const ref of group.memberProjectRefs) {
         const refKey = scopedProjectKey(scopeProjectRef(ref.environmentId, ref.projectId));
-        projectKeyByProjectRef.set(refKey, group.key);
-        if (scopeKeys.includes(group.key)) allowed.add(refKey);
+        projectKeyByProjectRef.set(refKey, group.projectKey);
       }
     }
     const projectKey = scopedProjectKey(scopeProjectRef(environmentId, projectId));
@@ -119,10 +135,10 @@ export function startThreadNotifications(
     const filter = createWindowThreadFilter({
       view: useDesktopWindowLayoutStore.getState().view,
       projectKeyByProjectRef,
-      scopedProjectKeys: scopeKeys.length === 0 ? null : allowed,
+      scopedProjectKeys: allowed,
     });
     if (filter !== null) return filter(threadKey, projectKey);
-    return scopeKeys.length === 0 || allowed.has(projectKey);
+    return allowed === null || allowed.has(projectKey);
   };
 
   const trackNotification = (

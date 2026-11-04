@@ -266,11 +266,11 @@ thread** from its long-press menu on mobile.
 
 ## Work in separate windows
 
-On desktop, each project can have its own window. Open the project filter at the top of the sidebar and click the window icon next to a project. The new window shows that project's threads, and you can change its filter at any time.
+On desktop, each project can have its own window. Open the project filter at the top of the sidebar and click the window icon next to a project. The new window shows that project's threads. You can select several projects in its filter, and the selection survives quitting.
 
 To split one project's threads between windows, choose **File → New Window** (`Cmd/Ctrl+Alt+Shift+N`). The new window uses the same project filter and starts empty. Drag a thread out of one window's sidebar and drop it on another window, or right-click it and choose **Move to window**. A thread you start in a window stays there, and threads that arrive any other way go to the first window showing their project.
 
-Closing a window sends its threads back to the first window. **File → Merge All Windows** closes every other window at once. Quitting keeps your windows, and they reopen with the same threads.
+Closing a window returns its threads to the remaining window that owns their project. **File → Merge All Windows** closes every other window at once. Quitting keeps your windows, and they reopen with the same threads.
 
 ## Inspect agent work
 

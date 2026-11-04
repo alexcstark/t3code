@@ -126,7 +126,7 @@ export class DesktopWindow extends Context.Service<
     ) => Effect.Effect<{ readonly windowId: string; readonly layout: DesktopWindowLayout } | null>;
     readonly setWindowProjectScope: (
       webContentsId: number,
-      projectScopeKey: string | null,
+      projectScopeKeys: readonly string[],
     ) => Effect.Effect<void>;
     // Resolves false when no window took the threads.
     readonly moveThreadsToWindow: (
@@ -352,7 +352,7 @@ function bindFirstRevealTrigger(
 
 function toPublicWindowLayout(layout: DesktopAppSettings.DesktopWindowLayout): DesktopWindowLayout {
   return {
-    windows: layout.windows.map(({ id, projectScopeKey }) => ({ id, projectScopeKey })),
+    windows: layout.windows.map(({ id, projectScopeKeys }) => ({ id, projectScopeKeys })),
     assignments: layout.assignments,
   };
 }
@@ -382,12 +382,12 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const random = yield* SecureRandom.SecureRandom;
-  const newLayoutEntry = (projectScopeKey: string | null) =>
+  const newLayoutEntry = (projectScopeKeys: readonly string[]) =>
     random.uuidV4().pipe(
       Effect.orDie,
       Effect.map((id): DesktopAppSettings.DesktopWindowLayoutEntry => ({
         id,
-        projectScopeKey,
+        projectScopeKeys,
         bounds: null,
         maximized: false,
       })),
@@ -1064,7 +1064,7 @@ export const make = Effect.gen(function* () {
     const [home, ...others] = (yield* desktopSettings.get).windowLayout.windows;
     const window = yield* createWindow(
       home === undefined
-        ? { entry: yield* newLayoutEntry(null), restored: false }
+        ? { entry: yield* newLayoutEntry([]), restored: false }
         : { entry: home, restored: true },
     );
     if (Option.isSome(window)) {
@@ -1092,9 +1092,9 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
   const openNewWindow = Effect.fn("desktop.window.openNewWindow")(function* (
-    projectScopeKey: string | null,
+    projectScopeKeys: readonly string[],
   ) {
-    const entry = yield* newLayoutEntry(projectScopeKey);
+    const entry = yield* newLayoutEntry(projectScopeKeys);
     const window = yield* createWindow({ entry, restored: false });
     return Option.map(window, () => entry.id);
   });
@@ -1243,16 +1243,17 @@ export const make = Effect.gen(function* () {
       // Before the backend is up the first window is still on its way; a
       // second one would only race it.
       if (yield* waitingForBackend) return;
-      let projectScopeKey = options.projectScopeKey ?? null;
+      let projectScopeKeys: readonly string[] =
+        options.projectScopeKey === undefined ? [] : [options.projectScopeKey];
       if (options.projectScopeKey === undefined) {
         const focused = yield* electronWindow.main;
         if (Option.isSome(focused)) {
-          projectScopeKey = (yield* layoutEntryOf(focused.value))?.projectScopeKey ?? null;
+          projectScopeKeys = (yield* layoutEntryOf(focused.value))?.projectScopeKeys ?? [];
         }
       }
-      yield* openNewWindow(projectScopeKey);
+      yield* openNewWindow(projectScopeKeys);
       yield* logWindowInfo("additional window created", {
-        projectScoped: projectScopeKey !== null,
+        projectScoped: projectScopeKeys.length > 0,
       });
     }),
     windowLayoutFor: Effect.fn("desktop.window.windowLayoutFor")(function* (webContentsId) {
@@ -1262,11 +1263,11 @@ export const make = Effect.gen(function* () {
       return { windowId, layout: toPublicWindowLayout(windowLayout) };
     }),
     setWindowProjectScope: Effect.fn("desktop.window.setWindowProjectScope")(
-      function* (webContentsId, projectScopeKey) {
+      function* (webContentsId, projectScopeKeys) {
         const windowId = windowIdByContentsId.get(webContentsId);
         if (windowId === undefined) return;
         yield* updateWindowLayout((layout) =>
-          DesktopAppSettings.updateLayoutWindow(layout, windowId, { projectScopeKey }),
+          DesktopAppSettings.updateLayoutWindow(layout, windowId, { projectScopeKeys }),
         );
       },
     ),
@@ -1279,7 +1280,7 @@ export const make = Effect.gen(function* () {
           const source = sourceId === undefined ? undefined : windowById.get(sourceId);
           const sourceEntry = source === undefined ? undefined : yield* layoutEntryOf(source);
           targetId = Option.getOrUndefined(
-            yield* openNewWindow(sourceEntry?.projectScopeKey ?? null),
+            yield* openNewWindow(sourceEntry?.projectScopeKeys ?? []),
           );
         } else if (target === "window-at-cursor") {
           const point = Electron.screen.getCursorScreenPoint();
