@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ListRunsOptions } from "@cursor/sdk";
+import type { AgentOptions, ListRunsOptions } from "@cursor/sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -27,6 +27,13 @@ const cursorSdkMock = vi.hoisted(() => {
     durationMs: 1,
   }));
   const runCancel = vi.fn(async () => {});
+  const store = {
+    dispose: vi.fn(async () => {
+      closeExecutionOrder.push("store.dispose");
+    }),
+  } as never;
+  const storeOpen = vi.fn(async () => store);
+  const listMessages = vi.fn(async () => []);
   const agentClose = vi.fn(() => {
     closeExecutionOrder.push("sdk:agent.close");
     if (agentCloseFailure !== undefined) {
@@ -92,6 +99,9 @@ const cursorSdkMock = vi.hoisted(() => {
     cancelRun,
     closeExecutionOrder,
     create,
+    store,
+    storeOpen,
+    listMessages,
     listRuns,
     resume,
     runOperations,
@@ -119,12 +129,12 @@ vi.mock("./sdk.ts", () => ({
       listRuns: cursorSdkMock.listRuns,
       cancelRun: cursorSdkMock.cancelRun,
       messages: {
-        list: vi.fn(async () => []),
+        list: cursorSdkMock.listMessages,
       },
     },
     createAgentPlatform: vi.fn(),
   }),
-  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: vi.fn() } }),
+  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: cursorSdkMock.storeOpen } }),
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -219,15 +229,101 @@ describe("CursorAgentSdkRunner", () => {
         ]);
         assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
           "agent-cursor-agent-sdk-test",
-          { runtime: "local", cwd: process.cwd(), limit: 100 },
+          { runtime: "local", cwd: process.cwd(), store: cursorSdkMock.store, limit: 100 },
         ]);
         assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
           "run-stale",
           {
             runtime: "local",
             cwd: process.cwd(),
+            store: cursorSdkMock.store,
           },
         ]);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["owned", "provided"] as const)(
+    "closes an agent and releases only its %s store",
+    (ownership) =>
+      Effect.gen(function* () {
+        cursorSdkMock.storeOpen.mockClear();
+        cursorSdkMock.agentClose.mockClear();
+        cursorSdkMock.closeExecutionOrder.length = 0;
+        cursorSdkMock.setAgentCloseFailure(undefined);
+
+        const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+        const session = yield* runner.open({
+          operation: "create",
+          options: {
+            model: { id: "default" },
+            mode: "agent",
+            local: {
+              cwd: process.cwd(),
+              ...(ownership === "provided" ? { store: cursorSdkMock.store } : {}),
+            },
+          },
+          threadId: ThreadId.make("thread-cursor-agent-sdk-close-order-test"),
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-cursor-agent-sdk-close-order-test",
+          ),
+        });
+
+        assert.strictEqual(
+          (cursorSdkMock.create.mock.lastCall as unknown as [AgentOptions])[0].local?.store,
+          cursorSdkMock.store,
+        );
+        assert.equal(cursorSdkMock.storeOpen.mock.calls.length, ownership === "owned" ? 1 : 0);
+        yield* session.listMessages;
+        assert.deepStrictEqual(cursorSdkMock.listMessages.mock.lastCall, [
+          "agent-cursor-agent-sdk-test",
+          { runtime: "local", cwd: process.cwd(), store: cursorSdkMock.store },
+        ]);
+        cursorSdkMock.closeExecutionOrder.length = 0;
+        yield* session.close;
+
+        assert.deepStrictEqual(cursorSdkMock.closeExecutionOrder, [
+          "protocol:agent.close",
+          "sdk:agent.close",
+          ...(ownership === "owned" ? ["store.dispose"] : []),
+        ]);
+        assert.equal(cursorSdkMock.agentClose.mock.calls.length, 1);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["agent.close", "agent.create", "agent.resume"] as const)(
+    "releases the owned store when %s fails",
+    (method) =>
+      Effect.gen(function* () {
+        cursorSdkMock.agentClose.mockClear();
+        cursorSdkMock.closeExecutionOrder.length = 0;
+        const failure = new Error("agent operation failed");
+        cursorSdkMock.setAgentCloseFailure(method === "agent.close" ? failure : undefined);
+        if (method === "agent.create") cursorSdkMock.create.mockRejectedValueOnce(failure);
+        if (method === "agent.resume") cursorSdkMock.resume.mockRejectedValueOnce(failure);
+        const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+        const open = runner.open({
+          operation: method === "agent.resume" ? "resume" : "create",
+          agentId: "agent-cursor-agent-sdk-test",
+          options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+          threadId: ThreadId.make("thread-cursor-agent-sdk-close-failure-test"),
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-cursor-agent-sdk-close-failure-test",
+          ),
+        });
+        const error = yield* Effect.flip(
+          method === "agent.close"
+            ? Effect.flatMap(open, (session) => session.close)
+            : Effect.asVoid(open),
+        );
+        assert.instanceOf(error, CursorAgentSdk.CursorAgentSdkRunnerError);
+        assert.equal(error.method, method);
+        assert.strictEqual(error.cause, failure);
+        assert.deepStrictEqual(cursorSdkMock.closeExecutionOrder, [
+          ...(method === "agent.close" ? ["protocol:agent.close", "sdk:agent.close"] : []),
+          "store.dispose",
+        ]);
+        assert.equal(cursorSdkMock.agentClose.mock.calls.length, method === "agent.close" ? 1 : 0);
+        cursorSdkMock.setAgentCloseFailure(undefined);
       }).pipe(Effect.provide(layerTest)),
   );
 });
