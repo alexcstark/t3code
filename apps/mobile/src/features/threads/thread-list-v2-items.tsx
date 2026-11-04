@@ -709,6 +709,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnpinThread,
     onSetThreadAutoSettle,
     onMoveThread,
+    onCreateThreadGroup,
+    onSetThreadGroup,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
@@ -1006,7 +1008,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [arrangementMenuItems, groupMenuItems, titleMenuItems],
   );
-  /* oxlint-disable react/memo-dependencies -- group callbacks are passed in for this row and read when the menu fires */
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
@@ -1022,10 +1023,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
-      if (nativeEvent.event === "group:new") props.onCreateThreadGroup?.(thread);
-      if (nativeEvent.event === "group:none") props.onSetThreadGroup?.(thread, null);
+      if (nativeEvent.event === "group:new") onCreateThreadGroup?.(thread);
+      if (nativeEvent.event === "group:none") onSetThreadGroup?.(thread, null);
       if (nativeEvent.event.startsWith("group:set:")) {
-        props.onSetThreadGroup?.(
+        onSetThreadGroup?.(
           thread,
           decodeURIComponent(nativeEvent.event.slice("group:set:".length)),
         );
@@ -1083,12 +1084,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
-      props.onCreateThreadGroup,
-      props.onSetThreadGroup,
-      turnThreadIntoProject,
+      onCreateThreadGroup,
+      onSetThreadGroup,
     ],
   );
-  /* oxlint-enable react/memo-dependencies */
   const primaryAction = useMemo(() => {
     if (swipeActions.primary === "archive") {
       return {

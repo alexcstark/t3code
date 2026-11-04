@@ -95,6 +95,7 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   SettingsEnvironmentFilterHeader: () => null,
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
+vi.mock("./components/SystemPromptsSettings", () => ({ SystemPromptsSettings: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
 vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./components/SettingsSwitchRow", () => ({
@@ -188,10 +189,14 @@ describe("SettingsServerControlsRouteScreen", () => {
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<SettingsWorktreesRouteScreen />));
+    await act(async () => root.render(<SettingsWorktreesRouteScreen />));
 
-    act(() => mocks.branchNaming.onChange({ branchNamingMode: "custom" }));
-    act(() => mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." }));
+    await act(async () => {
+      mocks.branchNaming.onChange({ branchNamingMode: "custom" });
+    });
+    await act(async () => {
+      mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." });
+    });
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
 
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
@@ -209,27 +214,27 @@ describe("SettingsServerControlsRouteScreen", () => {
     mocks.projectSelected = true;
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<SettingsThreadsRouteScreen />));
+    await act(async () => root.render(<SettingsThreadsRouteScreen />));
     const toggle = (label: string) =>
       [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
         (button) => button.textContent === label,
       )!;
 
-    act(() => toggle("Agent browser access").click());
-    act(() => toggle("Auto-settle merged threads").click());
+    await act(async () => toggle("Agent browser access").click());
+    await act(async () => toggle("Auto-settle merged threads").click());
 
     // Both rewrite the whole project override, so a second write planned now would drop the first.
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
   });
 
-  it("disables auto-settle when a selected environment cannot save settings", () => {
+  it("disables auto-settle when a selected environment cannot save settings", async () => {
     const remote = environment("remote", "Remote");
     // Auto-settle rows skip a server without auto-settlement, but the page still saves to it.
     remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
     mocks.targets = [environment("local", "Local"), remote];
     mocks.readOnly = new Set(["remote"]);
-    act(() => root.render(<SettingsThreadsRouteScreen />));
+    await act(async () => root.render(<SettingsThreadsRouteScreen />));
 
     const autoSettle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
       (button) => button.textContent === "Auto-settle merged threads",
