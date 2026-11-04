@@ -1077,6 +1077,7 @@ describe("CursorAdapterV2", () => {
       };
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
+      let systemPrompt: string | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
       const send = Effect.fnUntraced(function* (
         compact = false,
@@ -1096,7 +1097,7 @@ describe("CursorAdapterV2", () => {
           threadId,
           providerThread,
           modelSelection: turnModelSelection,
-          runtimePolicy,
+          runtimePolicy: { ...runtimePolicy, systemPrompt },
           ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           runId: RunId.make(`cursor-device-run-${runOrdinal}`),
           runOrdinal,
@@ -1147,6 +1148,20 @@ describe("CursorAdapterV2", () => {
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true, false), "device access turned on later");
       assert.deepEqual(yield* send(), told(false, false, false));
+      systemPrompt = "Use our review checklist.";
+      assert.deepEqual(yield* send(), told(false, true, false));
+      assert.include(sentMessages.at(-1)!, systemPrompt);
+      assert.deepEqual(yield* send(), told(false, false, false));
+      assert.notInclude(sentMessages.at(-1)!, systemPrompt);
+      systemPrompt = "Use the updated review checklist.";
+      yield* send();
+      assert.include(sentMessages.at(-1)!, systemPrompt);
+      yield* send(true);
+      yield* send();
+      assert.include(sentMessages.at(-1)!, systemPrompt, "compaction drops the custom prompt");
+      systemPrompt = undefined;
+      assert.deepEqual(yield* send(), told(true, true, false), "clearing the override restores defaults");
+
 
       assert.deepEqual(
         yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),

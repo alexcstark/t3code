@@ -1096,6 +1096,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly device: boolean;
           readonly backgroundWait: boolean;
           readonly runtime: string | undefined;
+          readonly systemPrompt: string | undefined;
         } | null>(null);
         // Cursor drops a run cancelled before its first checkpoint, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
@@ -2968,16 +2969,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
-            // A conversation this process has not sent to was told on its first run.
+            // Resumed conversations already got defaults; overrides need confirmed delivery.
             const delivered =
               known?.agent === agent.nativeThreadId
-                ? known
+                ? { ...known, orchestration: known.orchestration && known.systemPrompt === turnInput.runtimePolicy.systemPrompt }
                 : {
                     orchestration:
                       turnInput.runtimePolicy.systemPrompt === undefined &&
                       (turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1),
                     device: false,
                     backgroundWait: false,
+                    systemPrompt: undefined,
                     runtime: undefined,
                   };
             const interrupted = yield* Ref.get(interruptedPrompt);
@@ -3088,6 +3090,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 backgroundWait:
                   !compacted && (delivered.backgroundWait || mcpServers !== undefined),
                 runtime: compacted ? undefined : delivered.runtime,
+                systemPrompt: turnInput.runtimePolicy.systemPrompt,
               });
             }
             if (!compacted && resume !== "native") {
@@ -3596,6 +3599,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     orchestration: false,
                     device: false,
                     backgroundWait: false,
+                    systemPrompt: undefined,
                     runtime: undefined,
                   }),
                   Ref.set(interruptedPrompt, null),
