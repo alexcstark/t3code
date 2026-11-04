@@ -135,7 +135,6 @@ function curatedCauseMessages(cause: unknown): {
       switch (tag) {
         case "ProviderOutOfMemoryError":
           return { known: "Killed: out of memory.", category: categoryMessage(), code: "oom_kill" };
-        case "CodexAppServerProcessExitedError":
         case "CodexAppServerInputStreamEndedError":
           return {
             known: "Codex process exited. Retry the turn to start a new session.",

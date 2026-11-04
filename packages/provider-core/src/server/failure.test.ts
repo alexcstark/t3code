@@ -317,7 +317,10 @@ it("reports an exited Codex process through adapter wrappers without exposing it
         },
       }),
     });
-    assert.equal(failure.message, "Codex process exited. Retry the turn to start a new session.");
+    assert.include(failure.message, transport._tag === "CodexAppServerProcessExitedError"
+      ? "provider process exited with code 0."
+      : "Codex process exited. Retry the turn to start a new session.");
+    assert.notInclude(failure.message, "private-process-output");
   }
 });
 

@@ -535,6 +535,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
           Layer.mergeAll(
             Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
               latestAgentSequence: () => Effect.succeed(7),
+              prunedThroughSequence: Effect.succeed(0),
             }),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               streamStoredEventsFrom: () =>
@@ -565,6 +566,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         Effect.provide(
           Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
             latestAgentSequence: () => Effect.succeed(8),
+            prunedThroughSequence: Effect.succeed(0),
             getAgentReplayStats: () =>
               Effect.succeed({ eventCount: 1, rawPayloadBytes: 512, hasCreateEvent: false }),
             readAgentEvents: () => Stream.make({ sequence: 8, commandId: null, event }),
