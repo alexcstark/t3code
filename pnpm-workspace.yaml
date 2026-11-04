@@ -358,6 +358,8 @@ patchedDependencies:
   # skip, the fingerprint silently drops every Expo native module and OTAs reach stale binaries.
   "@expo/fingerprint@0.21.5": patches/@expo__fingerprint@0.21.5.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # Exposes the spawn call so Linux servers can start children from a small helper process.
+  "@effect/platform-node-shared@4.0.5": patches/@effect__platform-node-shared@4.0.5.patch
 
 peerDependencyRules:
   allowAny:
