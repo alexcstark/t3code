@@ -370,7 +370,7 @@ export function useThreadComposerState() {
   // A compacting turn cannot take steering input, so follow-ups queue meanwhile.
   const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
   // A stop or a restart holds the queue, completion wakes included, until it
-  // is resumed; the queue sheet lists only the user's own messages.
+  // is resumed; the queue sheet lists held wakes so they can be removed.
   const queueHeld = queueWorkflow?.isHeld === true;
   const resumableRunId = selectedThreadProjection
     ? deriveResumableRunId(selectedThreadProjection.projection, selectedThreadRuntime)

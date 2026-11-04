@@ -235,9 +235,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map(({ run, text, attachments, context, message, automatic }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
+          automatic,
           canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,

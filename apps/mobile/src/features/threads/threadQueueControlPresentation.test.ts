@@ -62,16 +62,19 @@ describe("threadQueueControlPresentation", () => {
     expect(editing.canDismiss).toBe(true);
   });
 
-  it("lets the owner cancel a guest's queued message but not rewrite it", () => {
-    const guest = resolveThreadQueueRowControls({
-      busy: false,
-      canPromoteToSteer: true,
-      canSendNow: false,
-      isGuestMessage: true,
-      text: "Why?",
-    });
+  it.each([{ isGuestMessage: true }, { automatic: true }])(
+    "lets the owner cancel read-only queued deliveries without rewriting them (%j)",
+    (delivery) => {
+      const guest = resolveThreadQueueRowControls({
+        busy: false,
+        canPromoteToSteer: true,
+        canSendNow: false,
+        ...delivery,
+        text: "Why?",
+      });
 
-    expect(guest.canEdit).toBe(false);
-    expect(guest.canDismiss).toBe(true);
-  });
+      expect(guest.canEdit).toBe(false);
+      expect(guest.canDismiss).toBe(true);
+    },
+  );
 });

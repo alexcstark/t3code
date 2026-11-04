@@ -15,6 +15,7 @@ export interface ThreadQueueRowControls {
 
 export function resolveThreadQueueRowControls(input: {
   readonly busy: boolean;
+  readonly automatic?: boolean;
   readonly canPromoteToSteer: boolean;
   readonly canSendNow: boolean;
   /** Something else holds the composer, such as an open question. */
@@ -32,8 +33,16 @@ export function resolveThreadQueueRowControls(input: {
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
     canEdit:
-      mutationEnabled && !isEditing && input.isGuestMessage !== true && input.editBlocked !== true,
-    canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
+      mutationEnabled &&
+      !isEditing &&
+      input.automatic !== true &&
+      input.isGuestMessage !== true &&
+      input.editBlocked !== true,
+    canSend:
+      mutationEnabled &&
+      (input.canPromoteToSteer || input.canSendNow) &&
+      !isEditing &&
+      input.automatic !== true,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
     displayText: isAttachmentOnlyBootstrapPrompt(input.text)
