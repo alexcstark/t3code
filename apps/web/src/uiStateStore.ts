@@ -464,7 +464,7 @@ function readInitialState(): UiState {
   const view = readDesktopWindowLayout();
   const entry = view?.layout.windows.find((window) => window.id === view.windowId);
   if (entry !== undefined) {
-    return setSidebarProjectScopeKeys(state, entry.projectScopeKey ? [entry.projectScopeKey] : []);
+    return setSidebarProjectScopeKeys(state, entry.projectScopeKeys);
   }
   const windowProjectScopeKey = consumeWindowProjectScope();
   return windowProjectScopeKey === null
@@ -483,10 +483,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKeys: (projectKeys) => {
-    set((state) => setSidebarProjectScopeKeys(state, projectKeys));
+    const keys = sanitizeStringArray(projectKeys);
+    set((state) => setSidebarProjectScopeKeys(state, keys));
     if (typeof window === "undefined") return;
-    const onlyKey = projectKeys.length === 1 ? (projectKeys[0] ?? null) : null;
-    void window.desktopBridge?.setWindowProjectScope?.(sanitizeOptionalKey(onlyKey));
+    void window.desktopBridge?.setWindowProjectScope?.(keys);
   },
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>

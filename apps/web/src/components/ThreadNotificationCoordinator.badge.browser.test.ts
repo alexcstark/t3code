@@ -1,11 +1,20 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { stubGlobal } from "../../test/render";
+
+const projectState = await vi.hoisted(async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    projects: Atom.make<ReadonlyArray<EnvironmentProject>>([]),
+    ready: Atom.make(false),
+  };
+});
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
@@ -28,6 +37,24 @@ vi.mock(import("../state/shell"), async (original) => {
     environmentShell: {
       ...actual.environmentShell,
       stateValueAtom: ((id: string) => shellAtom(id)) as never,
+    },
+    get allEnvironmentProjectSnapshotsReadyAtom() {
+      return projectState.ready;
+    },
+  };
+});
+vi.mock(import("../state/projects"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentProjects: {
+      ...actual.environmentProjects,
+      get projectsAtom() {
+        return projectState.projects;
+      },
+      get projectConfigsReadyAtom() {
+        return projectState.ready;
+      },
     },
   };
 });
@@ -77,6 +104,10 @@ vi.mock(import("../threadNotifications"), async (original) => ({
 
 import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 import { useUiStateStore } from "../uiStateStore";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { getClientSettings } from "../hooks/useSettings";
+import { threadNotificationTag } from "../threadNotifications";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
@@ -193,6 +224,8 @@ function setup() {
   state.inApp = false;
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
+  registry.set(projectState.projects, []);
+  registry.set(projectState.ready, false);
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   useUiStateStore.setState({ sidebarProjectScopeKeys: [] });
@@ -320,24 +353,65 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
-it("only badges threads in this window's project scope", async () => {
-  await using app = setup();
-  useUiStateStore.setState({ sidebarProjectScopeKeys: ["one:project"] });
-  app.start();
-  const finished = {
-    latestTurn: {
-      turnId: "turn-done",
-      state: "completed",
-      completedAt: "2026-09-13T07:00:01.000Z",
-    },
-  };
-  state.shells.set("one", shell(finished));
-  state.shells.set("two", shell(finished));
-  expect(TestNotification.sent).toHaveLength(1);
-  expect(TestNotification.sent[0]?.options.tag).toContain("one");
-  expect(state.badge).toHaveBeenLastCalledWith(1);
+it.each(["archived", "missing", "loading"] as const)(
+  "only badges threads in this window's effective project scope (%s)",
+  async (selection) => {
+    await using app = setup();
+    const projects = ["one", "two"].map((id): EnvironmentProject => ({
+      environmentId: EnvironmentId.make(id),
+      id: ProjectId.make("project"),
+      title: id,
+      workspaceRoot: `/${id}`,
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    }));
+    registry.set(projectState.projects, projects);
+    const groups = buildSidebarProjectSnapshots({
+      projects,
+      settings: selectProjectGroupingSettings(getClientSettings()),
+      primaryEnvironmentId: null,
+      resolveEnvironmentLabel: () => null,
+    });
+    const firstKey = groups[0]!.projectKey;
+    const secondKey = groups[1]!.projectKey;
+    useUiStateStore.setState({ sidebarProjectScopeKeys: [firstKey] });
+    app.start();
+    const finished = {
+      latestTurn: {
+        turnId: "turn-done",
+        state: "completed",
+        completedAt: "2026-09-13T07:00:01.000Z",
+      },
+    };
+    state.shells.set("one", shell(finished));
+    state.shells.set("two", shell(finished));
+    expect(TestNotification.sent).toHaveLength(1);
+    expect(TestNotification.sent[0]?.options.tag).toBe(
+      threadNotificationTag(EnvironmentId.make("one"), ThreadId.make("thread")),
+    );
+    expect(state.badge).toHaveBeenLastCalledWith(1);
 
-  useUiStateStore.setState({ sidebarProjectScopeKeys: ["two:project"] });
-  expect(TestNotification.sent[0]?.close).toHaveBeenCalled();
-  expect(state.badge).toHaveBeenLastCalledWith(0);
-});
+    useUiStateStore.setState({ sidebarProjectScopeKeys: [secondKey] });
+    expect(TestNotification.sent[0]?.close).toHaveBeenCalled();
+    expect(state.badge).toHaveBeenLastCalledWith(0);
+
+    registry.set(projectState.ready, selection !== "loading");
+    registry.set(
+      projectState.projects,
+      selection === "archived"
+        ? projects.map((project) => ({
+            ...project,
+            ...(project.environmentId === "two" ? { archivedAt: "2026-09-13T07:00:02.000Z" } : {}),
+          }))
+        : projects.filter((project) => project.environmentId !== "two"),
+    );
+    state.shells.set("one", shell({ hasPendingUserInput: true }));
+    expect(TestNotification.sent).toHaveLength(2);
+    expect(TestNotification.sent.at(-1)?.title).toBe("Input needed");
+    expect(state.badge).toHaveBeenLastCalledWith(1);
+    expect(useUiStateStore.getState().sidebarProjectScopeKeys).toEqual([secondKey]);
+  },
+);

@@ -25,8 +25,8 @@ function resolveThreadWindowId(
   const owner =
     (projectKey === null
       ? undefined
-      : layout.windows.find((window) => window.projectScopeKey === projectKey)) ??
-    layout.windows.find((window) => window.projectScopeKey === null) ??
+      : layout.windows.find((window) => window.projectScopeKeys.includes(projectKey))) ??
+    layout.windows.find((window) => window.projectScopeKeys.length === 0) ??
     layout.windows[0];
   return owner?.id ?? null;
 }

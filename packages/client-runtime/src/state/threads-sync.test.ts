@@ -714,7 +714,13 @@ describe("EnvironmentThreads", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
-          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+          yield* Deferred.await(first.firstSnapshotLoad);
+          const deleted = yield* awaitThreadState(
+            first.observed,
+            (value) => value.status === "deleted",
+          ).pipe(Effect.forkScoped);
+          yield* TestClock.adjust("15 seconds");
+          yield* Fiber.join(deleted);
         }),
       );
       const resumed = yield* makeHarness({

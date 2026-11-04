@@ -64,11 +64,12 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-function makeFakeBrowserWindow() {
+function makeFakeBrowserWindow(id = 1) {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    id,
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -219,6 +220,7 @@ const desktopWindowBoundsEquivalence = Schema.toEquivalence(
 
 function layerTest(input: {
   readonly window: Electron.BrowserWindow;
+  readonly additionalWindows?: readonly Electron.BrowserWindow[];
   readonly createCount: Ref.Ref<number>;
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
@@ -238,6 +240,7 @@ function layerTest(input: {
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
 }) {
+  const windows = [input.window, ...(input.additionalWindows ?? [])];
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
@@ -287,7 +290,7 @@ function layerTest(input: {
       }).pipe(
         Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
         Effect.andThen(input.onWindowCreate ?? Effect.void),
-        Effect.as(input.window),
+        Effect.map(() => windows.shift() ?? input.window),
       ),
     main: Ref.get(input.mainWindow),
     currentMainOrFirst: Ref.get(input.mainWindow),
@@ -561,6 +564,66 @@ describe("DesktopWindow", () => {
     const atEdge = { x: 720, y: 280, width: 1200, height: 800 };
     assert.deepEqual(DesktopWindow.resolveCascadedWindowBounds(atEdge, [display]), atEdge);
   });
+
+  it.effect("copies every selected project when opening or moving to a new window", () =>
+    Effect.gen(function* () {
+      const home = makeFakeBrowserWindow(1);
+      const second = makeFakeBrowserWindow(2);
+      const third = makeFakeBrowserWindow(3);
+      const explicit = makeFakeBrowserWindow(4);
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.createMain;
+        yield* windows.setWindowProjectScope(home.window.webContents.id, ["alpha", "beta"]);
+        yield* windows.openWindow({});
+        const secondView = yield* windows.windowLayoutFor(second.window.webContents.id);
+        assert.deepEqual(
+          secondView?.layout.windows.map((entry) => entry.projectScopeKeys),
+          [
+            ["alpha", "beta"],
+            ["alpha", "beta"],
+          ],
+        );
+        assert.isTrue(
+          yield* windows.moveThreadsToWindow(
+            second.window.webContents.id,
+            ["env:thread"],
+            "new-window",
+          ),
+        );
+        const thirdView = yield* windows.windowLayoutFor(third.window.webContents.id);
+        assert.deepEqual(thirdView?.layout.windows[2]?.projectScopeKeys, ["alpha", "beta"]);
+        assert.equal(thirdView?.layout.assignments["env:thread"], thirdView?.windowId);
+        yield* windows.openWindow({ projectScopeKey: "gamma" });
+        assert.deepEqual(
+          (yield* windows.windowLayoutFor(explicit.window.webContents.id))?.layout.windows[3]
+            ?.projectScopeKeys,
+          ["gamma"],
+        );
+        yield* windows.setWindowProjectScope(third.window.webContents.id, []);
+        assert.deepEqual(
+          (yield* windows.windowLayoutFor(third.window.webContents.id))?.layout.windows[2]
+            ?.projectScopeKeys,
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: home.window,
+            additionalWindows: [second.window, third.window, explicit.window],
+            createCount,
+            mainWindow,
+            desktopSettings: {
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              localEnvironmentEnabled: false,
+            },
+          }),
+        ),
+      );
+    }),
+  );
 
   it.effect(
     "opens and reopens the window without backend readiness when local execution is disabled",
