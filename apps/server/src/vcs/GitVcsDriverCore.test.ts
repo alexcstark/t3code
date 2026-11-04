@@ -1109,6 +1109,9 @@ it.effect("shares concurrent remote and config reads until a command may change 
           return next;
         });
       const spawned = yield* Ref.make({ config: 0, remote: 0 });
+      const writeStarted = yield* Deferred.make<void>();
+      const releaseWrite = yield* Deferred.make<void>();
+      const finalUrl = "https://example.com/a/final.git";
       const coordinatingSpawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           if (!ChildProcess.isStandardCommand(command)) {
@@ -1116,6 +1119,11 @@ it.effect("shares concurrent remote and config reads until a command may change 
           }
           const isUrlRead = command.args.join(" ") === "config --get remote.origin.url";
           const isRemoteList = command.args.join(" ") === "remote";
+          if (command.args.join(" ") === `config remote.origin.url ${finalUrl}`) {
+            yield* Deferred.succeed(writeStarted, undefined);
+            yield* Deferred.await(releaseWrite);
+          }
+          const child = yield* delegate.spawn(command);
           if (isUrlRead || isRemoteList) {
             yield* Ref.update(spawned, (count) => ({
               config: count.config + (isUrlRead ? 1 : 0),
@@ -1125,12 +1133,13 @@ it.effect("shares concurrent remote and config reads until a command may change 
             if (current !== null) {
               const held = yield* Ref.updateAndGet(current.held, (count) => count + 1);
               if (held <= current.expected) {
+                yield* child.exitCode;
                 if (held === current.expected) yield* Deferred.succeed(current.started, undefined);
                 yield* Deferred.await(current.release);
               }
             }
           }
-          return yield* delegate.spawn(command);
+          return child;
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
@@ -1166,20 +1175,40 @@ it.effect("shares concurrent remote and config reads until a command may change 
       ]);
       assert.deepStrictEqual(yield* Ref.get(spawned), { config: 1, remote: 1 });
 
-      // A read that starts after a config write must not join one that started before it.
-      const writeGate = yield* holdSharedReads(1);
-      const startedBeforeWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(writeGate.started);
-      yield* driver.execute({
+      const updateUrl = driver.execute({
         operation: "test.setRemoteUrl",
         cwd,
         args: ["config", "remote.origin.url", "https://example.com/a/new.git"],
       });
+      // Constructing a write is inert; invalidation follows its execution.
+      const writeGate = yield* holdSharedReads(1);
+      const startedBeforeWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(writeGate.started);
+      yield* updateUrl;
       const startedAfterWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.succeed(writeGate.release, undefined);
-      yield* Fiber.join(startedBeforeWrite);
+      assert.strictEqual(yield* Fiber.join(startedBeforeWrite), "https://example.com/a/old.git");
       assert.strictEqual(yield* Fiber.join(startedAfterWrite), "https://example.com/a/new.git");
       assert.deepStrictEqual(yield* Ref.get(spawned), { config: 3, remote: 1 });
+
+      const writing = yield* driver
+        .execute({
+          operation: "test.setFinalUrl",
+          cwd,
+          args: ["config", "remote.origin.url", finalUrl],
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(writeStarted);
+      const duringWriteGate = yield* holdSharedReads(1);
+      const duringWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(duringWriteGate.started);
+      yield* Deferred.succeed(releaseWrite, undefined);
+      yield* Fiber.join(writing);
+      const afterWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(duringWriteGate.release, undefined);
+      assert.strictEqual(yield* Fiber.join(duringWrite), "https://example.com/a/new.git");
+      assert.strictEqual(yield* Fiber.join(afterWrite), finalUrl);
+      assert.deepStrictEqual(yield* Ref.get(spawned), { config: 5, remote: 1 });
     }),
   ).pipe(
     Effect.provide(
