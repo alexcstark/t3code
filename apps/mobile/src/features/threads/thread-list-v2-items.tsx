@@ -549,6 +549,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnpinThread,
     onSetThreadAutoSettle,
     onMoveThread,
+    onCreateThreadGroup,
+    onSetThreadGroup,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
@@ -842,10 +844,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
-      if (nativeEvent.event === "group:new") props.onCreateThreadGroup?.(thread);
-      if (nativeEvent.event === "group:none") props.onSetThreadGroup?.(thread, null);
+      if (nativeEvent.event === "group:new") onCreateThreadGroup?.(thread);
+      if (nativeEvent.event === "group:none") onSetThreadGroup?.(thread, null);
       if (nativeEvent.event.startsWith("group:set:")) {
-        props.onSetThreadGroup?.(
+        onSetThreadGroup?.(
           thread,
           decodeURIComponent(nativeEvent.event.slice("group:set:".length)),
         );
@@ -889,6 +891,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
+      onCreateThreadGroup,
+      onSetThreadGroup,
       setCustomSnoozeOpen,
       snoozePresets,
     ],

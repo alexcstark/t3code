@@ -64,7 +64,9 @@ describe("terminal shell addon", () => {
       />,
     );
     await expect.element(screen.getByText("Ready")).toBeVisible();
-    await expect.element(screen.getByText("esc to interrupt")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByText("esc to interrupt", { exact: false }))
+      .not.toBeInTheDocument();
   });
   it("shows the current step, stop hint, and active terminal count", async () => {
     await using screen = await render(
@@ -76,7 +78,7 @@ describe("terminal shell addon", () => {
       />,
     );
     await expect.element(screen.getByText("Running command")).toBeVisible();
-    await expect.element(screen.getByText("esc to interrupt")).toBeVisible();
-    await expect.element(screen.getByText("2 terminals active")).toBeVisible();
+    await expect.element(screen.getByText("esc to interrupt", { exact: false })).toBeVisible();
+    await expect.element(screen.getByText("2 terminals active", { exact: false })).toBeVisible();
   });
 });

@@ -53,15 +53,16 @@ function SystemPromptsLibrary() {
     const environment = connectedEnvironments[0];
     if (!canEdit || !environment) return;
     setSaving(true);
-    try {
-      const result = await updateSettings({
-        environmentId: environment.environmentId,
-        input: { patch: { systemPrompts } },
+    await updateSettings({
+      environmentId: environment.environmentId,
+      input: { patch: { systemPrompts } },
+    })
+      .then((result) => {
+        if (AsyncResult.isSuccess(result)) setEditing(null);
+      })
+      .finally(() => {
+        setSaving(false);
       });
-      if (AsyncResult.isSuccess(result)) setEditing(null);
-    } finally {
-      setSaving(false);
-    }
   };
 
   return (

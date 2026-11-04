@@ -246,10 +246,9 @@ function systemdManager(input: {
   // which runs with the unit's own PATH, does not drop it.
   const environmentPath = Array.from(
     new Set(
-      [
-        input.path.join(input.homeDir, ".local", "bin"),
-        ...input.environmentPath.split(":"),
-      ].filter((segment) => segment.length > 0),
+      [input.path.join(input.homeDir, ".local", "bin"), ...input.environmentPath.split(":")].filter(
+        (segment) => segment.length > 0,
+      ),
     ),
   ).join(":");
   const prepareActivation = [

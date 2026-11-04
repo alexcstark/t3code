@@ -332,7 +332,7 @@ export function useThreadComposerState() {
   const selectedThreadRuntime =
     detailRuntime === null
       ? (selectedThreadShell?.runtime ?? null)
-      : selectedThreadShell === null || !threadRuntimeIsActive(detailRuntime.status)
+      : selectedThreadShell === null || !threadRuntimeIsActive(detailRuntime)
         ? detailRuntime
         : reconcileThreadShellRuntimeFromDetail(selectedThreadShell, detailRuntime).runtime;
   const selectedThreadActivityRun = selectedThreadProjection

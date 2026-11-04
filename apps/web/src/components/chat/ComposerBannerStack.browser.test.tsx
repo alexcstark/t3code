@@ -84,7 +84,10 @@ it("keeps only the usage limit attached while an active goal waits in the collap
     "Usage limit reached",
   );
 
-  await page.getByRole("button", { name: "Show other notices" }).click();
+  // Hover expands the stack before a pointer click can reach the peek button.
+  await userEvent.tab();
+  await expect.element(page.getByRole("button", { name: "Show other notices" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
   await expect.element(goal).toBeVisible();
   await expect.element(limit).toBeVisible();
   await expect.poll(visibleBanners).toHaveLength(2);

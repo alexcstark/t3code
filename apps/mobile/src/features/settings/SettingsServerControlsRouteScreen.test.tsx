@@ -44,6 +44,7 @@ vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
 }));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "new-prompt" }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
@@ -203,9 +204,13 @@ describe("SettingsServerControlsRouteScreen", () => {
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
     act(() => root.render(<SettingsEnvironmentSourceControlRouteScreen />));
 
-    act(() => mocks.branchNaming.onChange({ branchNamingMode: "custom" }));
+    act(() => {
+      mocks.branchNaming.onChange({ branchNamingMode: "custom" });
+    });
     // The branch naming view closes with a draft while the mode write is pending.
-    act(() => mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." }));
+    act(() => {
+      mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." });
+    });
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
 
     await act(async () => pending.resolve(AsyncResult.success(undefined)));

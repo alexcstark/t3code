@@ -15,10 +15,6 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.save }));
-vi.mock(import("../../lib/utils"), async (original) => ({
-  ...(await original()),
-  randomUUID: () => "new-prompt",
-}));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope: { kind: "environment" },
@@ -52,6 +48,9 @@ function setup() {
 
 it("saves an empty prompt alongside existing presets, then deletes a preset", async () => {
   await using _screen = await setup();
+  using _random = vi
+    .spyOn(globalThis.crypto, "getRandomValues")
+    .mockImplementation((array) => array);
   await userEvent.click(page.getByRole("button", { name: "New prompt" }));
   await userEvent.fill(page.getByRole("textbox", { name: "Prompt name" }), "Empty");
   await userEvent.fill(page.getByRole("textbox", { name: "System prompt instructions" }), "");
@@ -61,7 +60,10 @@ it("saves an empty prompt alongside existing presets, then deletes a preset", as
     environmentId: "environment-a",
     input: {
       patch: {
-        systemPrompts: [...state.prompts, { id: "new-prompt", name: "Empty", content: "" }],
+        systemPrompts: [
+          ...state.prompts,
+          { id: "00000000-0000-4000-8000-000000000000", name: "Empty", content: "" },
+        ],
       },
     },
   });

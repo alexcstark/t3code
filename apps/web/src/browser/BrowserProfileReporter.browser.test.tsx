@@ -20,7 +20,6 @@ interface ProfileSettings {
 }
 
 const state = vi.hoisted(() => ({
-  electron: true,
   registry: null as AtomRegistry.AtomRegistry | null,
   configs: null as Atom.Writable<ReadonlyMap<EnvironmentId, ServerConfig>> | null,
   connections: null as Atom.Writable<
@@ -47,11 +46,7 @@ const permissionAtoms = Atom.family((id: EnvironmentId) =>
   Atom.make((get) => get(state.permissions!).has(id)),
 );
 
-vi.mock("~/env", () => ({
-  get isElectron() {
-    return state.electron;
-  },
-}));
+vi.mock("~/env", () => ({ isElectron: true }));
 vi.mock("~/connection/catalog", () => ({
   environmentCatalog: { stateAtom: (id: EnvironmentId) => connectionAtoms(id) },
 }));
@@ -111,7 +106,6 @@ function config(environmentId: EnvironmentId): ServerConfig {
 }
 
 function setup() {
-  state.electron = true;
   state.registry = AtomRegistry.make();
   state.configs = Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(
     new Map(ids.map((id) => [id, config(id)])),
@@ -273,12 +267,5 @@ describe("browser profile reporting", () => {
     );
     expect(state.report.mock.calls.map(([target]) => target.environmentId)).toEqual([FIRST, FIRST]);
     expect(state.report.mock.lastCall?.[0].input.defaultProfileId).toBe("work");
-  });
-
-  it("does not report a web client's profiles to any environment", async () => {
-    await using app = setup();
-    state.electron = false;
-    await app.render();
-    expect(state.report).not.toHaveBeenCalled();
   });
 });

@@ -84,7 +84,8 @@ export function ThreadNotificationCoordinator() {
   useEffect(() => {
     const activeIds = new Set(environmentIds);
     const count = pending.current.size;
-    for (const [tag, { environmentId, projectKey, notification }] of pending.current) {
+    for (const entry of pending.current) {
+      const [tag, { environmentId, projectKey, notification }] = entry;
       if (
         activeIds.has(environmentId) &&
         (notificationProjectKeys === null || notificationProjectKeys.has(projectKey))
