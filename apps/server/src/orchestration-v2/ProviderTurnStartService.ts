@@ -963,10 +963,41 @@ export const layer: Layer.Layer<
             )
             .map((source) => source.id),
         );
+        const compactionMessageIds = new Set(
+          projection.messages.filter(isCompactionCommandMessage).map((source) => source.id),
+        );
+        const nativeCompaction = projection.runs.findLast(
+          (source) =>
+            source.status === "completed" &&
+            nativeInputRunIds.has(source.id) &&
+            compactionMessageIds.has(source.userMessageId),
+        );
+        const compactedRunIds = new Set(
+          projection.runs
+            .filter((source) => source.ordinal < (nativeCompaction?.ordinal ?? 0))
+            .map((source) => source.id),
+        );
+        const compactedAt = nativeCompaction?.completedAt;
+        const deliveredAfterCompactionItemIds = new Set(
+          settledHandoffs
+            .filter(
+              (handoff) =>
+                compactedAt != null &&
+                DateTime.toEpochMillis(handoff.updatedAt) >= DateTime.toEpochMillis(compactedAt),
+            )
+            .flatMap((handoff) => handoff.delivery?.itemIds ?? []),
+        );
         // Row identity survives recovery; only accepted native input and delivered history occupy the new session.
+        // Compaction replaces earlier native context; later handoffs can reintroduce older items.
         const nativeContextEstimate = Effect.gen(function* () {
           return sameNativeThread
             ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
+                if (
+                  nativeCompaction !== undefined &&
+                  (item.runId === null || compactedRunIds.has(item.runId)) &&
+                  !deliveredAfterCompactionItemIds.has(item.id)
+                )
+                  return sum;
                 const acceptedNatively =
                   item.providerThreadId === providerThread.id &&
                   item.runId !== null &&
