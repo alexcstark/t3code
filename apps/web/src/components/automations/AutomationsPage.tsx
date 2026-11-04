@@ -1,4 +1,4 @@
-import { T } from "gt-react";
+import { T, useGT } from "gt-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
@@ -28,6 +28,7 @@ interface AutomatedThread {
  * reuses the thread's own Automations panel for pause, run now, and edit.
  */
 export function AutomationsPage() {
+  const gt = useGT();
   const environments = useEnvironmentAutomations();
   const threads = useThreadShells();
   const projects = useProjects();
@@ -66,7 +67,7 @@ export function AutomationsPage() {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron} className="h-auto">
-          <WorkspaceBreadcrumb ariaLabel="Automations breadcrumb" className="min-w-0 py-2">
+          <WorkspaceBreadcrumb ariaLabel={gt("Automations breadcrumb")} className="min-w-0 py-2">
             <WorkspaceBreadcrumbItem current>
               <h1>
                 <T>Automations</T>
@@ -79,9 +80,13 @@ export function AutomationsPage() {
           <WorkspacePageContainer width="readable" className="gap-4">
             {unavailable.length > 0 ? (
               <p className="text-xs text-muted-foreground">
-                <T>Not showing automations from </T>
-                {unavailable.map((env) => env.label).join(", ")}
-                <T> until</T> {unavailable.length === 1 ? "it reconnects" : "they reconnect"}.
+                {gt(
+                  "Not showing automations from {environments} until {count, plural, one {it reconnects} other {they reconnect}}.",
+                  {
+                    environments: unavailable.map((env) => env.label).join(", "),
+                    count: unavailable.length,
+                  },
+                )}
               </p>
             ) : null}
 
@@ -133,7 +138,7 @@ export function AutomationsPage() {
                           {[projectTitle, automated.environmentLabel]
                             .filter((part) => part !== undefined)
                             .join(" · ")}
-                          {thread ? "" : " · thread unavailable"}
+                          {thread ? "" : gt(" · thread unavailable")}
                         </span>
                       </div>
                     </Link>

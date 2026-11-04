@@ -1340,13 +1340,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       markThreadUnread,
       setCustomSnoozeOpen,
       snoozePresets,
-      props.snoozePresets,
-      props.onCreateThreadGroup,
-      props.onSetThreadGroup,
-      turnThreadIntoProject,
+      props,
     ],
   );
-  /* oxlint-enable react/memo-dependencies */
   const primaryAction = useMemo(() => {
     if (swipeActions.primary === "archive") {
       return {

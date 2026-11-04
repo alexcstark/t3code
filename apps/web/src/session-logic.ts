@@ -1,4 +1,4 @@
-import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
+import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import {
   resolveThreadWorkingStartedAt,
   threadRuntimeIsActive,
