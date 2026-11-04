@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ListRunsOptions } from "@cursor/sdk";
+import type { AgentOptions, ListRunsOptions } from "@cursor/sdk";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -25,6 +25,12 @@ const cursorSdkMock = vi.hoisted(() => {
     durationMs: 1,
   }));
   const runCancel = vi.fn(async () => {});
+  const store = {
+    dispose: vi.fn(async () => {
+      closeExecutionOrder.push("store.dispose");
+    }),
+  } as never;
+  const storeOpen = vi.fn(async () => store);
   const agentClose = vi.fn(() => {
     closeExecutionOrder.push("sdk:agent.close");
     if (agentCloseFailure !== undefined) {
@@ -90,6 +96,8 @@ const cursorSdkMock = vi.hoisted(() => {
     cancelRun,
     closeExecutionOrder,
     create,
+    store,
+    storeOpen,
     listRuns,
     resume,
     runOperations,
@@ -120,7 +128,7 @@ vi.mock("./sdk.ts", () => ({
     },
   },
   createAgentPlatform: vi.fn(),
-  SqliteLocalAgentStore: { open: vi.fn() },
+  SqliteLocalAgentStore: { open: cursorSdkMock.storeOpen },
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -202,13 +210,14 @@ describe("CursorAgentSdkRunner", () => {
         ]);
         assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
           "agent-cursor-agent-sdk-test",
-          { runtime: "local", cwd: process.cwd(), limit: 100 },
+          { runtime: "local", cwd: process.cwd(), store: cursorSdkMock.store, limit: 100 },
         ]);
         assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
           "run-stale",
           {
             runtime: "local",
             cwd: process.cwd(),
+            store: cursorSdkMock.store,
           },
         ]);
       }).pipe(Effect.provide(layerTest)),
@@ -236,12 +245,17 @@ describe("CursorAgentSdkRunner", () => {
         ),
       });
 
+      assert.strictEqual(
+        (cursorSdkMock.create.mock.lastCall as unknown as [AgentOptions])[0].local?.store,
+        cursorSdkMock.store,
+      );
       cursorSdkMock.closeExecutionOrder.length = 0;
       yield* session.close;
 
       assert.deepStrictEqual(cursorSdkMock.closeExecutionOrder, [
         "protocol:agent.close",
         "sdk:agent.close",
+        "store.dispose",
       ]);
       assert.equal(cursorSdkMock.agentClose.mock.calls.length, 1);
     }).pipe(Effect.provide(layerTest)),
@@ -279,6 +293,7 @@ describe("CursorAgentSdkRunner", () => {
       assert.deepStrictEqual(cursorSdkMock.closeExecutionOrder, [
         "protocol:agent.close",
         "sdk:agent.close",
+        "store.dispose",
       ]);
       assert.equal(cursorSdkMock.agentClose.mock.calls.length, 1);
       cursorSdkMock.setAgentCloseFailure(undefined);
