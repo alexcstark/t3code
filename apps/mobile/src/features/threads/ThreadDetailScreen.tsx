@@ -1,3 +1,5 @@
+import { resolveThreadSyncPhase, threadSyncLabel } from "@t3tools/client-runtime/state/threads";
+import { environmentThreads } from "../../state/threads";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
@@ -201,6 +203,7 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
@@ -507,20 +510,18 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       : Math.max(insets.bottom, 12);
   const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
   const contentPresentationKind = props.contentPresentation.kind;
-  const realThreadSyncLabel = (() => {
-    switch (props.threadSyncStatus) {
-      case "empty":
-      case "cached":
-      case "synchronizing":
-        if (contentPresentationKind === "ready") {
-          return "Syncing messages...";
-        }
-        return contentPresentationKind === "loading" ? "Loading messages..." : null;
-      default:
-        return null;
-    }
-  })();
-  const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
+  const realThreadSyncPhase =
+    props.threadSyncStatus === undefined
+      ? null
+      : resolveThreadSyncPhase({
+          status: props.threadSyncStatus,
+          error: props.threadSyncError,
+          detailExists: contentPresentationKind === "ready",
+          shellExists: contentPresentationKind === "ready" || contentPresentationKind === "loading",
+        });
+  const threadSyncPhase = useDelayedStatus(selectedThreadKey, realThreadSyncPhase);
+  const retryMessageSync = useAtomCommand(environmentThreads.retrySync);
+
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
@@ -547,8 +548,20 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     if (props.creationState?.kind === "failed") {
       return null;
     }
-    if (threadSyncLabel !== null) {
-      return { kind: "syncing", label: threadSyncLabel };
+    if (threadSyncPhase === "offline" || threadSyncPhase === "failed") {
+      return {
+        kind: "connection",
+        tone: "unavailable",
+        label: `${threadSyncLabel(threadSyncPhase)}. Tap to retry.`,
+        onPress: () =>
+          void retryMessageSync({
+            environmentId: props.environmentId,
+            threadId: props.selectedThread.id,
+          }),
+      };
+    }
+    if (threadSyncPhase !== null) {
+      return { kind: "syncing", label: threadSyncLabel(threadSyncPhase) };
     }
     const childInput = childThreadInputs[0];
     if (childInput && contentPresentationKind === "ready") {

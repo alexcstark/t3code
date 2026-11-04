@@ -1569,6 +1569,7 @@ export interface ChatComposerProps {
   activeTasksProgress: ComposerTasksProgress | null;
   activeTaskSteps: readonly ComposerTaskStep[] | null;
   threadSyncPhase: ThreadSyncPhase | null;
+  onRetryThreadSync?: () => void;
 
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
@@ -5343,7 +5344,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeTasksProgress.totalSteps > 0;
   const activityStackContent = hasBannerItems ? (
     shownSyncPhase ? (
-      <ComposerActivityRow phase={shownSyncPhase} />
+      <ComposerActivityRow phase={shownSyncPhase} onRetry={props.onRetryThreadSync} />
     ) : !hasBlockingComposerTopDrawer && activeTasksProgress && activeTaskSteps ? (
       <ComposerTasksContent
         expanded={isTasksDrawerOpen}
@@ -6540,7 +6541,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           {!activityStackItem && (shownSyncPhase || inlineTasksBadge) ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-activity-strip="true">
-                {shownSyncPhase ? <ComposerActivityRow phase={shownSyncPhase} /> : inlineTasksBadge}
+                {shownSyncPhase ? (
+                  <ComposerActivityRow phase={shownSyncPhase} onRetry={props.onRetryThreadSync} />
+                ) : (
+                  inlineTasksBadge
+                )}
               </ComposerBanner.Root>
             </ComposerBanner.Attachment>
           ) : null}

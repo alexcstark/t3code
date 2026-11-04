@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { RpcClientError } from "effect/rpc";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -109,6 +110,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  readonly loadSnapshot?: Effect.Effect<ThreadSnapshotLoadResult>;
   readonly httpSnapshots?: ReadonlyArray<ThreadSnapshotLoadResult>;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -121,7 +123,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
   const retryCount = yield* Ref.make(0);
-  const subscriptionCount = yield* Ref.make(0);
+  const subscriptionCount = yield* SubscriptionRef.make(0);
   const loaderCalls = yield* Ref.make(0);
   const httpSnapshotIndex = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
@@ -134,6 +136,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly environmentId: EnvironmentId;
     readonly detectedAt: string;
   }>();
+  const hostStallEvents = yield* PubSub.subscribe(hostStalls);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
@@ -153,7 +156,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly acceptCompactTurnItems?: true;
     }) =>
       Stream.unwrap(
-        Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
+        SubscriptionRef.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
           Effect.andThen(Ref.set(lastSubscribeAfterSequence, input.afterSequence)),
           Effect.andThen(Queue.offer(subscribeInputs, input.afterSequence)),
           Effect.andThen(
@@ -178,6 +181,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
         Effect.andThen(() => {
+          if (options?.loadSnapshot !== undefined) return options.loadSnapshot;
           if (threadId !== THREAD_ID) return Effect.succeed(unavailableSnapshot);
           const scripted = options?.httpSnapshots;
           if (scripted !== undefined && scripted.length > 0) {
@@ -250,7 +254,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
         note: (environmentId, detectedAt) =>
           PubSub.publish(hostStalls, { environmentId, detectedAt }).pipe(Effect.asVoid),
         changes: (environmentId) =>
-          Stream.fromPubSub(hostStalls).pipe(
+          Stream.fromSubscription(hostStallEvents).pipe(
             Stream.filter((event) => event.environmentId === environmentId),
             Stream.map((event) => event.detectedAt),
           ),
@@ -370,7 +374,7 @@ describe("EnvironmentThreads", () => {
       const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
       expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
       expect(yield* Ref.get(h.loaderCalls)).toBe(1);
-      expect(yield* Ref.get(h.subscriptionCount)).toBe(1);
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
     }),
   );
 
@@ -1815,7 +1819,7 @@ describe("EnvironmentThreads", () => {
           1 + THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS.length,
         );
         expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
-        expect(yield* Ref.get(harness.subscriptionCount)).toBe(0);
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(0);
 
         yield* TestClock.adjust("1 second");
         for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1826,7 +1830,7 @@ describe("EnvironmentThreads", () => {
         for (let attempt = 0; attempt < 20; attempt += 1) {
           yield* Effect.yieldNow;
         }
-        expect(yield* Ref.get(harness.subscriptionCount)).toBe(0);
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(0);
         expect(yield* Ref.get(harness.retryCount)).toBe(0);
         expect(yield* Ref.get(harness.loaderCalls)).toBe(
           1 + THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS.length,
@@ -1868,7 +1872,7 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.getOrThrow(state.data).thread.title).toBe("Committed thread");
       expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
       expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
     }),
   );
@@ -1897,7 +1901,7 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.getOrThrow(state.data).thread.title).toBe("Socket title");
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
       expect(yield* Ref.get(harness.removedThreads)).toEqual([]);
     }),
   );
@@ -1967,7 +1971,7 @@ describe("EnvironmentThreads", () => {
 
       yield* harness.replaceSession;
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) {
+        if ((yield* SubscriptionRef.get(harness.subscriptionCount)) >= 2) {
           break;
         }
         yield* Effect.yieldNow;
@@ -1988,7 +1992,7 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(Option.isNone(recovered.error)).toBe(true);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
     }),
   );
 
@@ -2001,11 +2005,11 @@ describe("EnvironmentThreads", () => {
         Option.isSome(value.error),
       );
       expect(Option.getOrThrow(failed.error)).toBe("thread not found yet");
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
 
       yield* TestClock.adjust("250 millis");
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) {
+        if ((yield* SubscriptionRef.get(harness.subscriptionCount)) >= 2) {
           break;
         }
         yield* Effect.yieldNow;
@@ -2027,7 +2031,7 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(Option.isNone(recovered.error)).toBe(true);
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.retryCount)).toBe(0);
     }),
   );
@@ -2150,10 +2154,10 @@ describe("EnvironmentThreads", () => {
 
       yield* harness.replaceSession;
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        if ((yield* SubscriptionRef.get(harness.subscriptionCount)) >= 2) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 4);
     }),
   );
@@ -2176,11 +2180,11 @@ describe("EnvironmentThreads", () => {
 
       yield* harness.replaceSession;
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        if ((yield* SubscriptionRef.get(harness.subscriptionCount)) >= 2) break;
         yield* Effect.yieldNow;
       }
 
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
     }),
@@ -2208,12 +2212,12 @@ describe("EnvironmentThreads", () => {
         (value) => value.status === "synchronizing" && Option.isSome(value.data),
       );
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        if ((yield* SubscriptionRef.get(harness.subscriptionCount)) >= 2) break;
         yield* Effect.yieldNow;
       }
 
       expect(synchronizing.status).toBe("synchronizing");
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
@@ -2227,16 +2231,189 @@ describe("EnvironmentThreads", () => {
 
       yield* Queue.offer(harness.wakeups, "application-active-probe");
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) >= 3) break;
+        if ((yield* SubscriptionRef.get(harness.subscriptionCount)) >= 3) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(3);
 
       yield* Queue.offer(harness.wakeups, "application-active-reconnect");
       for (let attempt = 0; attempt < 10; attempt += 1) {
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(3);
     }),
+  );
+  it.effect.each(["cached", "empty"] as const)(
+    "recovers a stalled %s thread without discarding messages or timing out a live stream",
+    (cache) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          ...(cache === "cached" ? { cached: BASE_PROJECTION } : {}),
+          completionMarker: true,
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 1),
+          Stream.runHead,
+        );
+        const syncingProjection = {
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Syncing snapshot" },
+        };
+        yield* Queue.offer(harness.inputs, snapshot(syncingProjection, 10));
+        yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "synchronizing" &&
+            Option.getOrNull(value.data)?.thread.title === "Syncing snapshot",
+        );
+
+        yield* TestClock.adjust("15 seconds");
+        const failed = yield* SubscriptionRef.get(harness.threadState);
+        expect(Option.getOrNull(failed.error)).toBe("Message sync timed out. Retrying…");
+        expect(failed.status).toBe("cached");
+        expect(Option.getOrThrow(failed.data)).toEqual(syncingProjection);
+
+        yield* TestClock.adjust("1 second");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+        expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+        yield* Queue.offer(
+          harness.inputs,
+          snapshot(
+            { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Retry snapshot" } },
+            11,
+          ),
+        );
+        const pending = yield* awaitThreadState(
+          harness.observed,
+          (value) => Option.getOrNull(value.data)?.thread.title === "Retry snapshot",
+        );
+        expect(pending.status).toBe("synchronizing");
+        yield* Queue.offer(harness.inputs, synchronized());
+        const recovered = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "live",
+        );
+        expect(Option.isNone(recovered.error)).toBe(true);
+        yield* TestClock.adjust("1 minute");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+        expect(yield* Ref.get(harness.retryCount)).toBe(0);
+      }),
+  );
+
+  it.effect.each(["disconnect", "socket fallback"] as const)(
+    "recovers a stalled HTTP snapshot through %s",
+    (recovery) =>
+      Effect.gen(function* () {
+        const snapshotStarted = yield* Deferred.make<void>();
+        const snapshotClosed = yield* Deferred.make<void>();
+        const snapshotLoads = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          loadSnapshot: Ref.getAndUpdate(snapshotLoads, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? Deferred.succeed(snapshotStarted, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(Deferred.succeed(snapshotClosed, undefined)),
+                  )
+                : Effect.succeed({ _tag: "unavailable" } as const),
+            ),
+          ),
+        });
+        yield* Deferred.await(snapshotStarted);
+        yield* TestClock.adjust("15 seconds");
+        const failed = yield* awaitThreadState(harness.observed, (value) =>
+          Option.isSome(value.error),
+        );
+        expect(failed.status).toBe("empty");
+        expect(Option.getOrNull(failed.error)).toBe("Message sync timed out. Retrying…");
+        yield* Deferred.await(snapshotClosed);
+        if (recovery === "socket fallback") {
+          yield* TestClock.adjust("1 second");
+          expect(yield* Queue.take(harness.subscribeInputs)).toBeUndefined();
+          expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+          yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+          const live = yield* awaitThreadState(
+            harness.observed,
+            (value) => value.status === "live",
+          );
+          expect(Option.getOrThrow(live.data)).toEqual(BASE_PROJECTION);
+          return;
+        }
+
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
+        yield* SubscriptionRef.set(harness.supervisorState, {
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "offline",
+        } satisfies SupervisorConnectionState);
+        yield* TestClock.adjust("1 minute");
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(0);
+      }),
+  );
+
+  it.effect.each([true, false])(
+    "caps stalled catch-up backoff and resets it with completion markers %s",
+    (completionMarker) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          cached: BASE_PROJECTION,
+          completionMarker,
+          resumeCache: { snapshot: undefined, owner: undefined, forceSnapshot: true },
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 1),
+          Stream.runHead,
+        );
+        for (const [index, delay] of [1, 2, 4, 8, 16, 30, 30].entries()) {
+          yield* TestClock.adjust("15 seconds");
+          yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+          expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(index + 1);
+          yield* TestClock.adjust(`${delay} seconds`);
+          yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+            Stream.filter((count) => count === index + 2),
+            Stream.runHead,
+          );
+        }
+        yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+        if (completionMarker) yield* Queue.offer(harness.inputs, synchronized());
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        yield* PubSub.publish(harness.hostStalls, {
+          environmentId: TARGET.environmentId,
+          detectedAt: "2026-11-04T00:00:00.000Z",
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 9),
+          Stream.runHead,
+        );
+        yield* TestClock.adjust("15 seconds");
+        yield* TestClock.adjust("1 second");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(10);
+      }),
+  );
+
+  it.effect(
+    "marks a lost message transport unavailable until a replacement session confirms it",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        yield* Queue.offer(
+          harness.inputs,
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({ message: "socket closed", cause: null }),
+          }),
+        );
+        const failed = yield* awaitThreadState(
+          harness.observed,
+          (value) => Option.getOrNull(value.error)?.includes("socket closed") === true,
+        );
+        expect(failed.status).toBe("cached");
+        expect(Option.getOrThrow(failed.data)).toEqual(BASE_PROJECTION);
+        yield* TestClock.adjust("1 minute");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
+        yield* harness.replaceSession;
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(2);
+      }),
   );
 });

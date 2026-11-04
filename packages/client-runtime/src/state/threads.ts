@@ -5,9 +5,12 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type ThreadId as ThreadIdType,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
@@ -34,7 +37,7 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { createRuntimeCommand, followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import {
@@ -143,6 +146,7 @@ interface ThreadResumeSnapshot {
 interface ThreadResumeCache {
   snapshot: ThreadResumeSnapshot | undefined;
   owner: object | undefined;
+  forceSnapshot?: boolean;
 }
 
 function matchesThreadSnapshot(
@@ -162,11 +166,15 @@ function matchesThreadSnapshot(
   );
 }
 
-function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadState {
+function cachedThreadState(
+  value: EnvironmentThreadState,
+  forceSnapshot = false,
+): EnvironmentThreadState {
   return {
     ...value,
     status:
-      value.status === "deleted" || (value.status === "live" && Option.isSome(value.data))
+      value.status === "deleted" ||
+      (!forceSnapshot && value.status === "live" && Option.isSome(value.data))
         ? value.status
         : statusWithoutLiveData(value.data),
     error: Option.none(),
@@ -193,6 +201,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
   const environmentId = supervisor.target.environmentId;
   const retained = resumeCache?.snapshot;
+  const refreshRequested = resumeCache?.forceSnapshot === true;
+  if (resumeCache) resumeCache.forceSnapshot = false;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
   const cached =
@@ -212,7 +222,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       : Option.none<OrchestrationV2ThreadDetailSnapshot>();
   const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
   const initialState: EnvironmentThreadState = retained
-    ? cachedThreadState(retained.state)
+    ? cachedThreadState(retained.state, refreshRequested)
     : {
         data: cachedThread,
         status: statusWithoutLiveData(cachedThread),
@@ -239,6 +249,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
+  const syncAttempt = yield* SubscriptionRef.make({ generation: 0, startedAt: 0, deadline: 0 });
+  const syncRetryState = yield* Ref.make({ timeouts: 0, retryAt: 0 });
+  const lastReceivedAt = yield* Ref.make<number | null>(null);
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
@@ -347,17 +360,26 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
     }));
   });
-  const setStreamError = (message: string) =>
-    Ref.set(awaitingCompletion, false).pipe(
-      Effect.andThen(
-        SubscriptionRef.update(state, (current) => ({
-          ...current,
-          status:
-            current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
-          error: Option.some(message),
-        })),
-      ),
+  const setStreamError = Effect.fn("EnvironmentThreadState.setStreamError")(function* (
+    message: string,
+  ) {
+    yield* Ref.set(awaitingCompletion, false);
+    yield* SubscriptionRef.update(state, (current) => ({
+      ...current,
+      status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+      error: Option.some(message),
+    }));
+    yield* Effect.logWarning("Message synchronization failed.").pipe(
+      Effect.annotateLogs({
+        environmentId,
+        threadId,
+        subscriptionGeneration: (yield* SubscriptionRef.get(syncAttempt)).generation,
+        lastSequence: yield* SubscriptionRef.get(lastSequence),
+        lastReceivedAt: yield* Ref.get(lastReceivedAt),
+        error: message,
+      }),
     );
+  });
 
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationV2ThreadProjection,
@@ -389,6 +411,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         history,
       };
     });
+    if (next.status === "live") yield* Ref.set(syncRetryState, { timeouts: 0, retryAt: 0 });
     // Active projections can update many times per second and retain large tool
     // payloads. Persist once the run settles so cache encoding stays off the
     // streaming path. Progressive meta rides along when the window is incomplete.
@@ -522,8 +545,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       const updated: EnvironmentThreadState = {
         ...current,
         data: Option.some(next),
-        status: waiting ? "synchronizing" : "live",
-        error: Option.none(),
+        status: Option.isSome(current.error) ? "cached" : waiting ? "synchronizing" : "live",
+        error: current.error,
         history,
       };
       return [{ _tag: "applied", projection: next, history: updated.history }, updated];
@@ -565,11 +588,28 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     item: OrchestrationV2ThreadStreamItem,
   ) {
     if (item.kind === "synchronized") {
+      if (!(yield* Ref.get(awaitingCompletion))) return;
       yield* Ref.set(awaitingCompletion, false);
+      yield* Ref.set(syncRetryState, { timeouts: 0, retryAt: 0 });
+      yield* Effect.annotateCurrentSpan({
+        "environment.id": environmentId,
+        "orchestration_v2.thread_id": threadId,
+        "sync.generation": (yield* SubscriptionRef.get(syncAttempt)).generation,
+        "sync.completed": true,
+      });
       yield* SubscriptionRef.update(state, (current) =>
         Option.isSome(current.data) && current.status !== "deleted" && Option.isNone(current.error)
           ? { ...current, status: "live" as const, error: Option.none() }
           : current,
+      );
+      yield* Effect.logDebug("Message synchronization completed.").pipe(
+        Effect.annotateLogs({
+          environmentId,
+          threadId,
+          subscriptionGeneration: (yield* SubscriptionRef.get(syncAttempt)).generation,
+          lastSequence: yield* SubscriptionRef.get(lastSequence),
+          completionMarkerReceivedAt: yield* Clock.currentTimeMillis,
+        }),
       );
       return;
     }
@@ -606,6 +646,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     yield* applyLock.withPermits(1)(
       Effect.gen(function* () {
+        yield* Ref.set(lastReceivedAt, yield* Clock.currentTimeMillis);
         let events: SequencedItem[] = [];
         for (const item of items) {
           if (
@@ -764,11 +805,45 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
   // A stall can freeze the socket across the completion, so the next subscribe reloads.
-  const forceSnapshot = yield* Ref.make(false);
+  const forceSnapshot = yield* Ref.make(refreshRequested);
   const stallResubscriptions = HostStallRefresh.reloadOnHostStall(
     hostStalls,
     environmentId,
     Ref.set(forceSnapshot, true),
+  );
+
+  // The deadline covers catch-up, including snapshot loading, rather than idle live streams.
+  const syncTimeoutResubscriptions = SubscriptionRef.changes(syncAttempt).pipe(
+    Stream.filter((attempt) => attempt.generation > 0),
+    Stream.switchMap(({ deadline }) =>
+      Stream.fromEffect(
+        Effect.gen(function* () {
+          const remaining = deadline - (yield* Clock.currentTimeMillis);
+          if (remaining > 0) yield* Effect.sleep(remaining);
+        }),
+      ).pipe(
+        Stream.filterEffect(() =>
+          Ref.get(awaitingCompletion).pipe(
+            Effect.flatMap((waiting) =>
+              SubscriptionRef.get(state).pipe(
+                Effect.map((current) => waiting || current.status === "synchronizing"),
+              ),
+            ),
+          ),
+        ),
+        Stream.tap(() =>
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            yield* Ref.update(syncRetryState, ({ timeouts }) => ({
+              timeouts: timeouts + 1,
+              retryAt: now + Math.min(1_000 * 2 ** timeouts, 30_000),
+            }));
+            yield* Ref.set(forceSnapshot, true);
+            yield* setStreamError("Message sync timed out. Retrying…");
+          }),
+        ),
+      ),
+    ),
   );
 
   // Only the first subscription after a warm live resume keeps the retained
@@ -797,15 +872,41 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           return yield* Effect.never;
         }
 
+        const { retryAt } = yield* Ref.get(syncRetryState);
+        const retryDelay = retryAt - (yield* Clock.currentTimeMillis);
+        if (retryDelay > 0) yield* Effect.sleep(retryDelay);
+        yield* Ref.set(awaitingCompletion, true);
+        yield* markSynchronizing;
+        yield* Ref.set(resumingLive, false);
+        const startedAt = yield* Clock.currentTimeMillis;
+        const attempt = yield* SubscriptionRef.updateAndGet(syncAttempt, ({ generation }) => ({
+          generation: generation + 1,
+          startedAt,
+          deadline: startedAt + 15_000,
+        }));
+        yield* Effect.annotateCurrentSpan({
+          "environment.id": environmentId,
+          "orchestration_v2.thread_id": threadId,
+          "sync.generation": attempt.generation,
+          "sync.started_at": startedAt,
+        });
+        yield* Effect.logDebug("Message synchronization started.").pipe(
+          Effect.annotateLogs({
+            environmentId,
+            threadId,
+            subscriptionGeneration: attempt.generation,
+            startedAt,
+            lastSequence: yield* SubscriptionRef.get(lastSequence),
+            forceSnapshot: yield* Ref.get(forceSnapshot),
+          }),
+        );
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.threadResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
         );
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
-        yield* markSynchronizing;
-        yield* Ref.set(resumingLive, false);
 
-        if (Option.isNone(current.data)) {
+        if (Option.isNone(current.data) && !(yield* Ref.get(forceSnapshot))) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -824,6 +925,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             yield* snapshotLoader.load(prepared, threadId);
           for (const delay of THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS) {
             if (httpResult._tag !== "missing") break;
+            // Creation retries deliberately wait; keep their backoff out of the response deadline.
+            yield* SubscriptionRef.update(syncAttempt, (attempt) => ({
+              ...attempt,
+              deadline: attempt.deadline + Duration.toMillis(Duration.fromInputUnsafe(delay)),
+            }));
             yield* Effect.sleep(delay);
             httpResult = yield* snapshotLoader.load(prepared, threadId);
           }
@@ -872,6 +978,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         const canResume =
           !(yield* Ref.getAndSet(forceSnapshot, false)) && Option.isSome(current.data);
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
+        yield* Effect.annotateCurrentSpan({
+          "sync.after_sequence": canResume ? sequence : -1,
+          "sync.snapshot": !canResume,
+        });
         if (!supportsCompletionMarker && canResume) {
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
@@ -892,8 +1002,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       {
         onDefect: () => setStreamError("Could not synchronize the thread."),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
+        onTransportFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: Stream.merge(foregroundResubscriptions, stallResubscriptions),
+        resubscribe: Stream.merge(
+          stallResubscriptions,
+          Stream.merge(foregroundResubscriptions, syncTimeoutResubscriptions),
+        ),
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );
@@ -945,7 +1059,10 @@ export function createEnvironmentThreadStateAtoms<R, E>(
           const live = threadStateChanges(environmentId, threadId, resume);
           return resume.snapshot === undefined
             ? live
-            : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);
+            : Stream.concat(
+                Stream.succeed(cachedThreadState(resume.snapshot.state, resume.forceSnapshot)),
+                live,
+              );
         },
         {
           initialValue: EMPTY_ENVIRONMENT_THREAD_STATE,
@@ -957,6 +1074,15 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   return {
     stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
       family(threadKey({ environmentId, threadId })),
+    retrySync: createRuntimeCommand(runtime, {
+      label: "thread:retry-sync",
+      execute: (ref: ScopedThreadRef, registry) =>
+        Effect.sync(() => {
+          const key = threadKey(ref);
+          registry.get(resumeFamily(key)).forceSnapshot = true;
+          registry.refresh(family(key));
+        }),
+    }),
   };
 }
 
