@@ -934,6 +934,7 @@ describe("ssh tunnel scripts", () => {
     Effect.gen(function* () {
       let configPort = 53_791;
       const tunnelPorts: Array<string | undefined> = [];
+      let remoteStops = 0;
       const spawner = ChildProcessSpawner.make((command) => {
         const args = commandArgs(command);
         if (args.includes("-G")) {
@@ -945,6 +946,7 @@ describe("ssh tunnel scripts", () => {
           tunnelPorts.push(args[args.indexOf("-p") + 1]);
           return Effect.succeed(makeRunningProcess(() => undefined));
         }
+        if (args.includes("-s")) remoteStops += 1;
         return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
       });
       const layer = Layer.mergeAll(
@@ -965,10 +967,13 @@ describe("ssh tunnel scripts", () => {
           port: null,
         });
         // The VM restarts on a new port; the client reconnects with the target it saved.
-        yield* manager.disconnectEnvironment(added.target);
+        yield* manager.closeAllTunnels;
+        assert.equal(remoteStops, 0, "closing local tunnels leaves the remote server running");
         configPort = 53_812;
         yield* manager.ensureEnvironment(added.target);
         assert.deepStrictEqual(tunnelPorts, ["53791", "53812"]);
+        yield* manager.disconnectEnvironment(added.target);
+        assert.equal(remoteStops, 1, "explicit disconnect stops the remote server");
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );

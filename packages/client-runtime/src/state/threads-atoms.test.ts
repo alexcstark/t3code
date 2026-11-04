@@ -293,6 +293,29 @@ describe("createEnvironmentThreadStateAtoms", () => {
     }),
   );
 
+  it.effect("retries message sync with a fresh snapshot while preserving the visible thread", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      const before = currentThread(h.registry, h.stateAtom);
+
+      yield* h.rawAtoms.retrySync.run(h.registry, h.ref);
+      yield* Deferred.await(first.closed);
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBeUndefined();
+      expect(currentThread(h.registry, h.stateAtom)).toBe(before);
+      expect(h.registry.get(h.stateAtom).status).toBe("synchronizing");
+      yield* Queue.offer(next.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      expect(h.counts()).toEqual({ httpLoads: 0, diskLoads: 1, opened: 2, active: 1 });
+      unmount();
+      yield* Deferred.await(next.closed);
+    }),
+  );
+
   it.effect("cancels older-page work on unmount and permits it again on a warm return", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({

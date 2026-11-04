@@ -1,9 +1,11 @@
-import { CircleAlertIcon, RefreshCwIcon } from "lucide-react";
+import { CircleAlertIcon, RefreshCwIcon, WifiOffIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { cn } from "~/lib/utils";
 import { useMessages } from "gt-react";
+import { InlineButton } from "../ui/button";
+import { T } from "gt-react";
 
 /** A line of thread state for the end of the timeline. */
 export interface ThreadNowItem {
@@ -58,7 +60,13 @@ function ThreadNowLine({
   );
 }
 
-function ThreadSyncLine({ phase }: { readonly phase: ThreadSyncPhase }) {
+function ThreadSyncLine({
+  phase,
+  onRetry,
+}: {
+  readonly phase: ThreadSyncPhase;
+  readonly onRetry?: (() => void) | undefined;
+}) {
   const m = useMessages();
   return (
     <div
@@ -66,8 +74,19 @@ function ThreadSyncLine({ phase }: { readonly phase: ThreadSyncPhase }) {
       role={phase === "failed" ? "alert" : "status"}
       data-composer-sync-status={phase}
     >
-      {phase === "failed" ? <CircleAlertIcon aria-hidden /> : <RefreshCwIcon aria-hidden />}
+      {phase === "failed" ? (
+        <CircleAlertIcon aria-hidden />
+      ) : phase === "offline" ? (
+        <WifiOffIcon aria-hidden />
+      ) : (
+        <RefreshCwIcon aria-hidden />
+      )}
       <span className="truncate">{threadSyncLabel(phase, m)}</span>
+      {(phase === "failed" || phase === "offline") && onRetry ? (
+        <InlineButton onClick={onRetry}>
+          <T>Retry</T>
+        </InlineButton>
+      ) : null}
     </div>
   );
 }
@@ -80,19 +99,21 @@ export function ThreadNow({
   attention,
   work,
   syncPhase,
+  onRetrySync,
   goal,
 }: {
   /** Something that needs you elsewhere, such as a subagent's question. */
   readonly attention: ThreadNowItem | null;
   readonly work: ThreadNowItem | null;
   readonly syncPhase: ThreadSyncPhase | null;
+  readonly onRetrySync?: (() => void) | undefined;
   readonly goal: ThreadNowItem | null;
 }): ReactNode {
   return (
     <>
       {attention ? <ThreadNowLine item={attention} announce /> : null}
       {work ? <ThreadNowLine item={work} /> : null}
-      {syncPhase ? <ThreadSyncLine phase={syncPhase} /> : null}
+      {syncPhase ? <ThreadSyncLine phase={syncPhase} onRetry={onRetrySync} /> : null}
       {goal ? <ThreadNowLine item={goal} /> : null}
     </>
   );

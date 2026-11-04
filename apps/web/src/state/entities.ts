@@ -214,7 +214,7 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
-export function useThreadError(ref: ScopedThreadRef | null): string | null {
+export function useThreadSyncError(ref: ScopedThreadRef | null): string | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
   );

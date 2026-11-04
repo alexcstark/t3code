@@ -2478,6 +2478,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   orchestration: false,
                   device: false,
                   backgroundWait: false,
+                  systemPrompt: undefined,
                   runtime: undefined,
                 });
                 yield* Ref.update(interruptedPrompt, (current) =>

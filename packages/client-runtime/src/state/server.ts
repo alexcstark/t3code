@@ -660,6 +660,11 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
       ...(subscription.eventLoopStalls === true ? { eventLoopStalls: true } : {}),
     }).pipe(
+      Stream.tap((event) =>
+        event.type === "eventLoopStall" && Option.isSome(hostStalls)
+          ? hostStalls.value.note(environmentId, event.payload.detectedAt)
+          : Effect.void,
+      ),
       Stream.map((event): Update => (current) => {
         const next = applyServerConfigProjection(current, event);
         return fetchedCatalogs.length === 0
@@ -686,9 +691,6 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
           const next = update(current);
           if (Option.isNone(next) || next.value === Option.getOrUndefined(current)) {
             return;
-          }
-          if (event.type === "eventLoopStall" && Option.isSome(hostStalls)) {
-            yield* hostStalls.value.note(environmentId, event.payload.detectedAt);
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
           yield* SubscriptionRef.set(state, next);
