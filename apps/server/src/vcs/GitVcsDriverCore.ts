@@ -440,6 +440,50 @@ function gitCommandContext(
   } as const;
 }
 
+/** Concurrent callers of `git remote` or `git config --get <key>` in one cwd share a spawn. */
+function sharedReadKey(input: GitVcsDriver.ExecuteGitInput): string | null {
+  const { operation: _, cwd, args, allowNonZeroExit: __, ...options } = input;
+  if (Object.values(options).some((value) => value !== undefined)) return null;
+  const isRemoteList = args.length === 1 && args[0] === "remote";
+  const isConfigRead = args.length === 3 && args[0] === "config" && args[1] === "--get";
+  return isRemoteList || isConfigRead ? `${cwd}\0${args.join("\0")}` : null;
+}
+
+const SUBCOMMANDS_THAT_KEEP_CONFIG = new Set([
+  "cat-file",
+  "check-ignore",
+  "diff",
+  "diff-tree",
+  "fetch",
+  "for-each-ref",
+  "log",
+  "ls-files",
+  "ls-remote",
+  "ls-tree",
+  "merge-base",
+  "rev-list",
+  "rev-parse",
+  "show",
+  "show-ref",
+  "status",
+  "symbolic-ref",
+  "worktree",
+]);
+const CONFIG_READ_FLAGS = new Set(["--get", "--get-all", "--get-regexp", "--list", "-l"]);
+
+// Unknown commands count as writes, so the next shared read spawns fresh.
+function keepsConfigAndRemotes(args: ReadonlyArray<string>): boolean {
+  let index = 0;
+  while (args[index]?.startsWith("-"))
+    index += args[index] === "-c" || args[index] === "-C" ? 2 : 1;
+  const [subcommand, ...rest] = args.slice(index);
+  if (subcommand === "config") return rest.some((arg) => CONFIG_READ_FLAGS.has(arg));
+  if (subcommand === "remote")
+    return rest.length === 0 || rest[0] === "-v" || rest[0] === "get-url";
+  if (subcommand === "worktree") return rest[0] === "list";
+  return subcommand !== undefined && SUBCOMMANDS_THAT_KEEP_CONFIG.has(subcommand);
+}
+
 // Stderr can echo credentials from argv/URLs; classify fixed patterns without exposing matched text.
 const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFailureReason]> = [
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
@@ -1109,7 +1153,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
-  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
+  const runExecute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
     executeRaw(input).pipe(
       withMetrics({
         counter: gitCommandsTotal,
@@ -1134,6 +1178,54 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       (execution) =>
         input.writesSharedConfig ? withSharedConfigLock(input.cwd, execution) : execution,
     );
+
+  // Pull request lookups run in bursts that each read the same remotes and config, and every
+  // spawn forks the whole server. A command that may change those answers ends the sharing.
+  const sharedReads = new Map<
+    string,
+    Fiber.Fiber<GitVcsDriver.ExecuteGitResult, GitCommandError>
+  >();
+  const joinSharedRead = Effect.fnUntraced(function* (
+    key: string,
+    input: GitVcsDriver.ExecuteGitInput,
+  ) {
+    const fiber = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const pending = sharedReads.get(key);
+        if (pending) return pending;
+        const started: Fiber.Fiber<GitVcsDriver.ExecuteGitResult, GitCommandError> =
+          yield* runExecute({ ...input, allowNonZeroExit: true }).pipe(
+            Effect.onExit(() =>
+              Effect.sync(() => {
+                if (sharedReads.get(key) === started) sharedReads.delete(key);
+              }),
+            ),
+            // Detached so one caller's interruption cannot fail the others; git's timeout bounds it.
+            Effect.forkDetach({ startImmediately: false, uninterruptible: false }),
+          );
+        sharedReads.set(key, started);
+        return started;
+      }),
+    );
+    const result = yield* Fiber.join(fiber);
+    if (input.allowNonZeroExit || result.exitCode === 0) return result;
+    const reason = classifyGitFailure(result.stderr);
+    return yield* new GitCommandError({
+      ...gitCommandContext(input),
+      ...(reason === null ? {} : { reason }),
+      detail: gitFailureDetail(reason),
+      exitCode: result.exitCode,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    });
+  });
+
+  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) => {
+    const key = sharedReadKey(input);
+    if (key !== null) return joinSharedRead(key, input);
+    if (!keepsConfigAndRemotes(input.args)) sharedReads.clear();
+    return runExecute(input);
+  };
 
   const executeGit = (
     operation: string,

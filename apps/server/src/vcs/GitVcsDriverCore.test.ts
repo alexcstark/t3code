@@ -1086,6 +1086,104 @@ describe("pullCurrentBranch", () => {
   );
 });
 
+it.effect("shares concurrent remote and config reads until a command may change them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      interface Gate {
+        readonly expected: number;
+        readonly held: Ref.Ref<number>;
+        readonly started: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      }
+      const gate = yield* Ref.make<Gate | null>(null);
+      const holdSharedReads = (expected: number) =>
+        Effect.gen(function* () {
+          const next: Gate = {
+            expected,
+            held: yield* Ref.make(0),
+            started: yield* Deferred.make<void>(),
+            release: yield* Deferred.make<void>(),
+          };
+          yield* Ref.set(gate, next);
+          return next;
+        });
+      const spawned = yield* Ref.make({ config: 0, remote: 0 });
+      const coordinatingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          const isUrlRead = command.args.join(" ") === "config --get remote.origin.url";
+          const isRemoteList = command.args.join(" ") === "remote";
+          if (isUrlRead || isRemoteList) {
+            yield* Ref.update(spawned, (count) => ({
+              config: count.config + (isUrlRead ? 1 : 0),
+              remote: count.remote + (isRemoteList ? 1 : 0),
+            }));
+            const current = yield* Ref.get(gate);
+            if (current !== null) {
+              const held = yield* Ref.updateAndGet(current.held, (count) => count + 1);
+              if (held <= current.expected) {
+                if (held === current.expected) yield* Deferred.succeed(current.started, undefined);
+                yield* Deferred.await(current.release);
+              }
+            }
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, coordinatingSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      yield* driver.execute({
+        operation: "test.addRemote",
+        cwd,
+        args: ["remote", "add", "origin", "https://example.com/a/old.git"],
+      });
+      yield* Ref.set(spawned, { config: 0, remote: 0 });
+      const readUrl = driver.readConfigValue(cwd, "remote.origin.url");
+      const listRemotes = driver
+        .execute({ operation: "test.listRemotes", cwd, args: ["remote"] })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+
+      // A burst of PR lookups asks for the same remote URL and remote list at once.
+      const burstGate = yield* holdSharedReads(2);
+      const burst = yield* Effect.all(
+        [
+          ...Array.from({ length: 5 }, () => readUrl),
+          ...Array.from({ length: 3 }, () => listRemotes),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(burstGate.started);
+      yield* Deferred.succeed(burstGate.release, undefined);
+      assert.deepStrictEqual(yield* Fiber.join(burst), [
+        ...Array.from({ length: 5 }, () => "https://example.com/a/old.git"),
+        ...Array.from({ length: 3 }, () => "origin"),
+      ]);
+      assert.deepStrictEqual(yield* Ref.get(spawned), { config: 1, remote: 1 });
+
+      // A read that starts after a config write must not join one that started before it.
+      const writeGate = yield* holdSharedReads(1);
+      const startedBeforeWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(writeGate.started);
+      yield* driver.execute({
+        operation: "test.setRemoteUrl",
+        cwd,
+        args: ["config", "remote.origin.url", "https://example.com/a/new.git"],
+      });
+      const startedAfterWrite = yield* readUrl.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(writeGate.release, undefined);
+      yield* Fiber.join(startedBeforeWrite);
+      assert.strictEqual(yield* Fiber.join(startedAfterWrite), "https://example.com/a/new.git");
+      assert.deepStrictEqual(yield* Ref.get(spawned), { config: 3, remote: 1 });
+    }),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
   Effect.scoped(
     Effect.gen(function* () {
