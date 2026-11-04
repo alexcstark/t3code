@@ -46,12 +46,19 @@ import {
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
+const REMOTE_READY_TIMEOUT_MS = 60_000;
+const REMOTE_REUSE_READY_TIMEOUT_MS = 15_000;
 const SSH_READY_TIMEOUT_MS = 20_000;
-const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
+// A busy backend gets the same grace as the client connection probe. A tunnel
+// whose SSH process already exited bypasses this wait below.
+const SSH_EXISTING_TUNNEL_READY_TIMEOUT_MS = 15_000;
+const SSH_READY_PROBE_TIMEOUT_MS = 5_000;
+const SSH_READY_PATH = "/.well-known/t3/environment";
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
-const REMOTE_READY_TIMEOUT_MS = 60_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+// A cold source launch first waits for the lifecycle lock and may then need the
+// full server readiness budget. Keep the SSH command alive for both phases.
+const REMOTE_LAUNCH_TIMEOUT_MS = 180_000;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -59,7 +66,7 @@ const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
-const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const REMOTE_STOP_TIMEOUT_MS = 120_000;
 
 export interface RemoteT3RunnerOptions {
   readonly nodeScriptPath?: string | null;
@@ -343,17 +350,20 @@ NODE
 }
 
 ensure_remote_node_path() {
-  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
-    return 0
-  fi
-
-  prepend_path_if_dir "$HOME/.local/bin"
-  prepend_path_if_dir "$HOME/bin"
+  # Keep user-installed CLIs (including provider binaries) visible even when
+  # the system Node already satisfies the server's engine requirement. This now
+  # runs before the engine check, so it must tolerate an unset HOME under set -u.
+  prepend_path_if_dir "\${HOME:-}/.local/bin"
+  prepend_path_if_dir "\${HOME:-}/bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/home/linuxbrew/.linuxbrew/bin"
   prepend_path_if_dir "/usr/local/bin"
   prepend_path_if_dir "/usr/bin"
   prepend_path_if_dir "/bin"
+
+  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+    return 0
+  fi
 
   if [ -z "\${VOLTA_HOME:-}" ]; then
     VOLTA_HOME="$HOME/.volta"
@@ -523,8 +533,65 @@ fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
+// Process ownership stays in the SSH script so unmodified upstream runtimes
+// only need their standard pick-port, wait-ready, and runtime-port helpers.
+const REMOTE_PROCESS_SCRIPT = `process_token() {
+  case "$1" in ""|*[!0-9]*) return 1 ;; esac
+  kill -0 "$1" 2>/dev/null || return 1
+  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in *Z*) return 1 ;; esac
+  if [ -r "/proc/$1/stat" ]; then
+    sed 's/.*) //' "/proc/$1/stat" | awk '{print $20}'
+  else
+    LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null
+  fi
+}
+CONNECTION_LOCK_OWNED=0
+owns_server() {
+  [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_TOKEN" ] &&
+    [ "$(process_token "$REMOTE_PID" || true)" = "$REMOTE_TOKEN" ]
+}
+acquire_connection_lock() {
+  CONNECTION_LOCK="$HOME/.t3/ssh-launch/connection.lock"
+  LOCK_WAITED=0
+  LOCK_UNOWNED=0
+  while ! mkdir "$CONNECTION_LOCK" 2>/dev/null; do
+    LOCK_INODE="$(ls -di "$CONNECTION_LOCK" 2>/dev/null | awk '{print $1}')"
+    LOCK_PID="$(cat "$CONNECTION_LOCK/pid" 2>/dev/null || true)"
+    if [ -n "$LOCK_PID" ]; then
+      LOCK_UNOWNED=0
+      if ! kill -0 "$LOCK_PID" 2>/dev/null; then
+        LOCK_UNOWNED=5
+      fi
+    else
+      LOCK_UNOWNED=$((LOCK_UNOWNED + 1))
+    fi
+    # Adopt a stale directory in place. Deleting it would let a second stale
+    # observer remove a new owner's lock after that owner acquired it.
+    RECLAIM_DIR="$CONNECTION_LOCK/reclaim.$LOCK_PID"
+    if [ "$LOCK_UNOWNED" -ge 5 ] && mkdir "$RECLAIM_DIR" 2>/dev/null; then
+      if [ "$LOCK_INODE" = "$(ls -di "$CONNECTION_LOCK" 2>/dev/null | awk '{print $1}')" ] &&
+        [ "$LOCK_PID" = "$(cat "$CONNECTION_LOCK/pid" 2>/dev/null || true)" ]; then
+        printf '%s\\n' "$$" > "$CONNECTION_LOCK/pid"
+        CONNECTION_LOCK_OWNED=1
+        return
+      fi
+      rmdir "$RECLAIM_DIR" 2>/dev/null || true
+    fi
+    if [ "$LOCK_WAITED" -ge 90 ]; then
+      printf 'Another SSH connection is still managing this server. Retry the connection.\\n' >&2
+      exit 1
+    fi
+    sleep 1
+    LOCK_WAITED=$((LOCK_WAITED + 1))
+  done
+  printf '%s\\n' "$$" > "$CONNECTION_LOCK/pid"
+  CONNECTION_LOCK_OWNED=1
+}
+`;
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
+@@T3_PROCESS_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -532,33 +599,33 @@ DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
+TOKEN_FILE="$STATE_DIR/start-token"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
+  if [ "$CONNECTION_LOCK_OWNED" = "1" ]; then rm -rf "$CONNECTION_LOCK"; fi
 }
 trap cleanup_runner_next EXIT
+trap 'exit 1' HUP INT TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
-  RUNNER_CHANGED=1
-fi
-mv "$RUNNER_NEXT" "$RUNNER_FILE"
-chmod 700 "$RUNNER_FILE"
+chmod 700 "$RUNNER_NEXT"
 T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
 if [ "$T3_ARCHIVE_MODE" = "1" ]; then
   # The archive ships the helpers below inside the executable; the remote
   # needs no Node at all. Resolving the runner once here also downloads the
   # archive before the port and readiness probes rely on it.
-  "$RUNNER_FILE" --version >/dev/null
+  "$RUNNER_NEXT" --version >/dev/null
 elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
 fi
+acquire_connection_lock
+mv "$RUNNER_NEXT" "$RUNNER_FILE"
 pick_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@"
@@ -584,14 +651,6 @@ wait_for_pid_exit() {
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
-}
-# kill -0 also succeeds for a server that exited but was not reaped yet, so
-# a zombie does not count as running. Without ps to tell, trust kill -0.
-server_running() {
-  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
-  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
-    *Z*) return 1 ;;
-  esac
 }
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
@@ -622,7 +681,32 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+REMOTE_TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+if ! owns_server; then
+  REMOTE_PID=""
+  REMOTE_MANAGED=""
+fi
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+SERVICE_STATE="$DEFAULT_SERVER_HOME/runtime/service-state.json"
+service_update_pending() {
+  [ -f "$SERVICE_STATE" ] && grep -q '"status"[[:space:]]*:[[:space:]]*"pending"' "$SERVICE_STATE"
+}
+if service_update_pending; then
+  # The pending service update owns process replacement until it commits.
+  SERVICE_DEADLINE=$(( $(date +%s) + 60 ))
+  while :; do
+    DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    if ! service_update_pending && [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+      REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+      if wait_ready "@@T3_READY_PROBE_TIMEOUT_MS@@"; then break; fi
+    fi
+    if [ "$(date +%s)" -ge "$SERVICE_DEADLINE" ]; then
+      printf 'The background service is not ready. Retry after its update or restart finishes; no competing SSH server was started.\\n' >&2
+      exit 1
+    fi
+    sleep 1
+  done
+fi
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
 ADOPTED_PID=""
@@ -640,49 +724,30 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     ADOPTED_PID="$DEFAULT_RUNTIME_PID"
-    if [ "$REMOTE_MANAGED" = "managed" ]; then
-      if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-        kill "$REMOTE_PID" 2>/dev/null || true
-        wait_for_pid_exit "$REMOTE_PID"
-      fi
-      REMOTE_PID=""
-      REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-      REMOTE_MANAGED="external"
-      rm -f "$PID_FILE"
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-    else
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-      REMOTE_PID=""
-      REMOTE_MANAGED="external"
-    fi
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'external\\n' >"$MANAGED_FILE"
+    REMOTE_PID=""
+    REMOTE_MANAGED="external"
+    rm -f "$PID_FILE" "$TOKEN_FILE"
   else
-    REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-    REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+    printf 'Remote T3 server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
+    exit 1
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
   # A server adopted above has just answered. While it is still alive, probing
   # it again could catch a momentary stall and launch a second server beside it.
-  if server_running "$ADOPTED_PID"; then
+  if process_token "$ADOPTED_PID" >/dev/null 2>&1; then
     :
   elif [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
-  # Reconnect owns the local tunnel, not the lifetime of an already running
-  # server. A changed runner is the update path and still replaces it.
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-    REMOTE_PID=""
-    REMOTE_PORT=""
-    REMOTE_MANAGED=""
-  elif ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
+elif owns_server && [ -n "$REMOTE_PORT" ]; then
+  # Reconnecting never replaces a healthy server, even when the desktop's
+  # runner changes. Explicit server updates own process replacement.
+  if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
     exit 1
   fi
@@ -703,7 +768,13 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
+  REMOTE_TOKEN="$(process_token "$REMOTE_PID" || true)"
+  if [ -z "$REMOTE_TOKEN" ]; then
+    printf 'The remote server exited before its process identity could be recorded.\\n' >&2
+    exit 1
+  fi
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+  printf '%s\\n' "$REMOTE_TOKEN" >"$TOKEN_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
@@ -713,48 +784,63 @@ if [ -z "$REMOTE_PORT" ]; then
     else
       printf 'It wrote nothing to %s, so it exited before producing any output.\\n' "$LOG_FILE" >&2
     fi
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    if owns_server; then
+      kill "$REMOTE_PID" 2>/dev/null || true
+      wait_for_pid_exit "$REMOTE_PID"
+    fi
+    # Keep ownership when a slow shutdown has not completed.
+    if ! owns_server; then
+      rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$TOKEN_FILE"
+    fi
     exit 1
   fi
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
+// Pair with this client's runner; an older connection's runner may target a
+// credential format the current server no longer reads.
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_ROOT="$HOME/.t3/ssh-launch"
 DEFAULT_SERVER_HOME="$HOME/.t3"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
-mkdir -p "$STATE_DIR"
-cat >"$RUNNER_FILE" <<'SH'
+mkdir -p "$STATE_ROOT"
+PAIRING_RUNNER="$STATE_ROOT/run-t3.pair.$$"
+trap 'rm -f "$PAIRING_RUNNER"' EXIT
+cat >"$PAIRING_RUNNER" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-chmod 700 "$RUNNER_FILE"
+chmod 700 "$PAIRING_RUNNER"
 PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
-"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+"$PAIRING_RUNNER" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
+@@T3_PROCESS_SCRIPT@@
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
+TOKEN_FILE="$STATE_DIR/start-token"
+mkdir -p "$HOME/.t3/ssh-launch"
+acquire_connection_lock
+trap 'rm -rf "$CONNECTION_LOCK"' EXIT
+trap 'exit 1' HUP INT TERM
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+REMOTE_TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+if owns_server; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
-  while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+  while owns_server && [ "$WAIT_COUNT" -lt 50 ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
-  if kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Remote T3 server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+  if owns_server; then
+    printf 'Remote T3 server with PID %s did not stop within 5 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$TOKEN_FILE"
 printf '{"stopped":true}\\n'
 `;
 
@@ -788,6 +874,17 @@ export class SshMissingRunnerError extends Schema.TaggedError<SshMissingRunnerEr
   override get message(): string {
     return "A remote t3 runner needs an archive version or a node script path.";
   }
+}
+
+// Fork builds carry a `-t4.<n>` suffix on top of the upstream release (stable or
+// nightly) they were cut from, and only upstream publishes runtime archives. The remote therefore
+// installs the upstream release the fork is based on, not the fork's own tag.
+const FORK_VERSION_PATTERN =
+  /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)-t4\.[0-9A-Za-z.-]+$/u;
+
+export function resolveRemoteArchiveVersion(appVersion: string): string {
+  const trimmed = appVersion.trim();
+  return FORK_VERSION_PATTERN.exec(trimmed)?.[1] ?? trimmed;
 }
 
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
@@ -825,8 +922,9 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_PROCESS_SCRIPT: REMOTE_PROCESS_SCRIPT,
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
@@ -840,15 +938,15 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   });
 }
 
-function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
+function buildRemotePairingScript(runner: RemoteT3RunnerOptions | undefined): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
-    T3_STATE_KEY: stateKey,
-    T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
+    T3_RUNNER_SCRIPT: buildRemoteT3RunnerScript(runner),
   });
 }
 
-function buildRemoteStopScript(stateKey: string): string {
+export function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
+    T3_PROCESS_SCRIPT: REMOTE_PROCESS_SCRIPT,
     T3_STATE_KEY: stateKey,
   });
 }
@@ -922,8 +1020,8 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
 
 export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingToken")(function* (
   target: DesktopSshEnvironmentTarget,
+  runner: RemoteT3RunnerOptions | undefined,
   input?: SshAuth.SshAuthOptions,
-  runner?: RemoteT3RunnerOptions,
 ): Effect.fn.Return<
   {
     readonly credential: string;
@@ -938,7 +1036,8 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   });
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemotePairingScript(stateKey, runner),
+    stdin: buildRemotePairingScript(runner),
+    // A warm reconnect skips the launch, so pairing may install the archive.
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
@@ -989,8 +1088,9 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
     stateKey,
   });
   yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
+    remoteCommandArgs: ["sh", "-l", "-s"],
     stdin: buildRemoteStopScript(stateKey),
+    timeoutMs: REMOTE_STOP_TIMEOUT_MS,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1274,6 +1374,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     waitForHttpReady({
       baseUrl: input.httpBaseUrl,
       timeoutMs: SSH_READY_TIMEOUT_MS,
+      path: SSH_READY_PATH,
     }),
     exitFailure,
   ).pipe(
@@ -1360,6 +1461,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
+    if (tunnels.get(entry.key) === entry) {
+      tunnels.delete(entry.key);
+    }
     yield* Effect.logDebug("ssh.tunnel.close.start", {
       ...sshTargetLogFields(entry.target),
       key: entry.key,
@@ -1554,58 +1658,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ),
     );
     tunnels.set(input.key, tunnelEntry);
-    const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const digestService = yield* Digest.Digest;
-    const fileSystemService = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
+    // The remote server outlives the local ssh process. Only disconnectEnvironment stops it.
     yield* Scope.addFinalizer(
       entryScope,
-      Effect.gen(function* () {
-        const stopRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
-        if (stopRemote) {
-          tunnels.delete(tunnelEntry.key);
-        }
-        yield* tunnelEntry.process
-          .kill({
-            killSignal: "SIGTERM",
-            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-          })
-          .pipe(Effect.ignore);
-        if (!stopRemote) {
-          return;
-        }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* stopRemoteServer(
-          tunnelEntry.target,
-          authSecret === null
-            ? {
-                batchMode: "yes",
-                interactiveAuth: false,
-              }
-            : {
-                authSecret,
-                batchMode: "no",
-                interactiveAuth: true,
-              },
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(Digest.Digest, digestService),
-          Effect.provideService(FileSystem.FileSystem, fileSystemService),
-          Effect.provideService(Path.Path, pathService),
-        );
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-      }).pipe(Effect.ignore),
+      tunnelEntry.process
+        .kill({
+          killSignal: "SIGTERM",
+          forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+        })
+        .pipe(Effect.ignore),
     );
     yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1630,24 +1691,35 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         localPort: entry.localPort,
         remotePort: entry.remotePort,
       });
-      const readinessExit = yield* Effect.exit(
-        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
-      );
-      if (Exit.isSuccess(readinessExit)) {
-        yield* Effect.logDebug("ssh.environment.tunnel.reused", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-          localPort: entry.localPort,
-          remotePort: entry.remotePort,
-        });
-        return entry;
+      const processRunningExit = yield* Effect.exit(entry.process.isRunning);
+      let staleCause: unknown;
+      if (Exit.isSuccess(processRunningExit) && !processRunningExit.value) {
+        staleCause = "SSH tunnel process exited.";
+      } else {
+        const readinessExit = yield* Effect.exit(
+          waitForHttpReady({
+            baseUrl: entry.httpBaseUrl,
+            timeoutMs: SSH_EXISTING_TUNNEL_READY_TIMEOUT_MS,
+            path: SSH_READY_PATH,
+          }),
+        );
+        if (Exit.isSuccess(readinessExit)) {
+          yield* Effect.logDebug("ssh.environment.tunnel.reused", {
+            ...sshTargetLogFields(resolvedTarget),
+            key,
+            localPort: entry.localPort,
+            remotePort: entry.remotePort,
+          });
+          return entry;
+        }
+        staleCause = readinessExit.cause;
       }
       yield* Effect.logWarning("ssh.environment.tunnel.existing.stale", {
         ...sshTargetLogFields(resolvedTarget),
         key,
         localPort: entry.localPort,
         remotePort: entry.remotePort,
-        cause: readinessExit.cause,
+        cause: staleCause,
       });
       // Closing a stale forward must not run the manager-owned remote stop.
       tunnels.delete(key);
@@ -1709,7 +1781,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               key,
               target: entry.target,
               operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
+                issueRemotePairingToken(entry.target, runner, authOptions),
             })
           : null;
         const pairingToken = pairingResult?.credential ?? null;
@@ -1755,12 +1827,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           hasTunnel: entry !== null,
         });
         if (entry !== null) {
-          // Explicit disconnect owns the remote stop so its failure reaches the caller.
-          yield* Effect.gen(function* () {
-            tunnels.delete(key);
-            yield* closeTunnelEntry(entry);
-          }).pipe(Effect.uninterruptible);
+          yield* closeTunnelEntry(entry).pipe(Effect.uninterruptible);
         }
+        // Explicit disconnect is the only thing that stops the remote server, so
+        // its failure has to reach the caller.
         yield* runWithSshAuth({
           key,
           target: resolvedTarget,

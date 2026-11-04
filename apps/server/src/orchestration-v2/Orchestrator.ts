@@ -2832,6 +2832,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       modelSelection: command.modelSelection,
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
+      ...(command.systemPrompt === undefined ? {} : { systemPrompt: command.systemPrompt }),
       branch: command.branch,
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
@@ -3230,7 +3231,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
       });
     }
-    if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
+    if (
+      command.type === "thread.metadata.update" &&
+      (command.expectedEmpty === true || command.systemPrompt !== undefined)
+    ) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
         .pipe(mapDispatchError(command));
@@ -3704,6 +3708,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.group === undefined ? {} : { group: command.group }),
+            ...(command.systemPrompt === undefined
+              ? {}
+              : { systemPrompt: command.systemPrompt ?? undefined }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&

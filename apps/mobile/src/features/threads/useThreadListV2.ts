@@ -65,6 +65,8 @@ export function useThreadListV2(input: {
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  /** Cluster active rows under their group when a single project is selected. */
+  readonly clusterGroups?: boolean;
 }) {
   const { threads, workingShelfEnabled } = input;
   const layoutTime = useMemo(
@@ -228,6 +230,7 @@ export function useThreadListV2(input: {
         queuedThreadKeys: input.queuedThreadKeys,
         moveAvailability,
         shelfPreferencesLoading: !input.shelfPreferencesLoaded,
+        clusterGroups: input.clusterGroups,
       }),
     [
       layout,
@@ -240,6 +243,7 @@ export function useThreadListV2(input: {
       input.queuedThreadKeys,
       moveAvailability,
       input.shelfPreferencesLoaded,
+      input.clusterGroups,
     ],
   );
   return { layout, items, contentOnlyThreadKeys, olderSettledShelf };

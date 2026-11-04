@@ -549,3 +549,38 @@ describe("Pi skill references", () => {
     }
   });
 });
+
+describe("saved Pi system prompt", () => {
+  const discoveryContext = {
+    model: { api: "anthropic-messages" },
+    ui: { notify: () => undefined },
+  };
+  it.each([true, false])(
+    "replaces T3 guidance in Pi's system prompt, MCP=%s",
+    async (mcpAvailable) => {
+      for (const systemPrompt of ["Follow our review checklist.", ""]) {
+        const bridge = await loadMcpBridge({ systemPrompt, mcpAvailable });
+        const start = bridge.handlers.get("before_agent_start");
+        assert.isDefined(start);
+        const result = await start!(
+          { systemPrompt: "Pi system prompt" },
+          { ui: { notify: () => undefined } },
+        );
+        assert.equal(
+          result?.systemPrompt,
+          systemPrompt ? `Pi system prompt\n\n${systemPrompt}` : "Pi system prompt",
+        );
+        assert.notInclude(result?.systemPrompt ?? "", "orchestrator_capabilities");
+        const sections: Record<string, string> = { identity: "Pi system prompt" };
+        assert.isUndefined(
+          await start!(
+            { systemPrompt: "Pi system prompt", systemPromptOptions: { sections } },
+            discoveryContext,
+          ),
+        );
+        assert.equal(sections.t3_code_orchestration, systemPrompt);
+        assert.equal(sections.identity, "Pi system prompt");
+      }
+    },
+  );
+});

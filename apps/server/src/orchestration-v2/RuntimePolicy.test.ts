@@ -138,6 +138,22 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 
+  it.effect("uses the thread's saved prompt snapshot, including an empty prompt", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread({ now, worktreePath: null });
+      assert.equal((yield* policy.resolve({ thread, modelSelection })).systemPrompt, undefined);
+      for (const content of ["Follow the review checklist.", ""]) {
+        const resolved = yield* policy.resolve({
+          thread: { ...thread, systemPrompt: { id: "review", name: "Review", content } },
+          modelSelection,
+        });
+        assert.equal(resolved.systemPrompt, content);
+      }
+    }),
+  );
+
   it.effect("runs a mode the provider does not offer in Supervised", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

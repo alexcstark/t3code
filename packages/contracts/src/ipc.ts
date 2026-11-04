@@ -37,6 +37,20 @@ export type QuitShortcutHintEvent =
   | { readonly state: "down"; readonly mode: Exclude<QuitConfirmationMode, "direct"> }
   | { readonly state: "up" };
 
+/**
+ * The desktop app's open windows and which threads were moved into which one.
+ * The first window is home. Assignment keys are scoped thread keys.
+ */
+export interface DesktopWindowLayout {
+  readonly windows: ReadonlyArray<{ readonly id: string; readonly projectScopeKey: string | null }>;
+  readonly assignments: Readonly<Record<string, string>>;
+}
+
+export type DesktopWindowMoveTarget =
+  | { readonly windowId: string }
+  | "new-window"
+  | "window-at-cursor";
+
 export interface ContextMenuItemSchemaType {
   readonly id: string;
   readonly label: string;
@@ -1112,6 +1126,23 @@ export interface DesktopBridge {
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
+  /**
+   * Open another app window, optionally with its sidebar scoped to one
+   * project. Optional: older desktop builds have a single window.
+   */
+  openWindow?: (options: { readonly projectScopeKey?: string }) => Promise<void>;
+  /** This window's id plus the shared layout. Optional: older desktop builds lack it. */
+  getWindowLayout?: () => {
+    readonly windowId: string;
+    readonly layout: DesktopWindowLayout;
+  } | null;
+  onWindowLayout?: (listener: (layout: DesktopWindowLayout) => void) => () => void;
+  setWindowProjectScope?: (projectScopeKey: string | null) => Promise<void>;
+  /** Resolves false when nothing moved, such as a drop with no other window under the cursor. */
+  moveThreadsToWindow?: (input: {
+    readonly threadKeys: readonly string[];
+    readonly target: DesktopWindowMoveTarget;
+  }) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
@@ -1134,6 +1165,11 @@ export interface DesktopBridge {
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
   };
+  /**
+   * OS sleep/wake. Optional: older desktop builds never emit it; the renderer
+   * then keeps probing on visibility alone.
+   */
+  onPowerResume?: (listener: () => void) => () => void;
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
     onOpen: (listener: (url: string) => void) => () => void;

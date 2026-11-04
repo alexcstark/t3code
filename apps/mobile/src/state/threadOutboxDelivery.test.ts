@@ -694,6 +694,7 @@ describe("thread outbox recovery rollback", () => {
       ...queuedMessage({ messageId: "message-creation-restore", text: "new task text" }),
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       creation: {
+        systemPrompt: { id: "review", name: "Review", content: "Review only." },
         projectId: ProjectId.make("project-1"),
         workspaceMode: "local",
         branch: null,
@@ -710,6 +711,7 @@ describe("thread outbox recovery rollback", () => {
       composerDrafts.getComposerDraftSnapshot(`new-task:restored-${message.messageId}`),
     ).toMatchObject({
       text: message.text,
+      systemPrompt: message.creation?.systemPrompt,
       attachments: message.attachments,
       modelSelection: message.modelSelection,
       project: {

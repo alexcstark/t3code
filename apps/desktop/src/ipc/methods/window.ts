@@ -40,6 +40,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -386,6 +387,67 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       }
     }
     return available;
+  }),
+});
+
+export const openWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_WINDOW_CHANNEL,
+  payload: Schema.Struct({ projectScopeKey: Schema.optional(Schema.String) }),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.openWindow")(function* (input) {
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.openWindow(input);
+  }),
+});
+
+const DesktopWindowLayoutSchema = Schema.Struct({
+  windows: Schema.Array(
+    Schema.Struct({ id: Schema.String, projectScopeKey: Schema.NullOr(Schema.String) }),
+  ),
+  assignments: Schema.Record(Schema.String, Schema.String),
+});
+
+export const getWindowLayout = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_WINDOW_LAYOUT_CHANNEL,
+  result: Schema.NullOr(
+    Schema.Struct({ windowId: Schema.String, layout: DesktopWindowLayoutSchema }),
+  ),
+  handler: Effect.fn("desktop.ipc.window.getWindowLayout")(function* (event) {
+    if (event === undefined) return null;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    return yield* desktopWindow.windowLayoutFor(event.sender.id);
+  }),
+});
+
+export const setWindowProjectScope = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_WINDOW_PROJECT_SCOPE_CHANNEL,
+  payload: Schema.Struct({ projectScopeKey: Schema.NullOr(Schema.String) }),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setWindowProjectScope")(function* (input, event) {
+    if (event === undefined) return;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.setWindowProjectScope(event.sender.id, input.projectScopeKey);
+  }),
+});
+
+export const moveThreadsToWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.MOVE_THREADS_TO_WINDOW_CHANNEL,
+  payload: Schema.Struct({
+    threadKeys: Schema.Array(Schema.String),
+    target: Schema.Union([
+      Schema.Struct({ windowId: Schema.String }),
+      Schema.Literals(["new-window", "window-at-cursor"]),
+    ]),
+  }),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.moveThreadsToWindow")(function* (input, event) {
+    if (event === undefined) return false;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    return yield* desktopWindow.moveThreadsToWindow(
+      event.sender.id,
+      input.threadKeys,
+      input.target,
+    );
   }),
 });
 

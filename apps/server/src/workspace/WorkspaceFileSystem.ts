@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+/** Workspace file reads and writes. Reads may use a host path; writes stay in the root. */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
@@ -34,6 +35,32 @@ const isGitMetadataName = (segment: string) => {
   const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
   return name === ".GIT" || name === "GIT~1";
 };
+
+function isEnoentCause(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    (cause as { code: unknown }).code === "ENOENT"
+  );
+}
+
+/** Relative path missing in the workspace, retried next to the project root. */
+function siblingHostAbsolutePath(
+  path: {
+    readonly resolve: (...paths: string[]) => string;
+    readonly dirname: (file: string) => string;
+  },
+  workspaceRoot: string,
+  relativePath: string,
+): string | null {
+  if (relativePath.replaceAll("\\", "/").split("/").includes("..")) {
+    return null;
+  }
+  const siblingPath = path.resolve(path.dirname(workspaceRoot), relativePath);
+  const workspacePath = path.resolve(workspaceRoot, relativePath);
+  return siblingPath === workspacePath ? null : siblingPath;
+}
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
@@ -321,7 +348,30 @@ export const make = Effect.gen(function* () {
           operation: "realpath-target",
           cause,
         }),
-    });
+    }).pipe(
+      Effect.map((target) => ({ ...target, kind: "workspace" as const })),
+      Effect.catchTags({
+        WorkspaceFileSystemOperationError: (error) => {
+          if (!isEnoentCause(error.cause)) return Effect.fail(error);
+          const siblingPath = siblingHostAbsolutePath(path, input.cwd, requestedPath);
+          if (siblingPath === null || siblingPath === target.absolutePath)
+            return Effect.fail(error);
+          return Effect.tryPromise({
+            try: () => NodeFSP.realpath(siblingPath),
+            catch: () => error,
+          }).pipe(
+            Effect.map((realTargetPath) => ({
+              kind: "host" as const,
+              realTargetPath,
+              exists: true,
+            })),
+          );
+        },
+      }),
+    );
+    if (resolved.kind === "host") {
+      return { relativePath: resolved.realTargetPath, realTargetPath: resolved.realTargetPath };
+    }
     if (!isInsideRealRoot(realWorkspaceRoot, resolved.realTargetPath)) {
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,

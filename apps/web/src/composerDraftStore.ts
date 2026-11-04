@@ -19,6 +19,7 @@ import {
   PastedTextAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
+  SystemPrompt,
   ThreadContextRecord,
   EnvironmentContextRecord,
   type ServerProvider,
@@ -103,6 +104,7 @@ import { UnifiedSettings } from "@t3tools/contracts/settings";
 const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
+const isSystemPrompt = Schema.is(SystemPrompt);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
@@ -314,6 +316,7 @@ const PersistedDraftThreadState = Schema.Struct({
   loadBalancedEnvironmentId: Schema.optionalKey(Schema.NullOr(Schema.String)),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
+  systemPrompt: Schema.optionalKey(Schema.NullOr(SystemPrompt)),
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
@@ -407,6 +410,7 @@ export interface DraftSessionState {
   loadBalancedEnvironmentId?: EnvironmentId | null;
   createdAt: string;
   runtimeMode: RuntimeMode;
+  systemPrompt?: SystemPrompt | null;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
   worktreePath: string | null;
@@ -462,6 +466,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      systemPrompt?: SystemPrompt | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -478,6 +483,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      systemPrompt?: SystemPrompt | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -493,6 +499,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      systemPrompt?: SystemPrompt | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1477,6 +1484,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    systemPrompt?: SystemPrompt | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1521,6 +1529,10 @@ function createDraftThreadState(
           }
         : {}),
     createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
+    systemPrompt:
+      options?.systemPrompt === undefined
+        ? (existingThread?.systemPrompt ?? null)
+        : options.systemPrompt,
     runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     interactionMode:
       options?.interactionMode ?? existingThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
@@ -1557,6 +1569,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.environmentSelection === right.environmentSelection &&
     left.loadBalancedEnvironmentId === right.loadBalancedEnvironmentId &&
     left.createdAt === right.createdAt &&
+    Equal.equals(left.systemPrompt ?? null, right.systemPrompt ?? null) &&
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
     left.branch === right.branch &&
@@ -1699,6 +1712,9 @@ function normalizePersistedDraftThreads(
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
             : new Date().toISOString(),
+        ...(isSystemPrompt(candidateDraftThread.systemPrompt)
+          ? { systemPrompt: candidateDraftThread.systemPrompt }
+          : {}),
         runtimeMode: isRuntimeMode(candidateDraftThread.runtimeMode)
           ? candidateDraftThread.runtimeMode
           : DEFAULT_RUNTIME_MODE,
@@ -2469,6 +2485,9 @@ function toHydratedDraftThreadState(
         ),
       ),
     createdAt: persistedDraftThread.createdAt,
+    ...(persistedDraftThread.systemPrompt
+      ? { systemPrompt: persistedDraftThread.systemPrompt }
+      : {}),
     runtimeMode: persistedDraftThread.runtimeMode,
     interactionMode: persistedDraftThread.interactionMode,
     branch: persistedDraftThread.branch,
@@ -2759,6 +2778,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 options.createdAt === undefined
                   ? existing.createdAt
                   : options.createdAt || existing.createdAt,
+              systemPrompt:
+                options.systemPrompt === undefined
+                  ? (existing.systemPrompt ?? null)
+                  : options.systemPrompt,
               runtimeMode: options.runtimeMode ?? existing.runtimeMode,
               interactionMode: options.interactionMode ?? existing.interactionMode,
               branch: nextBranch,
@@ -2775,6 +2798,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.environmentSelection === existing.environmentSelection &&
               nextDraftThread.loadBalancedEnvironmentId === existing.loadBalancedEnvironmentId &&
               nextDraftThread.createdAt === existing.createdAt &&
+              Equal.equals(nextDraftThread.systemPrompt ?? null, existing.systemPrompt ?? null) &&
               nextDraftThread.runtimeMode === existing.runtimeMode &&
               nextDraftThread.interactionMode === existing.interactionMode &&
               nextDraftThread.branch === existing.branch &&

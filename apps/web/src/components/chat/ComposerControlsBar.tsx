@@ -18,6 +18,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
@@ -84,6 +85,7 @@ export function ComposerControlsBar(props: {
   keybindings: ChatComposerProps["keybindings"];
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
   terminalOpen: boolean;
+  currentThreadId?: ThreadId | null;
   modelPickerOpen: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
@@ -191,6 +193,7 @@ export function ComposerControlsBar(props: {
   const composerModelPicker = (
     <ComposerModelPicker
       environmentId={environmentId}
+      {...(props.currentThreadId !== undefined ? { currentThreadId: props.currentThreadId } : {})}
       compact={false}
       isComposerOwned
       // The trigger grows away from this edge when its model or effort label changes.

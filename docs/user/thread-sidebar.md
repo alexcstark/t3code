@@ -22,6 +22,20 @@ machine, the thread starts on a connected one if any is connected.
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+### Choose a system prompt
+
+Save named prompts in **Settings → General → System prompts** on web and desktop,
+or **Settings → New threads → System prompts** on mobile. Select one environment
+to manage its library. New prompts start with T3’s default guidance so you can edit
+it, or replace it with your own text. An empty prompt removes that guidance.
+
+Choose **System prompt** in a new thread before sending its first message. Each
+thread keeps the chosen text, including when you later edit or delete the saved
+prompt. **T3 default** uses the built-in guidance. Provider, mode, and tool
+instructions still apply. Delegated tasks inherit the thread’s prompt. Scheduled
+runs bound to that thread keep it too; schedules that create a fresh thread use
+T3 default.
+
 ### Start without a project
 
 A thread does not need a project. To start one without a project, click **or
@@ -159,6 +173,18 @@ needs you. Use the pen button on a folder, or right-click it, to start a thread 
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 cannot drag threads, and the Working section is off. Each device keeps its own choice.
 
+## Group threads in a project
+
+Filter the sidebar to one project, then choose **Group** on a thread. Named groups
+become sections in the active list. Threads without a group stay below them. Pin,
+settle, and snooze keep their own sections, so a pinned or settled thread leaves its
+group section until it comes back to the active list.
+
+**New group…** names a group. **None** takes the thread out. A group disappears
+when its last thread leaves. On web and desktop, the group heading can rename
+every thread in that group or remove the group. On iOS and Android, tap the
+heading to rename it. This needs a current server; older servers hide **Group**.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
@@ -237,6 +263,14 @@ when it has a PR, choose **Copy → Thread** from its context menu, or **Copy
 thread** from its long-press menu on mobile.
 **Thread ID** copies the bare ID for scripts and the `t3` CLI. See
 [keybindings](./keybindings.md) for custom configuration.
+
+## Work in separate windows
+
+On desktop, each project can have its own window. Open the project filter at the top of the sidebar and click the window icon next to a project. The new window shows that project's threads, and you can change its filter at any time.
+
+To split one project's threads between windows, choose **File → New Window** (`Cmd/Ctrl+Alt+Shift+N`). The new window uses the same project filter and starts empty. Drag a thread out of one window's sidebar and drop it on another window, or right-click it and choose **Move to window**. A thread you start in a window stays there, and threads that arrive any other way go to the first window showing their project.
+
+Closing a window sends its threads back to the first window. **File → Merge All Windows** closes every other window at once. Quitting keeps your windows, and they reopen with the same threads.
 
 ## Inspect agent work
 

@@ -54,6 +54,7 @@ const clientSettings: ClientSettings = {
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
   proactivePanelsEnabled: true,
+  projectDefaultEnvironmentIds: {},
   showSkillsInSlashMenu: false,
   persistComposerContextStrip: true,
   providerModelPreferences: {},

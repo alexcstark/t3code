@@ -68,6 +68,57 @@ describe("T3 device instructions", () => {
     assert.equal(laterRun(true), "Check the login screen.");
   });
 
+  it.each([true, false])(
+    "replaces orchestration guidance with a saved prompt, MCP=%s",
+    (hasT3Mcp) => {
+      const systemPrompt = "Use the team's review checklist.";
+      assert.equal(t3OrchestrationSystemPrompt(hasT3Mcp, false, systemPrompt), systemPrompt);
+      assert.equal(t3OrchestrationSystemPrompt(hasT3Mcp, false, ""), "");
+      const injected = t3OrchestrationPrompt({
+        prompt: "Review this change.",
+        hasT3Mcp,
+        hasDeviceTools: false,
+        orchestrationDelivered: false,
+        deviceInstructionsDelivered: false,
+        systemPrompt,
+      });
+      assert.include(injected, systemPrompt);
+      assert.notInclude(injected, "Use `delegate_task`");
+      assert.equal(
+        t3OrchestrationPrompt({
+          prompt: "Continue.",
+          hasT3Mcp,
+          hasDeviceTools: false,
+          orchestrationDelivered: true,
+          deviceInstructionsDelivered: false,
+          systemPrompt,
+        }),
+        "Continue.",
+      );
+    },
+  );
+
+  it("keeps ACP mode and browser instructions when replacing the orchestration prompt", () => {
+    const previousState = {
+      interactionMode: "plan" as const,
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      systemPrompt: "",
+    };
+    const disabled = t3AcpPromptWithInstructions({ prompt: "Review.", state: previousState });
+    assert.include(disabled, "T3 Code interaction mode: Plan");
+    assert.include(disabled, "## T3 Code browser");
+    assert.notInclude(disabled, "Use `delegate_task`");
+
+    const changed = t3AcpPromptWithInstructions({
+      prompt: "Review.",
+      state: { ...previousState, systemPrompt: "Use the review checklist." },
+      previousState,
+    });
+    assert.include(changed, "Use the review checklist.");
+    assert.notInclude(changed, "Use `delegate_task`");
+  });
+
   it("reach ACP agents again when device access changes mid-thread", () => {
     const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
     const withDevices = t3AcpPromptWithInstructions({

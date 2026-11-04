@@ -30,6 +30,8 @@ import {
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
   resolveAssistantMessageCopyState,
+  shouldFocusComposerAfterResponseClick,
+  timelineScrollLeftTheEnd,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
@@ -4362,5 +4364,51 @@ describe("shouldCollapseUserMessage", () => {
 
     expect(shouldCollapseUserMessage(`${citation} Can you expand on this?`)).toBe(false);
     expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
+  });
+});
+
+describe("shouldFocusComposerAfterResponseClick", () => {
+  it("focuses the composer for an ordinary response click", () => {
+    expect(
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse: false,
+        targetIsInteractive: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps focus available for highlighting response text", () => {
+    expect(
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse: true,
+        targetIsInteractive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not steal focus from response controls", () => {
+    expect(
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse: false,
+        targetIsInteractive: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("timelineScrollLeftTheEnd", () => {
+  const edge = { scroll: 2000, contentLength: 2800 };
+
+  it("breaks follow when the reader moves up and the gap from the end grows", () => {
+    expect(timelineScrollLeftTheEnd(edge, 1600, 2800)).toBe(true);
+  });
+
+  it("keeps follow when content grows under a pinned viewport", () => {
+    expect(timelineScrollLeftTheEnd(edge, 2000, 3200)).toBe(false);
+    expect(timelineScrollLeftTheEnd(edge, 2300, 3400)).toBe(false);
+  });
+
+  it("keeps follow when an earlier row shrinks by as much as the viewport moved", () => {
+    expect(timelineScrollLeftTheEnd(edge, 1700, 2500)).toBe(false);
   });
 });

@@ -33,6 +33,8 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import { AgentScope } from "@t3tools/shared/AgentScope";
+import { ProviderOutOfMemoryError } from "@t3tools/provider-core/server/failure";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as CodexError from "effect-codex-app-server/errors";
@@ -186,6 +188,26 @@ describe("CodexAdapterV2 runtime policy", () => {
       }),
   );
 
+  it.effect("delivers saved prompts even without the T3 MCP server", () =>
+    Effect.gen(function* () {
+      for (const systemPrompt of ["Use our review checklist.", ""]) {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-custom-prompt-without-mcp",
+          codexInput: [{ type: "text", text: "Review the change." }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: null,
+            systemPrompt,
+          },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: false,
+        });
+        assert.equal(params.additionalContext?.t3_code_orchestration_01?.value, systemPrompt);
+        assert.isUndefined(params.additionalContext?.t3_code_tools);
+      }
+    }),
+  );
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (
@@ -1006,6 +1028,7 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
+        events: runtime.events,
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
@@ -1018,6 +1041,47 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect.each([false, true])(
+    "fails an idle Codex session with confirmed memory kill %s",
+    (outOfMemory) =>
+      Effect.gen(function* () {
+        const session = yield* openReplaySession(
+          makeCodexReplayTranscript({
+            scenario: "idle-process-exit",
+            entries: [{ type: "runtime_exit", status: "success" }],
+          }),
+        );
+        const error = yield* session.events.pipe(Stream.runDrain, Effect.flip);
+
+        assert.instanceOf(error, ProviderAdapter.ProviderAdapterEventStreamError);
+        if (error._tag !== "ProviderAdapterEventStreamError") return;
+        assert.equal(error.providerSessionId, "provider-session-idle-process-exit");
+        if (outOfMemory) {
+          assert.instanceOf(error.cause, ProviderOutOfMemoryError);
+        } else {
+          assert.instanceOf(error.cause, CodexError.CodexAppServerProcessExitedError);
+          assert.propertyVal(error.cause, "code", 0);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          oomKilled: (threadId) => {
+            assert.equal(threadId, "thread-idle-process-exit");
+            return Effect.succeed(outOfMemory);
+          },
+        }),
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {

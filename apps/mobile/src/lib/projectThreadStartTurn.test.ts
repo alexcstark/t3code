@@ -69,4 +69,34 @@ describe("project thread title", () => {
     expect(relaunched.message.text).toBe(wire.text);
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });
+
+  it("passes a saved system prompt through thread creation", () => {
+    const systemPrompt = { id: "empty", name: "Empty", content: "" };
+    const input = buildProjectThreadStartTurnInput({
+      systemPrompt,
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "new-thread",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-09-06T00:00:00Z",
+      text: "Start fresh",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "local",
+      branch: "feature/existing",
+      worktreePath: "/worktrees/existing",
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
+
+    expect(input.bootstrap.createThread).toMatchObject({
+      systemPrompt,
+      branch: "feature/existing",
+      worktreePath: "/worktrees/existing",
+    });
+    expect(input.bootstrap).not.toHaveProperty("prepareWorktree");
+  });
 });
