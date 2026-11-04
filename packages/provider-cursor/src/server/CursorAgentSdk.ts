@@ -399,13 +399,34 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
+      const cwd =
+        typeof input.options.local?.cwd === "string"
+          ? input.options.local.cwd
+          : input.options.local?.cwd?.[0];
+      // The SDK's default workspace stores cache checkpoint blobs for the life of the process.
+      const ownedStore =
+        input.options.local?.store === undefined
+          ? yield* Effect.tryPromise({
+              try: () =>
+                sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef: cwd ?? process.cwd() }),
+              catch: (cause) => runnerError(cause, "store.open"),
+            })
+          : undefined;
+      const disposeOwnedStore =
+        ownedStore === undefined
+          ? Effect.void
+          : Effect.tryPromise(() => ownedStore.dispose()).pipe(Effect.ignore({ log: true }));
+      const options: AgentOptions =
+        ownedStore === undefined
+          ? input.options
+          : { ...input.options, local: { ...input.options.local, store: ownedStore } };
       const agent = yield* Effect.tryPromise({
         try: () =>
           input.operation === "create"
-            ? Agent.create(input.options)
-            : Agent.resume(input.agentId!, input.options),
+            ? Agent.create(options)
+            : Agent.resume(input.agentId!, options),
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-      });
+      }).pipe(Effect.onError(() => disposeOwnedStore));
 
       yield* log({
         direction: "incoming",
@@ -416,14 +437,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
-      const cwd =
-        typeof input.options.local?.cwd === "string"
-          ? input.options.local.cwd
-          : input.options.local?.cwd?.[0];
       const runOptions = {
         runtime: "local" as const,
         ...(cwd === undefined ? {} : { cwd }),
-        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+        ...(options.local?.store === undefined ? {} : { store: options.local.store }),
       };
       let abandonedRunRecoveryAvailable = input.operation === "resume";
 
@@ -606,11 +623,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         }).pipe(
           Effect.andThen(
             Effect.tryPromise({
-              try: () =>
-                Agent.messages.list(agent.agentId, {
-                  runtime: "local",
-                  ...(cwd === undefined ? {} : { cwd }),
-                }),
+              try: () => Agent.messages.list(agent.agentId, runOptions),
               catch: (cause) => runnerError(cause, "agent.messages.list"),
             }),
           ),
@@ -640,6 +653,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               catch: (cause) => runnerError(cause, "agent.close"),
             }),
           ),
+          Effect.ensuring(disposeOwnedStore),
         ),
       } satisfies CursorAgentSdkSession;
     }),
