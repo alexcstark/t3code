@@ -279,9 +279,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           <T>No messages waiting in this queue.</T>
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map(({ run, text, attachments, context, message, automatic }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
+          automatic,
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
           canPromoteToSteer:
             (workflow?.canPromoteToSteer ?? false) &&

@@ -138,16 +138,17 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments, context, message, automatic }, serverIndex) => ({
       key: run.id,
       message,
+      automatic,
       runId: run.id,
       messageId: run.userMessageId,
       freshContext: run.freshContext === true,
       serverIndex,
       text,
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
+      editable: context?.guest === undefined && !automatic,
       attachments,
       thumbnails: attachments.filter(isImageAttachment).map<ChatImageAttachment>((attachment) => {
         const previewUrl = queuedImageUrlById.get(attachment.id);
@@ -162,6 +163,7 @@ export function QueuedRunsControl({
     ...optimisticQueued.map((message) => ({
       key: message.id,
       message: undefined,
+      automatic: false,
       runId: null,
       messageId: null,
       freshContext: false,
@@ -209,14 +211,16 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      const next = queued[0];
+      const next = queued.find((item) => !item.automatic);
       if (!next || !canSendRun(next.run.freshContext === true)) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
     // Leave the key to caret navigation while editing.
     editLatest(repeat) {
-      const latest = queued.at(-1);
+      const latest = queued.findLast(
+        (item) => !item.automatic && item.context?.guest === undefined,
+      );
       if (
         !latest ||
         latest.context?.guest !== undefined ||
@@ -268,6 +272,11 @@ export function QueuedRunsControl({
           count: items.length,
         })}
       </span>
+      {workflow?.isHeld ? (
+        <p className="self-end text-xs text-muted-foreground">
+          <T>Queue paused</T>
+        </p>
+      ) : null}
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
           const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
@@ -303,7 +312,7 @@ export function QueuedRunsControl({
                 onOpenThread={props.onOpenThread}
                 onImageExpand={props.onImageExpand}
               >
-                {canSendRun(item.freshContext) && !isEditing ? (
+                {canSendRun(item.freshContext) && !isEditing && !item.automatic ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
