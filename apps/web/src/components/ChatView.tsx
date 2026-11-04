@@ -359,7 +359,12 @@ import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
-import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { ThreadSystemPromptPicker } from "./chat/ThreadSystemPromptPicker";
+import {
+  reconcileThreadShellRuntimeFromDetail,
+  threadRuntimeIsActive,
+  type ThreadStructure,
+} from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
 import {
@@ -812,6 +817,15 @@ export default function ChatView(props: ChatViewProps) {
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
+  // Shell and detail update independently. A detail snapshot that still calls a
+  // finished run live must not make the open thread look Working.
+  const presentedRuntime =
+    serverThreadShell === null || activeRuntime === null || !threadRuntimeIsActive(activeRuntime)
+      ? activeRuntime
+      : reconcileThreadShellRuntimeFromDetail(serverThreadShell, {
+          ...activeRuntime,
+          updatedAt: serverThreadShell.updatedAt,
+        }).runtime;
   const hasHeldQueuedRuns =
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
@@ -1089,7 +1103,7 @@ export default function ChatView(props: ChatViewProps) {
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
-  const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
+  const latestRunSettled = isLatestRunSettled(activeLatestRun, presentedRuntime);
   const activeThreadEnvironmentId = activeThread?.environmentId;
   const activeThreadProjectId = activeThread?.projectId;
   const activeProjectRef =
@@ -1315,7 +1329,7 @@ export default function ChatView(props: ChatViewProps) {
     canOperateThread &&
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
-  const phase = derivePhase(activeRuntime);
+  const phase = derivePhase(presentedRuntime);
   const serverThreadId = serverThread?.id;
   const serverThreadEnvironmentId = serverThread?.environmentId;
   const setThreadError = makeThreadErrorSetter({
@@ -1430,7 +1444,7 @@ export default function ChatView(props: ChatViewProps) {
       latestServerUserItem.text.trim().toLowerCase() === "/compact" &&
       latestServerUserItem.attachments.length === 0 &&
       latestServerUserItem.runId === activeActivityRun?.runId &&
-      !isLatestRunSettled(activeActivityRun, activeRuntime));
+      !isLatestRunSettled(activeActivityRun, presentedRuntime));
   const compactionSettled = serverVisibleTurnItems.some(
     ({ item }) =>
       item.type === "compaction" &&
@@ -1444,14 +1458,17 @@ export default function ChatView(props: ChatViewProps) {
     ({ item }) =>
       item.type === "compaction" &&
       item.runId !== null &&
-      item.runId === activeRuntime?.activeRunId &&
+      item.runId === presentedRuntime?.activeRunId &&
       item.status === "running",
   );
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
     (compactionRunning || (compactRequestIsActive && !compactionSettled));
   const isWorking =
-    phase === "running" || isSendBusy || isCompacting || runlessWorkStartedAt !== null;
+    isSendBusy ||
+    isCompacting ||
+    runlessWorkStartedAt !== null ||
+    (phase === "running" && presentedRuntime?.status !== "waiting");
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
@@ -1459,7 +1476,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
-    deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
+    deriveActiveWorkStartedAt(activeActivityRun, presentedRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
   const sendQueuesBehindSetup =
@@ -1806,7 +1823,8 @@ export default function ChatView(props: ChatViewProps) {
   };
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    canOperateThread &&
+    deriveCanInterruptRunningThread(activeThread !== undefined, presentedRuntime);
   const onInterrupt = async () => {
     if (
       !activeThread ||
@@ -1987,7 +2005,7 @@ export default function ChatView(props: ChatViewProps) {
         visiblePullRequests.map((link) => [link.host, link.repository, link.number]).sort(),
       )
     : linkedThreadPullRequestKey;
-  const activeRunningTurnId = activeRuntime?.activeRunId ?? null;
+  const activeRunningTurnId = presentedRuntime?.activeRunId ?? null;
   useProactivePanels({
     threadRef: isServerThread && !embedded ? activeThreadRef : null,
     enabled: settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet && !embedded,
@@ -3571,6 +3589,27 @@ export default function ChatView(props: ChatViewProps) {
                                   />
                                 ) : null
                               }
+                            />
+                          ) : null}
+                          {(isLocalDraftThread &&
+                            (serverConfig?.environment.capabilities.systemPrompts === true ||
+                              draftThread?.systemPrompt)) ||
+                          serverProjection?.thread.systemPrompt ? (
+                            <ThreadSystemPromptPicker
+                              environmentId={environmentId}
+                              prompts={settings.systemPrompts}
+                              selected={
+                                draftThread?.systemPrompt ??
+                                serverProjection?.thread.systemPrompt ??
+                                null
+                              }
+                              disabled={!canOperateThread || isSendBusy}
+                              {...(isLocalDraftThread
+                                ? {
+                                    onChange: (systemPrompt) =>
+                                      setDraftThreadContext(composerDraftTarget, { systemPrompt }),
+                                  }
+                                : {})}
                             />
                           ) : null}
                           {!composerMounted ? null : (

@@ -19,6 +19,7 @@ import {
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type SystemPrompt,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -87,6 +88,7 @@ export interface ThreadLaunchInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly systemPrompt?: SystemPrompt;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly importedNativeThread?: {
@@ -929,6 +931,7 @@ const make = Effect.gen(function* () {
                 commandId: input.commandId,
                 threadId: candidateThreadId,
                 expectedEmpty: true,
+                ...(input.systemPrompt === undefined ? {} : { systemPrompt: input.systemPrompt }),
               })
             : threads.dispatch({
                 type: "thread.create",
@@ -939,6 +942,7 @@ const make = Effect.gen(function* () {
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
+                ...(input.systemPrompt === undefined ? {} : { systemPrompt: input.systemPrompt }),
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
                 ...(input.importedNativeThread === undefined

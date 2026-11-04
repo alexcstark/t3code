@@ -22,6 +22,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -87,6 +88,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const cache = yield* Persistence.EnvironmentCacheStore;
   const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
+  const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
   const environmentId = supervisor.target.environmentId;
   const cached = yield* cache.loadShell(environmentId).pipe(
     Effect.catch((error) =>
@@ -371,6 +373,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     onSome: (service) =>
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
+  // A stall can freeze the socket across the completion, so the next subscribe reloads.
+  const forceAuthoritativeSnapshot = yield* Ref.make(false);
+  const stallResubscriptions = HostStallRefresh.reloadOnHostStall(
+    hostStalls,
+    environmentId,
+    Ref.set(forceAuthoritativeSnapshot, true),
+  );
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
@@ -389,6 +398,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
+        if (yield* Ref.getAndSet(forceAuthoritativeSnapshot, false)) {
+          yield* Ref.set(lastAuthoritativeSession, null);
+        }
         // Foreground resubscriptions on the same live session can resume from
         // the in-memory cursor. A new session reloads the authoritative HTTP
         // snapshot so a valid cursor cannot preserve incomplete cached data.
@@ -452,7 +464,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, stallResubscriptions),
       },
     ).pipe(Stream.runForEachArray((items) => applyItems(items))),
   );

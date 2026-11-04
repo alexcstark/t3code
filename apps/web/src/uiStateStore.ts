@@ -2,6 +2,7 @@ import { Debouncer } from "@tanstack/react-pacer";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
+import { readDesktopWindowLayout } from "./desktopWindowLayout";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
@@ -443,8 +444,36 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
+// Older desktop shells open a project window with `?projectScope=<key>`. It
+// wins over the persisted scope, then leaves the URL so a reload keeps
+// whatever the user picks afterwards.
+function consumeWindowProjectScope(): string | null {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  const projectScopeKey = sanitizeOptionalKey(url.searchParams.get("projectScope"));
+  if (projectScopeKey === null) return null;
+  url.searchParams.delete("projectScope");
+  window.history.replaceState(window.history.state, "", url);
+  return projectScopeKey;
+}
+
+// Each desktop window keeps its own project scope in the window layout, which
+// outlives restarts. localStorage holds the scope only for the web app.
+function readInitialState(): UiState {
+  const state = readPersistedState();
+  const view = readDesktopWindowLayout();
+  const entry = view?.layout.windows.find((window) => window.id === view.windowId);
+  if (entry !== undefined) {
+    return setSidebarProjectScopeKeys(state, entry.projectScopeKey ? [entry.projectScopeKey] : []);
+  }
+  const windowProjectScopeKey = consumeWindowProjectScope();
+  return windowProjectScopeKey === null
+    ? state
+    : setSidebarProjectScopeKeys(state, [windowProjectScopeKey]);
+}
+
 export const useUiStateStore = create<UiStateStore>((set) => ({
-  ...readPersistedState(),
+  ...readInitialState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
@@ -453,8 +482,12 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
-  setSidebarProjectScopeKeys: (projectKeys) =>
-    set((state) => setSidebarProjectScopeKeys(state, projectKeys)),
+  setSidebarProjectScopeKeys: (projectKeys) => {
+    set((state) => setSidebarProjectScopeKeys(state, projectKeys));
+    if (typeof window === "undefined") return;
+    const onlyKey = projectKeys.length === 1 ? (projectKeys[0] ?? null) : null;
+    void window.desktopBridge?.setWindowProjectScope?.(sanitizeOptionalKey(onlyKey));
+  },
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

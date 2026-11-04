@@ -76,6 +76,7 @@ vi.mock(import("../threadNotifications"), async (original) => ({
 }));
 
 import { startThreadNotifications } from "./ThreadNotificationCoordinator";
+import { useUiStateStore } from "../uiStateStore";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
@@ -142,7 +143,9 @@ function toV2ThreadShell(input: typeof thread) {
         ? "completed"
         : latestTurn.state === "error" || input.session?.status === "error"
           ? "failed"
-          : "running",
+          : latestTurn.state === "waiting"
+            ? "waiting"
+            : "running",
     pendingRuntimeRequest: input.hasPendingUserInput
       ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
       : input.hasPendingApprovals
@@ -192,6 +195,7 @@ function setup() {
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
   state.shells.set("two", shell());
+  useUiStateStore.setState({ sidebarProjectScopeKeys: [] });
   focused = false;
   visibility = "visible";
   TestNotification.permission = "granted";
@@ -316,3 +320,24 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
+it("only badges threads in this window's project scope", async () => {
+  await using app = setup();
+  useUiStateStore.setState({ sidebarProjectScopeKeys: ["one:project"] });
+  app.start();
+  const finished = {
+    latestTurn: {
+      turnId: "turn-done",
+      state: "completed",
+      completedAt: "2026-09-13T07:00:01.000Z",
+    },
+  };
+  state.shells.set("one", shell(finished));
+  state.shells.set("two", shell(finished));
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(TestNotification.sent[0]?.options.tag).toContain("one");
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  useUiStateStore.setState({ sidebarProjectScopeKeys: ["two:project"] });
+  expect(TestNotification.sent[0]?.close).toHaveBeenCalled();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+});

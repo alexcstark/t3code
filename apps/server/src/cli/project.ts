@@ -39,6 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   clearPersistedServerRuntimeState,
+  isProcessAlive,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -106,6 +107,20 @@ export class ProjectLiveServerRequestError extends Schema.TaggedError<ProjectLiv
   }
 }
 
+export class ProjectLiveServerUnavailableError extends Schema.TaggedError<ProjectLiveServerUnavailableError>()(
+  "ProjectLiveServerUnavailableError",
+  {
+    operation: Schema.Literal("resolveProjectExecutionMode"),
+    pid: Schema.Int,
+    origin: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `T3 server (pid ${this.pid}) at ${this.origin} is running but not responding. Retry the command or stop the server before using offline project commands.`;
+  }
+}
+
 export class ProjectTitleEmptyError extends Schema.TaggedError<ProjectTitleEmptyError>()(
   "ProjectTitleEmptyError",
   {
@@ -163,6 +178,7 @@ export const ProjectCommandError = Schema.Union([
   ProjectLiveServerDeclaredResponseError,
   ProjectLiveServerUndeclaredStatusError,
   ProjectLiveServerRequestError,
+  ProjectLiveServerUnavailableError,
   ProjectTitleEmptyError,
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
@@ -382,6 +398,15 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
       origin: runtimeState.value.origin,
       cause: attempted.failure,
     });
+    if (isProcessAlive(runtimeState.value.pid)) {
+      return yield* new ProjectLiveServerUnavailableError({
+        operation: "resolveProjectExecutionMode",
+        pid: runtimeState.value.pid,
+        origin: runtimeState.value.origin,
+        cause: attempted.failure,
+      });
+    }
+    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return Option.none<{ readonly origin: string }>();
   },
 );

@@ -1525,6 +1525,7 @@ export function makeClaudeQueryOptions(input: {
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
+  readonly systemPrompt?: string;
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
   readonly sdkSettings?: string | ClaudeSdkSettings;
@@ -1653,13 +1654,22 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
+          (input.systemPrompt !== undefined
+            ? "\n\n" +
+              input.systemPrompt +
+              (input.mcpServers === undefined
+                ? ""
+                : CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                  (deviceInstructions
+                    ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                    : ""))
+            : input.mcpServers === undefined
+              ? ""
+              : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+                CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                (deviceInstructions
+                  ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                  : "")),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -10512,6 +10522,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
+            ...(turnInput.runtimePolicy.systemPrompt === undefined
+              ? {}
+              : { systemPrompt: turnInput.runtimePolicy.systemPrompt }),
             attachmentsDir,
             settings: adapterOptions.settings,
             ...(launchArgSettings === undefined

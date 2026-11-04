@@ -28,17 +28,24 @@ export function useSettingsWriter() {
           environmentId: entry.environmentId,
           input: { patch: entry.patch },
         });
-        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return null;
+        if (result._tag !== "Failure" || isAtomCommandInterrupted(result))
+          return { saved: result._tag === "Success", failure: null };
         const label =
           targets.find((target) => target.environment.environmentId === entry.environmentId)
             ?.environment.label ?? entry.environmentId;
         const error = squashAtomCommandFailure(result);
-        return `${label}: ${error instanceof Error ? error.message : String(error)}`;
+        return {
+          saved: false,
+          failure: `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        };
       }),
     );
-    const failures = outcomes.filter((outcome) => outcome !== null);
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.failure === null ? [] : [outcome.failure],
+    );
     if (failures.length > 0) {
       Dialog.alert("Could not save settings", failures.join("\n\n"));
     }
+    return outcomes.every((outcome) => outcome.saved);
   };
 }

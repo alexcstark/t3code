@@ -117,7 +117,14 @@ export class ElectronWindow extends Context.Service<
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    // Finds a registered app window by renderer id. Preview/splash windows are
+    // never registered, so this is the multi-window trust check for IPC.
+    readonly forWebContentsId: (
+      webContentsId: number,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    // Registers an app window, or promotes it to main when it gains focus.
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+    // Forgets one app window (the next most recent becomes main), or all of them.
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
@@ -142,8 +149,10 @@ export const make = Effect.gen(function* () {
   };
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
-  const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const auxiliaryWindows = new WeakSet<Electron.BrowserWindow>();
+  // App windows, most recently focused first. The head is the "main" window
+  // that app-level actions (dock click, CLI open, dialogs) target.
+  const appWindowsRef = yield* Ref.make<ReadonlyArray<Electron.BrowserWindow>>([]);
 
   const listWindows = Effect.try({
     try: () => Electron.BrowserWindow.getAllWindows(),
@@ -171,11 +180,10 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orDie);
 
   const liveMain = Effect.gen(function* () {
-    const main = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(main) || (yield* isWindowDestroyed(main.value))) {
-      return Option.none<Electron.BrowserWindow>();
+    for (const window of yield* Ref.get(appWindowsRef)) {
+      if (!(yield* isWindowDestroyed(window))) return Option.some(window);
     }
-    return main;
+    return Option.none<Electron.BrowserWindow>();
   });
 
   const currentMainOrFirst = Effect.gen(function* () {
@@ -248,19 +256,25 @@ export const make = Effect.gen(function* () {
     main: liveMain,
     currentMainOrFirst,
     focusedMainOrFirst,
+    forWebContentsId: Effect.fn("desktop.electron.window.forWebContentsId")(function* (
+      webContentsId: number,
+    ) {
+      for (const window of yield* Ref.get(appWindowsRef)) {
+        if (yield* isWindowDestroyed(window)) continue;
+        if (window.webContents.id === webContentsId) return Option.some(window);
+      }
+      return Option.none<Electron.BrowserWindow>();
+    }),
     setMain: Effect.fn("ElectronWindow.setMain")(function (window) {
-      return Ref.set(mainWindowRef, Option.some(window));
+      return Ref.update(appWindowsRef, (windows) => [
+        window,
+        ...windows.filter((existing) => existing !== window),
+      ]);
     }),
     clearMain: Effect.fn("ElectronWindow.clearMain")(function (window) {
-      return Ref.update(mainWindowRef, (current) => {
-        if (Option.isNone(current)) {
-          return current;
-        }
-        if (Option.isSome(window) && current.value !== window.value) {
-          return current;
-        }
-        return Option.none();
-      });
+      return Ref.update(appWindowsRef, (windows) =>
+        Option.isSome(window) ? windows.filter((existing) => existing !== window.value) : [],
+      );
     }),
     prepareReveal: Effect.fn("ElectronWindow.prepareReveal")(function (window) {
       return Effect.promise(async () => {

@@ -24,6 +24,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveCanInterruptRunningThread,
+  deriveIsWorking,
+  deriveThreadActivityState,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
@@ -98,6 +100,52 @@ describe("V2 session presentation", () => {
     expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("waiting"))).toBe(true);
 
     expect(deriveCanInterruptRunningThread(true, null)).toBe(false);
+  });
+
+  it("keeps a waiting run Working without presenting Thinking", () => {
+    const idle = {
+      phase: "ready" as const,
+      runtimeStatus: "completed" as const,
+      isSendBusy: false,
+      isConnecting: false,
+      isCompacting: false,
+      runlessWorkStartedAt: null,
+    };
+    expect(deriveIsWorking({ ...idle, phase: "running", runtimeStatus: "running" })).toBe(true);
+    expect(deriveIsWorking({ ...idle, phase: "running", runtimeStatus: "waiting" })).toBe(false);
+    expect(
+      deriveIsWorking({
+        ...idle,
+        phase: "running",
+        runtimeStatus: "waiting",
+        isSendBusy: true,
+      }),
+    ).toBe(true);
+    expect(deriveIsWorking(idle)).toBe(false);
+    const waitingRuntime: ThreadRuntimeSummary = {
+      status: "waiting",
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("claude-default"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    };
+    const isWorking = deriveIsWorking({ ...idle, phase: "running", runtimeStatus: "waiting" });
+    expect(deriveThreadActivityState({ isWorking, runtime: waitingRuntime })).toBe("working");
+    expect(
+      deriveThreadActivityState({
+        isWorking: false,
+        runtime: { ...waitingRuntime, status: "idle" },
+      }),
+    ).toBe("waiting");
+    expect(
+      deriveThreadActivityState({
+        isWorking: false,
+        runtime: { ...waitingRuntime, status: "completed" },
+      }),
+    ).toBe("ready");
+    expect(deriveThreadActivityState({ isWorking: false, runtime: null })).toBe("ready");
+    expect(deriveThreadActivityState({ isWorking: true, runtime: null })).toBe("working");
   });
 
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {

@@ -28,6 +28,7 @@ import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
@@ -60,6 +61,18 @@ function statusWithoutLiveData(
 ): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
+
+/**
+ * A create can 404 until its row commits. Retry before treating it as deleted,
+ * or the chat pane unsubscribes and stays blank. The waits add up to 15s: a
+ * large database can answer the first read before that commit.
+ */
+export const THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS = [
+  "1 second",
+  "2 seconds",
+  "4 seconds",
+  "8 seconds",
+] as const;
 
 function formatThreadError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -204,6 +217,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
   );
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
+  const hostStalls = yield* Effect.serviceOption(HostStallRefresh.HostStallRefresh);
   const environmentId = supervisor.target.environmentId;
   const retained = resumeCache?.snapshot;
   const owner = {};
@@ -918,6 +932,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     onSome: (service) =>
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
+  // A stall can freeze the socket across the completion, so the next subscribe reloads.
+  const forceSnapshot = yield* Ref.make(false);
+  const stallResubscriptions = HostStallRefresh.reloadOnHostStall(
+    hostStalls,
+    environmentId,
+    Ref.set(forceSnapshot, true),
+  );
 
   // Only the first subscription after a warm live resume keeps the retained
   // status. A replacement session or foreground resubscribe on the same scope
@@ -965,8 +986,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+          let httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
             yield* snapshotLoader.load(prepared, threadId);
+          for (const delay of THREAD_SNAPSHOT_NOT_FOUND_RETRY_DELAYS) {
+            if (httpResult._tag !== "missing") break;
+            yield* Effect.sleep(delay);
+            httpResult = yield* snapshotLoader.load(prepared, threadId);
+          }
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -997,6 +1023,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
+              // The retries above still 404'd. Clear any stale cache and do
+              // not open a socket subscription for this attempt.
               yield* setDeleted();
               // A 404 also means "not created yet". Only a delete event may outlive this mount.
               if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
@@ -1009,7 +1037,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
-        const canResume = Option.isSome(current.data);
+        const canResume =
+          !(yield* Ref.getAndSet(forceSnapshot, false)) && Option.isSome(current.data);
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
 
         return {
@@ -1031,7 +1060,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onDefect: () => setStreamError("Could not synchronize the thread."),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, stallResubscriptions),
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );

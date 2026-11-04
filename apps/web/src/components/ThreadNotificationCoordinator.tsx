@@ -7,6 +7,7 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type { ProjectId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -17,7 +18,20 @@ import {
   ShieldQuestionIcon,
 } from "lucide-react";
 
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import {
+  buildProjectGroups,
+  selectProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
+import { createWindowThreadFilter, useDesktopWindowLayoutStore } from "../desktopWindowLayout";
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
+import { environmentProjects } from "../state/projects";
+import { useUiStateStore } from "../uiStateStore";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
@@ -64,17 +78,61 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<
     string,
-    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification }
+    {
+      environmentId: EnvironmentId;
+      projectId: ProjectId;
+      threadId: ThreadId;
+      notification: Notification;
+    }
   >();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
 
+  const notificationVisible = (
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    threadId: ThreadId,
+  ) => {
+    const scopeKeys = useUiStateStore.getState().sidebarProjectScopeKeys;
+    let groups = [] as ReturnType<typeof buildProjectGroups>;
+    try {
+      const projects = registry.get(environmentProjects.projectsAtom);
+      if (Array.isArray(projects) && projects.length > 0) {
+        groups = buildProjectGroups({
+          projects,
+          settings: selectProjectGroupingSettings(getClientSettings()),
+        });
+      }
+    } catch {
+      // Tests and early startup can observe threads before the project atom exists.
+    }
+    const allowed = new Set<string>(scopeKeys);
+    const projectKeyByProjectRef = new Map<string, string>();
+    for (const group of groups) {
+      for (const ref of group.memberProjectRefs) {
+        const refKey = scopedProjectKey(scopeProjectRef(ref.environmentId, ref.projectId));
+        projectKeyByProjectRef.set(refKey, group.key);
+        if (scopeKeys.includes(group.key)) allowed.add(refKey);
+      }
+    }
+    const projectKey = scopedProjectKey(scopeProjectRef(environmentId, projectId));
+    const threadKey = scopedThreadKey(scopeThreadRef(environmentId, threadId));
+    const filter = createWindowThreadFilter({
+      view: useDesktopWindowLayoutStore.getState().view,
+      projectKeyByProjectRef,
+      scopedProjectKeys: scopeKeys.length === 0 ? null : allowed,
+    });
+    if (filter !== null) return filter(threadKey, projectKey);
+    return scopeKeys.length === 0 || allowed.has(projectKey);
+  };
+
   const trackNotification = (
     environmentId: EnvironmentId,
+    projectId: ProjectId,
     threadId: ThreadId,
     notification: Notification,
   ) => {
     pending.get(notification.tag)?.notification.close();
-    pending.set(notification.tag, { environmentId, threadId, notification });
+    pending.set(notification.tag, { environmentId, projectId, threadId, notification });
     setNotificationBadge(pending.size);
   };
   // Toast ids by thread key, so hiding a thread can close its open toasts.
@@ -99,7 +157,11 @@ export function startThreadNotifications(
     }
     const count = pending.size;
     for (const [tag, entry] of pending) {
-      if (!shouldClose(threadKey(entry))) continue;
+      if (
+        !shouldClose(threadKey(entry)) &&
+        notificationVisible(entry.environmentId, entry.projectId, entry.threadId)
+      )
+        continue;
       entry.notification.close();
       pending.delete(tag);
     }
@@ -201,7 +263,7 @@ export function startThreadNotifications(
         // Windows drops clicks after a toast moves into Notification Center.
         requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
       });
-      trackNotification(environmentId, thread.id, notification);
+      trackNotification(environmentId, thread.projectId, thread.id, notification);
       notification.addEventListener("click", () => {
         notification.close();
         window.focus();
@@ -278,9 +340,10 @@ export function startThreadNotifications(
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
-      entry.gate.observe(state.thread.id, prior, state, {
+      const visible = notificationVisible(environmentId, state.thread.projectId, state.thread.id);
+      entry.gate.observe(state.thread.id, prior, visible ? state : { ...state, attention: null }, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true,
+        quiet: !visible || state.raw.latestRunStopRequested === true,
       });
     }
   };
@@ -406,12 +469,16 @@ export function startThreadNotifications(
     registry.subscribe(environmentThreadShells.anyEnvironmentHidingAtom, closeHiddenPending),
     registry.subscribe(environmentThreadShells.threadRefsAtom, closeHiddenPending),
   ];
+  const unsubscribeScope = useUiStateStore.subscribe(() => closeHiddenPending());
+  const unsubscribeLayout = useDesktopWindowLayoutStore.subscribe(() => closeHiddenPending());
   onSettings();
 
   return () => {
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
     for (const unsubscribe of unsubscribeHidden) unsubscribe();
+    unsubscribeScope();
+    unsubscribeLayout();
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();
     stopModeListeners();

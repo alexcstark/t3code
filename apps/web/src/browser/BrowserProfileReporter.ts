@@ -25,7 +25,11 @@ export interface ProfileReport {
 const reportTargetsAtom = Atom.make((get) => {
   const targets = new Map<EnvironmentId, EnvironmentServerConfig>();
   for (const [environmentId, config] of get(environmentPresentations.serverConfigsAtom)) {
-    if (!config.environment.capabilities.serverBrowser) continue;
+    if (
+      !config.environment.capabilities.serverBrowser ||
+      config.environment.capabilities.browserProfileReporting !== true
+    )
+      continue;
     const session = get(environmentSession.sessionStateAtom(environmentId));
     if (!sessionHasScope(session, AuthPreviewOperateScope)) continue;
     targets.set(environmentId, config);

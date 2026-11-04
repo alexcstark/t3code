@@ -10,6 +10,7 @@ import type {
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
+  SystemPrompt,
   ServerProvider,
 } from "@t3tools/contracts";
 import {
@@ -155,6 +156,9 @@ type NewTaskFlowContextValue = {
   readonly branchesLoading: boolean;
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly currentCheckoutBranchName: string | null;
+  readonly systemPrompt: SystemPrompt | null;
+  readonly systemPrompts: ReadonlyArray<SystemPrompt>;
+  readonly setSystemPrompt: (prompt: SystemPrompt | null) => void;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
@@ -704,6 +708,13 @@ export function NewTaskFlowProvider(
     refreshBranches();
   };
 
+  const systemPrompt = selectedProjectDraft.systemPrompt ?? null;
+  const systemPrompts = selectedEnvironmentServerConfig?.settings.systemPrompts ?? [];
+  const setSystemPrompt = (prompt: SystemPrompt | null) => {
+    if (selectedProjectDraftKey)
+      updateComposerDraftSettings(selectedProjectDraftKey, { systemPrompt: prompt });
+  };
+
   const setRuntimeMode = (value: RuntimeMode) => {
     if (selectedProjectDraftKey) {
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
@@ -769,6 +780,7 @@ export function NewTaskFlowProvider(
         ),
       }),
       creation: {
+        ...(draft.systemPrompt ? { systemPrompt: draft.systemPrompt } : {}),
         projectId: selectedProject.id,
         projectTitle: selectedProject.title,
         projectCwd: selectedProject.workspaceRoot,
@@ -874,6 +886,9 @@ export function NewTaskFlowProvider(
     branchesLoading,
     availableBranches,
     currentCheckoutBranchName,
+    systemPrompt,
+    systemPrompts,
+    setSystemPrompt,
     runtimeMode,
     interactionMode,
     planModeEnabled,

@@ -60,6 +60,9 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
     }),
     session: yield* SubscriptionRef.make(
       Option.some({
+        initialConfig: Effect.succeed({
+          environment: { capabilities: { filesystemMetadata: true } },
+        }),
         client: {
           [WS_METHODS.projectsEnsureScratch]: () => Effect.succeed({ projectId: PROJECT_ID }),
           [WS_METHODS.projectsReadFile]: () =>

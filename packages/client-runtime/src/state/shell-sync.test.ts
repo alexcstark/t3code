@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -24,6 +25,7 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -1093,6 +1095,86 @@ describe("environment shell synchronization", () => {
         Effect.map(Option.getOrThrow),
       );
       expect(filled).toEqual([link(2)]);
+    }),
+  );
+
+  it.effect("reloads the shell after a host stall", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const subscribeCount = yield* SubscriptionRef.make(0);
+      const loadCount = yield* SubscriptionRef.make(0);
+      const stalls = yield* PubSub.unbounded<{
+        readonly environmentId: (typeof TARGET)["environmentId"];
+        readonly detectedAt: string;
+      }>();
+      const client = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
+          Stream.unwrap(
+            SubscriptionRef.update(subscribeCount, (count) => count + 1).pipe(
+              Effect.as(Stream.fromQueue(events)),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeedNone,
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeedNone,
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeedNone,
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeedNone,
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
+        load: () =>
+          SubscriptionRef.update(loadCount, (count) => count + 1).pipe(
+            Effect.as(Option.some(LIVE_SHELL_SNAPSHOT)),
+          ),
+      });
+      yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(
+          HostStallRefresh.HostStallRefresh,
+          HostStallRefresh.HostStallRefresh.of({
+            note: (environmentId, detectedAt) =>
+              PubSub.publish(stalls, { environmentId, detectedAt }).pipe(Effect.asVoid),
+            changes: (environmentId) =>
+              Stream.fromPubSub(stalls).pipe(
+                Stream.filter((event) => event.environmentId === environmentId),
+                Stream.map((event) => event.detectedAt),
+              ),
+          }),
+        ),
+      );
+      yield* SubscriptionRef.changes(subscribeCount).pipe(
+        Stream.filter((count) => count >= 1),
+        Stream.runHead,
+      );
+      expect(yield* SubscriptionRef.get(loadCount)).toBe(1);
+      yield* PubSub.publish(stalls, {
+        environmentId: TARGET.environmentId,
+        detectedAt: "2026-11-02T18:02:00.000Z",
+      });
+      yield* SubscriptionRef.changes(subscribeCount).pipe(
+        Stream.filter((count) => count >= 2),
+        Stream.runHead,
+      );
+      expect(yield* SubscriptionRef.get(loadCount)).toBe(2);
     }),
   );
 });

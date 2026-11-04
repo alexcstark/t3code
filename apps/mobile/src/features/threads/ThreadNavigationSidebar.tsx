@@ -14,13 +14,14 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { collectThreadGroupNames } from "@t3tools/client-runtime/state/thread-sort";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
-import { Platform, StyleSheet, TextInput, View } from "react-native";
+import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { FLOATING_TABS } from "../workspace/floating-workspace-tabs";
@@ -68,6 +69,7 @@ import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionDivider,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -171,6 +173,9 @@ function ThreadNavigationSidebarPane(
     setThreadAutoSettle,
     moveThread,
     renameThread,
+    setThreadGroup,
+    promptNewThreadGroup,
+    promptRenameThreadGroup,
     regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
@@ -251,6 +256,14 @@ function ThreadNavigationSidebarPane(
   // identity; the hook keeps it stable.
   const threadSearchMatchByKey = useThreadListSearchMatches(threads, threadSearch);
   const selectedProjectKey = selectedProjectScope?.key ?? null;
+  const selectedProjectRefs =
+    selectedProjectScope === null
+      ? null
+      : new Set(
+          selectedProjectScope.projectRefs.map((projectRef) =>
+            scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+          ),
+        );
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of projects) {
@@ -293,6 +306,7 @@ function ThreadNavigationSidebarPane(
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
+    groupEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
@@ -322,6 +336,7 @@ function ThreadNavigationSidebarPane(
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
+    clusterGroups: selectedProjectKey !== null,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
@@ -536,6 +551,26 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-group":
+        return (
+          <Pressable
+            onPress={() =>
+              promptRenameThreadGroup(
+                threads.filter(
+                  (candidate) =>
+                    candidate.group === item.name &&
+                    (selectedProjectRefs === null ||
+                      selectedProjectRefs.has(
+                        scopedProjectKey(candidate.environmentId, candidate.projectId),
+                      )),
+                ),
+                item.name,
+              )
+            }
+          >
+            <ThreadListV2SectionDivider label={item.name} pane="sidebar" />
+          </Pressable>
+        );
       case "v2-thread": {
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
@@ -585,6 +620,16 @@ function ThreadNavigationSidebarPane(
             onDeleteThread={confirmDeleteThread}
             onArchiveThread={archiveThread}
             onRenameThread={renameThread}
+            groupsSupported={groupEnvironmentIds.has(thread.environmentId)}
+            groupNames={collectThreadGroupNames(
+              threads.filter(
+                (candidate) =>
+                  candidate.environmentId === thread.environmentId &&
+                  candidate.projectId === thread.projectId,
+              ),
+            )}
+            onSetThreadGroup={setThreadGroup}
+            onCreateThreadGroup={promptNewThreadGroup}
             onRegenerateThreadTitle={regenerateThreadTitle}
             titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
             settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}

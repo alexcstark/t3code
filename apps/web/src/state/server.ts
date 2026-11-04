@@ -36,6 +36,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
+  eventLoopStalls: true,
 });
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",

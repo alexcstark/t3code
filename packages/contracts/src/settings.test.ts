@@ -504,3 +504,39 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("ClientSettings project default locations", () => {
+  it("defaults to no project location overrides and preserves valid environment ids", () => {
+    expect(decodeClientSettings({}).projectDefaultEnvironmentIds).toEqual({});
+    expect(
+      decodeClientSettings({
+        projectDefaultEnvironmentIds: { "repo:app": "environment-remote" },
+      }).projectDefaultEnvironmentIds,
+    ).toEqual({ "repo:app": "environment-remote" });
+    expect(
+      decodeClientSettingsPatch({
+        projectDefaultEnvironmentIds: { "repo:app": "environment-remote" },
+      }).projectDefaultEnvironmentIds,
+    ).toEqual({ "repo:app": "environment-remote" });
+  });
+});
+
+describe("saved system prompts", () => {
+  it("defaults existing installations to an empty prompt library", () => {
+    expect(decodeServerSettings({}).systemPrompts).toEqual([]);
+  });
+
+  it("round-trips multiple prompts and preserves whitespace and empty instructions", () => {
+    const input = {
+      systemPrompts: [
+        { id: "review", name: "Review", content: "  Review only.\n" },
+        { id: "empty", name: "Empty", content: "" },
+      ],
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+    expect(() =>
+      decodeServerSettingsPatch({ systemPrompts: [{ id: "review", name: " ", content: "" }] }),
+    ).toThrow();
+  });
+});

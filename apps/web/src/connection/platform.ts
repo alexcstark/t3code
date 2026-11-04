@@ -60,6 +60,7 @@ import {
   readDesktopSecondaryBootstrapsResult,
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
+import { subscribeResumeReconnectWakeups } from "./resumeWakeups";
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 
@@ -125,21 +126,27 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active">((queue) =>
+      Stream.callback<"application-active" | "application-active-long">((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
-            const listener = () => {
+            const onVisible = () => {
               if (document.visibilityState === "visible") {
                 Queue.offerUnsafe(queue, "application-active");
               }
             };
-            document.addEventListener("visibilitychange", listener);
-            return listener;
+            document.addEventListener("visibilitychange", onVisible);
+            const unsubscribeResume = subscribeResumeReconnectWakeups(
+              () => {
+                Queue.offerUnsafe(queue, "application-active-long");
+              },
+              { onPowerResume: window.desktopBridge?.onPowerResume },
+            );
+            return () => {
+              document.removeEventListener("visibilitychange", onVisible);
+              unsubscribeResume();
+            };
           }),
-          (listener) =>
-            Effect.sync(() => {
-              document.removeEventListener("visibilitychange", listener);
-            }),
+          (unsubscribe) => Effect.sync(unsubscribe),
         ).pipe(Effect.asVoid),
       ),
       managedRelayAccountChanges(appAtomRegistry).pipe(

@@ -2,6 +2,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ThreadId,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -10,7 +11,6 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type OrchestrationV2ThreadShell,
-  ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -37,8 +37,103 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { idleThreadProjection } from "../../McpToolAccess.testkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+
+it.effect("attributes a launched thread's first message to the calling thread", () =>
+  Effect.gen(function* () {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const projectId = ProjectId.make("project");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const modelSelection = { instanceId: providerInstanceId, model: "gpt-5" };
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as OrchestrationV2ThreadShell;
+    const systemPrompt = { id: "review", name: "Review", content: "Use our review checklist." };
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const layerDependencies = Layer.mergeAll(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      DocumentText.layer.pipe(Layer.provide(NodeServices.layer)),
+      ServerSettings.layerTest(),
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: {
+          threadId: sourceThreadId,
+          providerSessionId: "session",
+          providerInstanceId,
+        },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () => Effect.succeed(caller),
+        getThreadRecords: () => {
+          const projection = idleThreadProjection(caller);
+          return Effect.succeed({
+            ...projection,
+            thread: { ...projection.thread, systemPrompt },
+          });
+        },
+      }),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({
+        launch: (input) => {
+          launched.push(input);
+          return Effect.succeed({
+            threadId: input.threadId,
+            projection: {
+              thread: { id: input.threadId, projectId, modelSelection },
+              runs: [],
+            },
+            resumed: false,
+          } as unknown as ThreadLaunch.ThreadLaunchResult);
+        },
+      }),
+      Layer.mock(Project.ProjectService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-link-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Audit", message: "Review the change" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+    expect(launched[0]?.initialMessage?.senderThreadId).toBe(sourceThreadId);
+    expect(launched[0]?.systemPrompt).toEqual(systemPrompt);
+    const emptyPrompt = { id: "empty", name: "Empty", content: "" };
+    for (const systemPrompt of [emptyPrompt, null]) {
+      yield* toolkit
+        .handle("t3_thread_launch", { title: "Audit", systemPrompt })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    }
+    expect(launched.map((input) => input.systemPrompt)).toEqual([
+      systemPrompt,
+      emptyPrompt,
+      undefined,
+    ]);
+  }),
+);
 
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;

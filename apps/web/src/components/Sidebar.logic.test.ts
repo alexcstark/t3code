@@ -35,6 +35,7 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  resolveSidebarReasoningLabel,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -44,7 +45,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -305,6 +313,22 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("waiting");
+  });
+
+  it("shows Input for an async question while the provider keeps running", () => {
+    const thread = makeThreadFixture({
+      hasPendingUserInput: true,
+      runtime: {
+        status: "running",
+        activeRunId: RunId.make("run:async-input"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    });
+    expect(resolveSidebarThreadStatus(thread)).toBe("input");
+    expect(isSidebarThreadWorking(thread)).toBe(false);
   });
 });
 
@@ -986,6 +1010,7 @@ describe("Working shelf (beta)", () => {
     expect(isSidebarThreadWorking(idle)).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingApprovals: true })).toBe(false);
     expect(isSidebarThreadWorking({ ...idle, runtime, hasPendingUserInput: true })).toBe(false);
+    expect(isSidebarThreadWorking({ ...waiting, hasPendingUserInput: true })).toBe(false);
     expect(
       isSidebarThreadWorking({
         ...waiting,
@@ -1655,5 +1680,65 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("resolveSidebarReasoningLabel", () => {
+  const model = {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    },
+  } satisfies ServerProviderModel;
+
+  it("uses the selected model capability label", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: model.slug,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      }),
+    ).toBe("Extra High");
+  });
+
+  it("falls back to a readable raw option when model capabilities are unavailable", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "max" }],
+        },
+      }),
+    ).toBe("Max");
+  });
+
+  it("does not treat unrelated provider options as reasoning", () => {
+    expect(
+      resolveSidebarReasoningLabel({
+        model: null,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+          options: [{ id: "agent", value: "build" }],
+        },
+      }),
+    ).toBeNull();
   });
 });

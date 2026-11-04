@@ -31,7 +31,7 @@ import { useServerConfigs } from "~/state/entities";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { environmentPresentations } from "~/state/presentation";
 import { ManagedControl } from "./ManagedPolicy";
-import { manualServerUpdateCommand } from "~/versionSkew";
+import { manualServerUpdateCommand, resolveServerUpdateTargetVersion } from "~/versionSkew";
 import { crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
@@ -274,6 +274,9 @@ export function ServerUpdateAction({
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
   const canUpdate = useAtomValue(sessionStateAtom, canUpdateServer);
   const updatesDenial = managedUpdatesDenial(useManagedPolicy(environmentId));
+  const serverTargetVersion = isDesktopAppUpdate
+    ? targetVersion
+    : resolveServerUpdateTargetVersion(targetVersion);
   const update = useServerUpdate();
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
     target: installation?.kind === "npm-global" ? "update command" : "relaunch command",
@@ -319,7 +322,7 @@ export function ServerUpdateAction({
       serverLabel,
       selfUpdate,
       desktopAppUpdate,
-      targetVersion,
+      targetVersion: serverTargetVersion,
     });
   };
 
@@ -410,12 +413,13 @@ export function OutdatedServerUpdateAction({
   readonly label?: string;
 }) {
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
+  const serverTargetVersion = resolveServerUpdateTargetVersion(targetVersion);
   const handleUpdate = async () => {
     if (pendingUpdateEnvironmentIds.has(environmentId)) return;
     pendingUpdateEnvironmentIds.add(environmentId);
     const result = await update({
       environmentId,
-      input: { targetVersion },
+      input: { targetVersion: serverTargetVersion },
       ...(fromVersion === undefined ? {} : { fromVersion }),
     });
     pendingUpdateEnvironmentIds.delete(environmentId);
@@ -434,7 +438,7 @@ export function OutdatedServerUpdateAction({
       description: `Reconnected on t3@${result.value.targetVersion}.`,
     });
   };
-  if (fromVersion !== undefined && crossesReleaseTrack(fromVersion, targetVersion)) {
+  if (fromVersion !== undefined && crossesReleaseTrack(fromVersion, serverTargetVersion)) {
     return <CrossTrackNote />;
   }
   return (

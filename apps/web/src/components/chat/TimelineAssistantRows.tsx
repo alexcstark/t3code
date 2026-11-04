@@ -1,7 +1,9 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import { memo, use, useState } from "react";
+import { memo, use, useState, type MouseEvent } from "react";
+import { APP_DISPLAY_NAME } from "~/branding";
+import { shouldFocusComposerAfterResponseClick } from "./MessagesTimeline.logic";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
 import { GitForkIcon } from "lucide-react";
@@ -32,12 +34,34 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.projectedItem?.item.id,
   );
   const text = liveText ?? row.message.text;
+  const handleResponseClick = (event: MouseEvent<HTMLElement>) => {
+    const selection = window.getSelection();
+    const selectionInResponse =
+      selection !== null &&
+      !selection.isCollapsed &&
+      (selection.anchorNode !== null || selection.focusNode !== null) &&
+      (selection.anchorNode === null || event.currentTarget.contains(selection.anchorNode)) &&
+      (selection.focusNode === null || event.currentTarget.contains(selection.focusNode));
+    const targetIsInteractive =
+      event.target instanceof Element &&
+      event.target.closest(
+        'a, button, input, textarea, select, [contenteditable="true"], [role="button"]',
+      ) !== null;
+    if (
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse,
+        targetIsInteractive,
+      })
+    ) {
+      ctx.onResponseClick();
+    }
+  };
   const messageText = text || (row.message.streaming ? "" : "(empty response)");
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+      <div className="relative min-w-0 px-1 py-0.5" onClick={handleResponseClick}>
+        <MessageAuthorHeading>{APP_DISPLAY_NAME}</MessageAuthorHeading>
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
