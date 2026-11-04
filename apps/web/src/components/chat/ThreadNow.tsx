@@ -1,9 +1,10 @@
-import { RefreshCwIcon } from "lucide-react";
+import { CircleAlertIcon, RefreshCwIcon, WifiOffIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { cn } from "~/lib/utils";
 import { NoticeText } from "./ComposerBannerStack";
+import { InlineButton } from "../ui/button";
 
 /** A line of thread state for the end of the timeline. */
 export interface ThreadNowItem {
@@ -67,11 +68,26 @@ function ThreadNowLine({
   );
 }
 
-function ThreadSyncLine({ phase }: { readonly phase: ThreadSyncPhase }) {
+function ThreadSyncLine({
+  phase,
+  onRetry,
+}: {
+  readonly phase: ThreadSyncPhase;
+  readonly onRetry?: (() => void) | undefined;
+}) {
   return (
     <div className={lineClassName} role="status" data-composer-sync-status={phase}>
-      <RefreshCwIcon aria-hidden />
+      {phase === "failed" ? (
+        <CircleAlertIcon aria-hidden />
+      ) : phase === "offline" ? (
+        <WifiOffIcon aria-hidden />
+      ) : (
+        <RefreshCwIcon aria-hidden />
+      )}
       <span className="truncate">{threadSyncLabel(phase)}</span>
+      {(phase === "failed" || phase === "offline") && onRetry ? (
+        <InlineButton onClick={onRetry}>Retry</InlineButton>
+      ) : null}
     </div>
   );
 }
@@ -84,19 +100,21 @@ export function ThreadNow({
   attention,
   work,
   syncPhase,
+  onRetrySync,
   goal,
 }: {
   /** Something that needs you elsewhere, such as a subagent's question. */
   readonly attention: ThreadNowItem | null;
   readonly work: ThreadNowItem | null;
   readonly syncPhase: ThreadSyncPhase | null;
+  readonly onRetrySync?: (() => void) | undefined;
   readonly goal: ThreadNowItem | null;
 }): ReactNode {
   return (
     <>
       {attention ? <ThreadNowLine item={attention} announce /> : null}
       {work ? <ThreadNowLine item={work} /> : null}
-      {syncPhase ? <ThreadSyncLine phase={syncPhase} /> : null}
+      {syncPhase ? <ThreadSyncLine phase={syncPhase} onRetry={onRetrySync} /> : null}
       {goal ? <ThreadNowLine item={goal} /> : null}
     </>
   );

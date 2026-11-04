@@ -236,6 +236,9 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
+  readonly onTransportFailure?: (
+    cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
+  ) => Effect.Effect<void, never, never>;
   /** Reports defects; the subscription then waits for the next session or resubscribe. */
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
@@ -333,13 +336,17 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         );
                       if (isTransportFailure) {
                         return Stream.fromEffect(
-                          Effect.logWarning(
-                            "Durable RPC subscription lost its transport; waiting for the next session.",
-                            {
-                              cause: Cause.pretty(cause),
-                              method: tag,
-                              environmentId: supervisor.target.environmentId,
-                            },
+                          (options?.onTransportFailure?.(cause) ?? Effect.void).pipe(
+                            Effect.andThen(
+                              Effect.logWarning(
+                                "Durable RPC subscription lost its transport; waiting for the next session.",
+                                {
+                                  cause: Cause.pretty(cause),
+                                  method: tag,
+                                  environmentId: supervisor.target.environmentId,
+                                },
+                              ),
+                            ),
                           ),
                         ).pipe(Stream.drain);
                       }
