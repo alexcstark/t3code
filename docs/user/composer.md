@@ -279,7 +279,7 @@ images. **Send now** sends a message right away, into the running turn if there 
 turn runs, a slash command moves to the front of the queue instead. You can also edit or
 remove it.
 
-If you stop the agent or the server restarts, queued messages keep their order and are held.
+If you stop the agent or the server restarts, queued messages keep their order and are held, and the queue reads **Queue paused**.
 Press **Resume** in an empty composer to continue. For stopped runs and usage limits,
 this uses the provider's native continuation without sending a new prompt. If the provider
 does not support it, send a message to continue instead. If the original request never reached
@@ -287,6 +287,8 @@ the provider, Resume sends that request again.
 
 Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
+
+Automatic updates held with them, such as pull request or background task notifications, are listed too; remove any you no longer want delivered when the queue resumes.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
