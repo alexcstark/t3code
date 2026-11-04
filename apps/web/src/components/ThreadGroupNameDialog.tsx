@@ -77,8 +77,8 @@ function ThreadGroupNameDialog(props: { readonly request: Request }) {
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <Label className="flex flex-col items-stretch gap-1.5" htmlFor={id}>
-              Name
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={id}>Name</Label>
               <Input
                 id={id}
                 autoFocus
@@ -89,7 +89,7 @@ function ThreadGroupNameDialog(props: { readonly request: Request }) {
                   setError(null);
                 }}
               />
-            </Label>
+            </div>
             {error ? (
               <p role="alert" className="text-destructive">
                 {error}

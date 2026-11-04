@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import * as Schema from "effect/Schema";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
 import { TestClock } from "effect/testing";
@@ -1689,6 +1690,42 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(fullStatusCalls()).toBe(0);
+      }),
+    ),
+  );
+  it.live.each([
+    ["fatal: not a git repository: /missing-git-directory", "kept"],
+    ["fatal: gitfile does not point to a valid repository: checkout/.git", "kept"],
+    ["fatal: permission denied", "failed"],
+  ] as const)("handles branch inspection diagnostic %s as %s", ([stderr, outcome]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        for (const command of ["rev-parse", "symbolic-ref"]) {
+          const { service, fs, worktree, fullStatusCalls } = yield* cleanupFixture().pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, {
+              ...git,
+              execute: (input) =>
+                input.operation === "StorageCleanup.branchChanged" && input.args[0] === command
+                  ? Effect.succeed({
+                      exitCode: ChildProcessSpawner.ExitCode(128),
+                      stdout: "",
+                      stderr,
+                      stdoutTruncated: false,
+                      stderrTruncated: false,
+                    })
+                  : git.execute(input),
+            }),
+          );
+          const entry = (yield* service.runNow).entries[0];
+          expect(entry).toMatchObject({
+            outcome,
+            reason: outcome === "kept" ? "Repository or branch changed" : `git: ${stderr}`,
+          });
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
+          expect(fullStatusCalls()).toBe(0);
+          yield* fs.remove(worktree, { recursive: true });
+        }
       }),
     ),
   );
