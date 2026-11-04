@@ -1973,7 +1973,13 @@ it.effect("shares concurrent remote and config reads until a command may change 
       assert.strictEqual(yield* Fiber.join(startedAfterWrite), "https://example.com/a/new.git");
       assert.deepStrictEqual(yield* Ref.get(spawned), { config: 3, remote: 1 });
     }),
-  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  ).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect.each(["a T3 branch creation", "an external worktree addition"] as const)(
@@ -7945,10 +7951,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const folder = pathService.basename(created.worktree.path);
           assert.isAtMost(Buffer.byteLength(folder), 40);
           assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
-          assert.include(
-            yield* git(cwd, ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"]),
-            `worktree ${created.worktree.path}`,
-          );
+          const registeredPaths = (yield* git(cwd, [
+            "-c",
+            "core.quotePath=false",
+            "worktree",
+            "list",
+            "--porcelain",
+          ]))
+            .split("\n")
+            .filter((line) => line.startsWith("worktree "))
+            .map((line) => NodeFS.realpathSync.native(line.slice("worktree ".length)));
+          assert.include(registeredPaths, NodeFS.realpathSync.native(created.worktree.path));
           folders.add(folder);
         }
         assert.equal(folders.size, branches.length);
