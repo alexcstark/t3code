@@ -419,9 +419,7 @@ describe("V2 client presentation", () => {
       updatedAt: "2026-06-20T01:40:00.000Z",
     };
 
-    expect(reconcileThreadShellRuntimeFromDetail(finishedShell, detailRuntime)).toBe(
-      finishedShell,
-    );
+    expect(reconcileThreadShellRuntimeFromDetail(finishedShell, detailRuntime)).toBe(finishedShell);
   });
 
   it("keeps an older waiting run visible over a newer cancelled run", () => {

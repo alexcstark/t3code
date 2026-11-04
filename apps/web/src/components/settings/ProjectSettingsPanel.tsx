@@ -316,17 +316,18 @@ function ProjectDetail({
     if (projectTitleSaveInFlightRef.current) return;
     projectTitleSaveInFlightRef.current = true;
     setIsSavingProjectTitle(true);
-    try {
-      const result = await updateAllMembers({ title }, "Failed to rename project");
-      if (result._tag === "Success") {
-        setProjectTitle(title);
-      } else {
-        setProjectTitle(group.displayName);
-      }
-    } finally {
-      projectTitleSaveInFlightRef.current = false;
-      setIsSavingProjectTitle(false);
-    }
+    await updateAllMembers({ title }, "Failed to rename project")
+      .then((result) => {
+        if (result._tag === "Success") {
+          setProjectTitle(title);
+        } else {
+          setProjectTitle(group.displayName);
+        }
+      })
+      .finally(() => {
+        projectTitleSaveInFlightRef.current = false;
+        setIsSavingProjectTitle(false);
+      });
   };
 
   const storedDefaultEnvironmentId = projectDefaultEnvironmentIds[group.projectKey] ?? null;

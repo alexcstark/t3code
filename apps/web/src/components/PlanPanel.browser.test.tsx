@@ -28,7 +28,10 @@ describe("PlanPanel", () => {
     await expect.element(screen.getByText("Working · 1/3")).toBeVisible();
     await expect.element(screen.getByText("Update the contract")).toBeVisible();
     await expect.element(screen.getByText("12s")).toBeVisible();
-    await expect.element(screen.getByText("Handle reconnects")).toBeVisible();
+    const currentStepLabels = screen.getByText("Handle reconnects").all();
+    expect(currentStepLabels).toHaveLength(2);
+    for (const label of currentStepLabels) await expect.element(label).toBeVisible();
+    await expect.element(screen.getByText("Add integration coverage")).toBeVisible();
     await expect.element(screen.getByText("Implementing the remote flow")).toBeVisible();
   });
   it("explains when a thread has no plan yet", async () => {
