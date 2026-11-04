@@ -81,7 +81,22 @@ describe("threadQueueControlPresentation", () => {
     expect(busy.canSteer).toBe(false);
   });
 
-  it("keeps the row already open in the composer from being reopened or steered", () => {
+  it("keeps the row open in the composer, and automatic updates, from being edited or steered", () => {
+    const automatic = resolveThreadQueueRowControls({
+      automatic: true,
+      busy: false,
+      canPromoteToSteer: true,
+      canReorder: true,
+      index: 1,
+      queuedCount: 3,
+      text: "Pull request updated",
+    });
+    expect([automatic.canEdit, automatic.canSteer, automatic.canDismiss]).toEqual([
+      false,
+      false,
+      true,
+    ]);
+
     const editing = resolveThreadQueueRowControls({
       busy: false,
       canPromoteToSteer: true,

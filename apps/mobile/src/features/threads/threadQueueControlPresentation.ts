@@ -15,6 +15,8 @@ export interface ThreadQueueRowControls {
 }
 
 export function resolveThreadQueueRowControls(input: {
+  /** A held notification or task wake: it can be removed, not rewritten or steered. */
+  readonly automatic?: boolean;
   readonly busy: boolean;
   readonly canPromoteToSteer: boolean;
   readonly canReorder: boolean;
@@ -25,15 +27,16 @@ export function resolveThreadQueueRowControls(input: {
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
   const isEditing = input.isEditing === true;
+  const isMessage = input.automatic !== true;
 
   return {
     canDismiss: !input.busy,
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
-    canEdit: mutationEnabled && !isEditing,
+    canEdit: mutationEnabled && !isEditing && isMessage,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
-    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
+    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing && isMessage,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Edit and Steer keep the original text so quoted citations stay linked.
     displayText: assistantCitationsToPlainText(input.text),

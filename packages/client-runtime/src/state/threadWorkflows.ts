@@ -25,6 +25,8 @@ export interface QueuedThreadRun {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** A notification or delegated-task wake: the user can remove it, not edit or steer it. */
+  readonly automatic: boolean;
 }
 
 export interface ThreadQueueWorkflowState {
@@ -106,19 +108,21 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   );
 }
 
-export function getUserQueuedThreadRuns(
+function isAutomaticDelivery(message: Pick<Message, "delegatedCompletion" | "notification">) {
+  return message.delegatedCompletion !== undefined || message.notification !== undefined;
+}
+
+// Automatic deliveries drain on their own, but a held queue strands them until the user acts.
+export function getVisibleQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
-  const automaticCompletionMessageIds = new Set(
-    projection.messages
-      .filter(
-        (message) =>
-          message.delegatedCompletion !== undefined || message.notification !== undefined,
-      )
-      .map((message) => message.id),
+  const automaticMessageIds = new Set(
+    projection.messages.filter(isAutomaticDelivery).map((message) => message.id),
   );
   return projection.runs.filter(
-    (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
+    (run) =>
+      run.status === "queued" &&
+      (run.queueHeld === true || !automaticMessageIds.has(run.userMessageId)),
   );
 }
 
@@ -133,7 +137,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
   const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+    getVisibleQueuedThreadRuns(projection),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
@@ -141,10 +145,11 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
     return {
       run,
-      text: message?.text ?? "Queued message",
+      text: message?.notification?.summary ?? message?.text ?? "Queued message",
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
+      automatic: message !== undefined && isAutomaticDelivery(message),
     };
   });
 
