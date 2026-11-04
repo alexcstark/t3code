@@ -1,0 +1,65 @@
+diff --git a/dist/NodeChildProcessSpawner.d.ts b/dist/NodeChildProcessSpawner.d.ts
+index c5f3b7043d5b01c4683feb25eb29052f3b6e1fdf..e442967965e809a2377076b52db22d077f2e556f 100644
+--- a/dist/NodeChildProcessSpawner.d.ts
++++ b/dist/NodeChildProcessSpawner.d.ts
+@@ -43,6 +43,25 @@ import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+  * @since 4.0.0
+  */
+ export declare const layer: Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path>;
++/** The ChildProcess members this spawner reads. */
++export interface SpawnedProcess {
++    readonly pid?: number | undefined;
++    readonly stdin: import("node:child_process").ChildProcess["stdin"];
++    readonly stdout: import("node:child_process").ChildProcess["stdout"];
++    readonly stderr: import("node:child_process").ChildProcess["stderr"];
++    readonly stdio: import("node:child_process").ChildProcess["stdio"];
++    kill(signal?: NodeJS.Signals | number): boolean;
++    ref(): void;
++    unref(): void;
++    on(event: "spawn", listener: () => void): unknown;
++    on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
++    on(event: "error", listener: (error: Error) => void): unknown;
++    removeListener(event: "spawn" | "exit" | "error", listener: (...args: Array<any>) => void): unknown;
++}
++/**
++ * The same spawner with the process launch swapped, for hosts that start children elsewhere.
++ */
++export declare const layerWithSpawn: (spawnProcess: (command: string, args: ReadonlyArray<string>, options: import("node:child_process").SpawnOptions) => SpawnedProcess) => Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path>;
+ /**
+  * Result of flattening a pipeline of commands.
+  *
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index 16dedd52262a0343df11fb14496f5f9f2a0f1e92..2f2ec4cb4c6153f243712a62e814b35ae752fc6c 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -62,7 +62,7 @@ const taskkill = (childProcess, onExit = () => {}) => {
+     windowsHide: true
+   }, onExit);
+ };
+-const make = /*#__PURE__*/Effect.gen(function* () {
++const makeWithSpawn = spawnProcess => Effect.gen(function* () {
+   const fs = yield* FileSystem.FileSystem;
+   const path = yield* Path.Path;
+   const resolveWorkingDirectory = Effect.fnUntraced(function* (options) {
+@@ -278,7 +278,7 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+   };
+   const spawn = (command, spawnOptions) => Effect.callback(resume => {
+     const deferred = Deferred.makeUnsafe();
+-    const handle = NodeChildProcess.spawn(command.command, command.args, spawnOptions);
++    const handle = spawnProcess(command.command, command.args, spawnOptions);
+     handle.on("error", error => {
+       resume(Effect.fail(toPlatformError("spawn", error, command)));
+     });
+@@ -570,7 +570,12 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+  * @category layers
+  * @since 4.0.0
+  */
++const make = /*#__PURE__*/makeWithSpawn(NodeChildProcess.spawn);
+ export const layer = /*#__PURE__*/Layer.effect(ChildProcessSpawner, make);
++/**
++ * The same spawner with the process launch swapped, for hosts that start children elsewhere.
++ */
++export const layerWithSpawn = spawnProcess => Layer.effect(ChildProcessSpawner, makeWithSpawn(spawnProcess));
+ /**
+  * Flattens a `Command` into an array of `StandardCommand`s along with pipe
+  * options for each connection.
