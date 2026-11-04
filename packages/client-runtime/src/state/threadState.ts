@@ -5,6 +5,40 @@ import { EMPTY_THREAD_HISTORY_META, type ThreadHistoryMeta } from "./threadHisto
 
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
 
+export type ThreadSyncPhase = "loading" | "syncing" | "offline" | "failed";
+
+export function resolveThreadSyncPhase(input: {
+  readonly detailExists: boolean;
+  readonly shellExists: boolean;
+  readonly status: EnvironmentThreadStatus;
+  readonly error?: string | null;
+}): ThreadSyncPhase | null {
+  if (!input.shellExists || input.status === "deleted") return null;
+  if (input.error) return "failed";
+  switch (input.status) {
+    case "empty":
+    case "cached":
+      return "offline";
+    case "synchronizing":
+      return input.detailExists ? "syncing" : "loading";
+    case "live":
+      return null;
+  }
+}
+
+export function threadSyncLabel(phase: ThreadSyncPhase): string {
+  switch (phase) {
+    case "loading":
+      return "Loading messages...";
+    case "syncing":
+      return "Syncing messages...";
+    case "offline":
+      return "Messages are offline";
+    case "failed":
+      return "Could not sync messages";
+  }
+}
+
 export interface EnvironmentThreadState {
   readonly data: Option.Option<OrchestrationV2ThreadProjection>;
   readonly status: EnvironmentThreadStatus;

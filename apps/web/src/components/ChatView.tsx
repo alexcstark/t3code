@@ -1,3 +1,5 @@
+import { environmentThreads } from "../state/threads";
+import { useThreadSyncError } from "../state/entities";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
@@ -1213,10 +1215,13 @@ export default function ChatView(props: ChatViewProps) {
     ? deriveReportedModelSelection(serverProjection)
     : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
+  const threadSyncError = useThreadSyncError(routeThreadDetailRef);
+  const retryMessageSync = useAtomCommand(environmentThreads.retrySync);
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
     shellExists: serverThread !== null,
     status: threadStatus,
+    error: threadSyncError,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
   const activeProviderThread = serverProjection?.providerThreads.find(
@@ -2957,7 +2962,9 @@ export default function ChatView(props: ChatViewProps) {
     entry.kind === "message" ? [entry.message] : [],
   );
   const displayedTimeline = resolveThreadSwitchTimeline({
-    loading: timelineEntries.length === 0 && threadSyncPhase !== null,
+    loading:
+      timelineEntries.length === 0 &&
+      (threadSyncPhase === "loading" || threadSyncPhase === "syncing"),
     activeThreadKey,
     nextEntries: timelineEntries,
     rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
@@ -8616,6 +8623,9 @@ export default function ChatView(props: ChatViewProps) {
                               respondingRequestIds={respondingRequestIds}
                               showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                               activeProposedPlan={activeProposedPlan}
+                              onRetryThreadSync={() => {
+                                if (routeThreadRef !== null) void retryMessageSync(routeThreadRef);
+                              }}
                               threadSyncPhase={
                                 activeEnvironmentUnavailable ? null : threadSyncPhase
                               }

@@ -19,7 +19,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -373,6 +373,30 @@ describe("createEnvironmentThreadStateAtoms", () => {
       const next = yield* Queue.take(h.subscriptions);
       expect(h.counts()).toEqual({ httpLoads: 2, diskLoads: 2, opened: 2, active: 1 });
       remount();
+      yield* Deferred.await(next.closed);
+    }),
+  );
+
+  it.effect("retries message sync with a fresh snapshot while preserving the visible thread", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      const before = currentThread(h.registry, h.stateAtom);
+
+      const retried = yield* Effect.promise(() => h.rawAtoms.retrySync.run(h.registry, h.ref));
+      expect(AsyncResult.isSuccess(retried)).toBe(true);
+      yield* Deferred.await(first.closed);
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBeUndefined();
+      expect(currentThread(h.registry, h.stateAtom)).toBe(before);
+      expect(h.registry.get(h.stateAtom).status).toBe("synchronizing");
+      yield* Queue.offer(next.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 2, active: 1 });
+      unmount();
       yield* Deferred.await(next.closed);
     }),
   );

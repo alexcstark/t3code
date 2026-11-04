@@ -944,6 +944,7 @@ function ThreadRouteContent(
           respondingUserInputId={requests.respondingUserInputId}
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
+          threadSyncError={Option.getOrNull(selectedThreadDetailState.error)}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
