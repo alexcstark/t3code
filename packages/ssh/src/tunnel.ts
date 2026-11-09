@@ -1794,39 +1794,42 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
-    return yield* withTargetLock(
-      key,
-      Effect.gen(function* () {
-        const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
+    const entry = yield* withTargetLock(key, ensureTunnelEntry(key, resolvedTarget, runner));
 
-        const pairingResult = requestOptions?.issuePairingToken
-          ? yield* runWithSshAuth({
+    // Pairing can install an archive; keep retries available and cancel it when its tunnel closes.
+    const pairingResult = requestOptions?.issuePairingToken
+      ? yield* Effect.acquireUseRelease(
+          Effect.forkIn(
+            runWithSshAuth({
               key,
               target: entry.target,
               operation: (authOptions) =>
                 issueRemotePairingToken(entry.target, runner, authOptions),
-            })
-          : null;
-        const pairingToken = pairingResult?.credential ?? null;
+            }),
+            entry.scope,
+          ),
+          Fiber.join,
+          Fiber.interrupt,
+        )
+      : null;
+    const pairingToken = pairingResult?.credential ?? null;
 
-        yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
-          ...sshTargetLogFields(entry.target),
-          key,
-          localPort: entry.localPort,
-          remotePort: entry.remotePort,
-          remoteServerKind: entry.remoteServerKind,
-          issuedPairingToken: pairingToken !== null,
-        });
-        return {
-          target: entry.target,
-          httpBaseUrl: entry.httpBaseUrl,
-          wsBaseUrl: entry.wsBaseUrl,
-          pairingToken,
-          remotePort: entry.remotePort,
-          ...(entry.remoteServerKind ? { remoteServerKind: entry.remoteServerKind } : {}),
-        };
-      }),
-    );
+    yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
+      ...sshTargetLogFields(entry.target),
+      key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+      remoteServerKind: entry.remoteServerKind,
+      issuedPairingToken: pairingToken !== null,
+    });
+    return {
+      target: entry.target,
+      httpBaseUrl: entry.httpBaseUrl,
+      wsBaseUrl: entry.wsBaseUrl,
+      pairingToken,
+      remotePort: entry.remotePort,
+      ...(entry.remoteServerKind ? { remoteServerKind: entry.remoteServerKind } : {}),
+    };
   });
 
   const disconnectEnvironment = Effect.fn("ssh/tunnel.disconnectEnvironment")(function* (
