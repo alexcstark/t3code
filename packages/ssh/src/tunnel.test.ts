@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -900,6 +902,71 @@ describe("ssh tunnel scripts", () => {
         }
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
+  );
+
+  it.effect.each(["disconnect", "caller interruption"] as const)(
+    "keeps reconnect available during stalled pairing and cancels it on %s",
+    (cancelWith) =>
+      Effect.gen(function* () {
+        const pairingStarted = yield* Deferred.make<void>();
+        const pairingCancelled = yield* Deferred.make<void>();
+        const reconnectFinished = yield* Deferred.make<void>();
+        const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+        let pairingCommands = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const args = commandArgs(command);
+            if (args.includes("-G")) return makeSuccessfulProcess("");
+            if (args.includes("-N")) return makeRunningProcess(() => undefined);
+            if (args.at(-1) === "-s") {
+              pairingCommands += 1;
+              if (pairingCommands === 1) {
+                yield* Effect.addFinalizer(() => Deferred.succeed(pairingCancelled, undefined));
+                yield* Deferred.succeed(pairingStarted, undefined);
+                return makeRunningProcess(() => undefined);
+              }
+              if (pairingCommands === 2) {
+                return makeSuccessfulProcess('{"credential":"fresh-token"}\n');
+              }
+            }
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }),
+        );
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+        );
+        yield* Effect.gen(function* () {
+          const manager = yield* SshTunnel.SshEnvironmentManager;
+          const original = yield* manager.ensureEnvironment(target);
+          const pairing = yield* Effect.forkChild(
+            manager.ensureEnvironment(target, { issuePairingToken: true }),
+          );
+          yield* Deferred.await(pairingStarted);
+          const reconnect = yield* Effect.forkChild(
+            manager
+              .ensureEnvironment(target)
+              .pipe(Effect.tap(() => Deferred.succeed(reconnectFinished, undefined))),
+          );
+          yield* TestClock.adjust(Duration.zero);
+          assert.isTrue(yield* Deferred.isDone(reconnectFinished));
+          assert.equal((yield* Fiber.join(reconnect)).httpBaseUrl, original.httpBaseUrl);
+          const retried = yield* manager.ensureEnvironment(target, { issuePairingToken: true });
+          assert.equal(retried.pairingToken, "fresh-token");
+
+          if (cancelWith === "disconnect") {
+            yield* manager.disconnectEnvironment(target);
+          } else {
+            yield* Fiber.interrupt(pairing);
+          }
+          assert.isTrue(yield* Deferred.isDone(pairingCancelled));
+          assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(pairing)));
+        }).pipe(Effect.provide(layer), Effect.scoped);
+      }),
   );
 
   it.effect.each(["local tunnel", "remote server"] as const)(
