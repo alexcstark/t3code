@@ -23,9 +23,9 @@ interface AutomatedThread {
 }
 
 /**
- * Long-running threads driven by a bound scheduled task, kept apart from the
- * sidebar thread list. Each card opens its thread to watch and talk to it, and
- * reuses the thread's own Automations panel for pause, run now, and edit.
+ * Long-running threads driven by a bound scheduled task. Each card opens its
+ * thread to watch and talk to it, and reuses the thread's own Automations panel
+ * for pause, run now, and edit.
  */
 export function AutomationsPage() {
   useEscapeToGoBack();
@@ -89,8 +89,8 @@ export function AutomationsPage() {
                   <EmptyHeader className="max-w-md">
                     <EmptyTitle>No automated threads</EmptyTitle>
                     <EmptyDescription>
-                      Create a scheduled task that runs in an existing thread, and that thread moves
-                      here from the sidebar. Manage tasks in{" "}
+                      Create a scheduled task that runs in an existing thread to see it here. Manage
+                      tasks in{" "}
                       <Link to="/settings/scheduled-tasks" className="underline underline-offset-2">
                         Settings
                       </Link>
