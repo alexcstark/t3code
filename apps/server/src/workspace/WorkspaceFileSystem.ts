@@ -357,14 +357,44 @@ export const make = Effect.gen(function* () {
           if (siblingPath === null || siblingPath === target.absolutePath)
             return Effect.fail(error);
           return Effect.tryPromise({
-            try: () => NodeFSP.realpath(siblingPath),
+            try: async () => {
+              const explicitSibling = await NodeFSP.realpath(siblingPath).catch((cause) => {
+                if (!isEnoentCause(cause)) throw cause;
+                return null;
+              });
+              if (explicitSibling !== null) return explicitSibling;
+
+              const workspaceRoot = path.resolve(input.cwd);
+              const parent = path.dirname(workspaceRoot);
+              const siblings = await NodeFSP.readdir(parent, { withFileTypes: true });
+              let match: string | null = null;
+              for (const sibling of siblings) {
+                const root = path.join(parent, sibling.name);
+                if (
+                  !sibling.isDirectory() ||
+                  sibling.name.startsWith(".") ||
+                  root === workspaceRoot
+                )
+                  continue;
+                const candidate = await NodeFSP.realpath(
+                  path.join(root, target.relativePath),
+                ).catch((cause: NodeJS.ErrnoException) => {
+                  if (!isEnoentCause(cause) && cause.code !== "ENOTDIR") throw cause;
+                  return null;
+                });
+                if (candidate === null) continue;
+                if (match !== null && match !== candidate) return null;
+                match = candidate;
+              }
+              return match;
+            },
             catch: () => error,
           }).pipe(
-            Effect.map((realTargetPath) => ({
-              kind: "host" as const,
-              realTargetPath,
-              exists: true,
-            })),
+            Effect.flatMap((realTargetPath) =>
+              realTargetPath === null
+                ? Effect.fail(error)
+                : Effect.succeed({ kind: "host" as const, realTargetPath, exists: true }),
+            ),
           );
         },
       }),
