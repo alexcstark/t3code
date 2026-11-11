@@ -322,29 +322,29 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
-    it.effect("reads a sibling of the workspace when the relative path is missing inside it", () =>
+    it.effect("reads missing relative paths from a sibling project", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const parent = yield* makeTempDir;
-        const cwd = path.join(parent, "orchestrator");
-        const siblingRepo = path.join(parent, "a1-strategies");
+        const cwd = path.join(parent, "wisp-capital-orchestrator");
+        const siblingRepo = path.join(parent, "kotquant");
+        const relativePath = "src/main/kotlin/org/wisp/strategies/a1/prod/OpenImbFade.kt";
         yield* fileSystem.makeDirectory(cwd);
-        yield* writeTextFile(siblingRepo, "src/Score.kt", "fun score() = 1\n");
+        yield* writeTextFile(siblingRepo, relativePath, "fun score() = 1\n");
 
-        const result = yield* workspaceFileSystem.readFile({
-          cwd,
-          relativePath: "a1-strategies/src/Score.kt",
-        });
-        const realSiblingPath = yield* fileSystem.realPath(path.join(siblingRepo, "src/Score.kt"));
+        const realSiblingPath = yield* fileSystem.realPath(path.join(siblingRepo, relativePath));
 
-        expect(result).toEqual({
-          relativePath: realSiblingPath,
-          contents: "fun score() = 1\n",
-          byteLength: 16,
-          truncated: false,
-        });
+        for (const requestedPath of [`kotquant/${relativePath}`, relativePath]) {
+          const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: requestedPath });
+          expect(result).toEqual({
+            relativePath: realSiblingPath,
+            contents: "fun score() = 1\n",
+            byteLength: 16,
+            truncated: false,
+          });
+        }
       }),
     );
 
@@ -356,7 +356,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const parent = yield* makeTempDir;
         const cwd = path.join(parent, "orchestrator");
         yield* fileSystem.makeDirectory(cwd);
-        yield* writeTextFile(cwd, "a1-strategies/src/Score.kt", "fun score() = 2\n");
+        yield* writeTextFile(cwd, "src/Score.kt", "fun score() = 2\n");
         yield* writeTextFile(
           path.join(parent, "a1-strategies"),
           "src/Score.kt",
@@ -365,15 +365,39 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         const result = yield* workspaceFileSystem.readFile({
           cwd,
-          relativePath: "a1-strategies/src/Score.kt",
+          relativePath: "src/Score.kt",
         });
 
         expect(result).toEqual({
-          relativePath: "a1-strategies/src/Score.kt",
+          relativePath: "src/Score.kt",
           contents: "fun score() = 2\n",
           byteLength: 16,
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("keeps the missing-file error when sibling projects have ambiguous matches", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir;
+        const cwd = path.join(parent, "orchestrator");
+        yield* fileSystem.makeDirectory(cwd);
+        yield* writeTextFile(path.join(parent, "first"), "src/Score.kt", "first\n");
+        yield* writeTextFile(path.join(parent, "second"), "src/Score.kt", "second\n");
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "src/Score.kt" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({
+          operation: "realpath-target",
+          operationPath: path.join(cwd, "src/Score.kt"),
+        });
+        expect(error).toHaveProperty("cause.code", "ENOENT");
       }),
     );
 
