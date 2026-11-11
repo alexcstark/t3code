@@ -1,7 +1,6 @@
 /**
  * Automated threads: threads with a scheduled task bound to them, across every
- * connected environment. They live on the Automations page instead of the
- * sidebar thread list, because each run re-sorts them to the top.
+ * connected environment, collected for the Automations page.
  *
  * @module state/automations
  */
@@ -45,25 +44,6 @@ const environmentAutomationsAtom = Atom.make((get): readonly EnvironmentAutomati
   return environments;
 }).pipe(Atom.withLabel("web-automations:environments"));
 
-// A sorted, joined string so that task runs, which rewrite lastRunAt and
-// nextRunAt on every tick, do not wake the sidebar unless the set changes.
-const automatedThreadKeysAtom = Atom.make((get): string =>
-  get(environmentAutomationsAtom)
-    .flatMap(({ environmentId, tasks }) =>
-      (tasks ?? []).flatMap((task) =>
-        task.threadId === null ? [] : [`${environmentId}:${task.threadId}`],
-      ),
-    )
-    .toSorted()
-    .join("\n"),
-).pipe(Atom.withLabel("web-automations:thread-keys"));
-
 export function useEnvironmentAutomations() {
   return useAtomValue(environmentAutomationsAtom);
-}
-
-/** Scoped thread keys (`environmentId:threadId`) of every automated thread. */
-export function useAutomatedThreadKeys(): ReadonlySet<string> {
-  const joined = useAtomValue(automatedThreadKeysAtom);
-  return new Set(joined === "" ? [] : joined.split("\n"));
 }
