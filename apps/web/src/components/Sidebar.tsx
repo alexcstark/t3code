@@ -1,5 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m } from "../i18n/messages";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -12,6 +12,15 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { requestThreadGroupName } from "./ThreadGroupNameDialog";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -1154,6 +1163,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const [renamingThreadRef, setRenamingThreadRef] = useState<ScopedThreadRef | null>(null);
+  const [settleTarget, setSettleTarget] = useState<{
+    readonly threadRef: ScopedThreadRef;
+    readonly title: string;
+  } | null>(null);
   const canOperateRenamingThread = useEnvironmentScope(
     renamingThreadRef?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -1836,6 +1849,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         stayOnRouteThread(threadKey);
       }
     })();
+  };
+  const requestSettle = (threadRef: ScopedThreadRef) => {
+    const thread = readThreadShell(threadRef);
+    if (thread === null) return;
+    setSettleTarget({ threadRef, title: thread.title });
+  };
+  const attemptDelete = async (threadRef: ScopedThreadRef) => {
+    const result = await deleteThread(threadRef);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Failed to delete thread"),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+        }),
+      );
+    }
+  };
+  const finishSettleChoice = (choice: "settle" | "delete") => {
+    if (settleTarget === null) return;
+    setSettleTarget(null);
+    if (choice === "settle") attemptSettle(settleTarget.threadRef);
+    else void attemptDelete(settleTarget.threadRef);
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this sidebar's settle handler in the module-level settleAndAdvance registry
   useEffect(() => registerSettleAndAdvance(attemptSettle), [attemptSettle]);
@@ -3199,18 +3236,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;
             }
-            const result = await deleteThread(threadRef);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: gt("Failed to delete thread"),
-                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-                }),
-              );
-              return;
-            }
+            await attemptDelete(threadRef);
             return;
           }
           default:
@@ -3327,6 +3353,37 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <SidebarFolderDrop>
+      <AlertDialog
+        open={settleTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setSettleTarget(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              <T>Settle or delete thread?</T>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              <T>
+                Settle “<Var>{settleTarget?.title}</Var>” to keep it in Settled, or delete it to
+                permanently clear its conversation history.
+              </T>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
+            <Button variant="destructive" onClick={() => finishSettleChoice("delete")}>
+              <T>Delete</T>
+            </Button>
+            <Button onClick={() => finishSettleChoice("settle")}>
+              <T>Settle</T>
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}
@@ -3878,7 +3935,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             isRenaming={renamingThreadKey === threadKey}
                             renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                             onContextMenu={handleThreadContextMenu}
-                            onSettle={attemptSettle}
+                            onSettle={requestSettle}
                             onActionSweepStart={startActionSweep}
                             onUnsettle={attemptUnsettle}
                             onSnooze={attemptSnooze}
