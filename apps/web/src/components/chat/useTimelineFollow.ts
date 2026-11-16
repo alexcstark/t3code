@@ -160,7 +160,7 @@ interface TimelineFollowInput {
 }
 
 /**
- * Keeps the timeline following the live end, anchoring a newly sent turn near
+ * Keeps the timeline following the live end, anchoring the first turn near
  * the top, and letting the user scroll away. Follow lives in a store the
  * viewport's navigation signal writes, so a scroll gesture does not re-render
  * ChatView unless the follow mode flips.
@@ -542,8 +542,19 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     timelineLiveFollowEnabled,
   ]);
 
-  /** Arms the anchor for a message the user just sent, before its run exists. */
-  const anchorNewTurn = (threadKey: string, messageId: MessageId) => {
+  const revealSubmittedMessage = (threadKey: string, messageId: MessageId, queued = false) => {
+    if (
+      queued ||
+      timelineEntries.some(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.message.role === "user" &&
+          entry.message.id !== messageId,
+      )
+    ) {
+      scrollToEnd();
+      return;
+    }
     followStore.dispatch(visit, { type: "followEnd" });
     visitScroll().showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
@@ -561,7 +572,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     onTimelineAnchorSizeChangedStable,
     onTimelineFooterGrowStable,
     onIsAtEndChangeStable,
-    anchorNewTurn,
+    revealSubmittedMessage,
     attachTimelineViewport,
     attachComposerOverlay: followStore.attachComposerOverlay,
   };
