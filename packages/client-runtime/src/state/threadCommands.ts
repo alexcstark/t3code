@@ -602,6 +602,10 @@ export function createThreadEnvironmentAtoms<R, E>(
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     pendingSyncAtom: triage.pendingSyncAtom,
+    // A missing shell lets the mobile outbox discard queued work, so wait for acceptance.
+    delete: optimistic.wrap(commands.delete, (thread, _input, now, accepted) =>
+      accepted ? { ...thread, deletedAt: now } : thread,
+    ),
     // Queued inside the optimistic update, so it stays shown until the queued entry replaces it.
     settle: optimistic.wrap(
       triage.queueWhenOffline(commands.settle, () => ({ type: "settle" as const })),

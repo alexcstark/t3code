@@ -444,6 +444,51 @@ describe("title regeneration", () => {
 });
 
 describe("remote thread lifecycle commands", () => {
+  it.effect.each(["accepted", "rejected"] as const)(
+    "keeps a deleting thread until acceptance and reconciles the %s deletion",
+    (outcome) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const otherThread = { ...SNAPSHOT.threads[0]!, id: ThreadId.make("other-thread") };
+        const initial = { ...SNAPSHOT, threads: [...SNAPSHOT.threads, otherThread] };
+        const source = h.snapshotAtom(ENVIRONMENT_ID);
+        h.registry.set(source, initial);
+        const result = yield* Effect.forkChild(
+          Effect.exit(
+            h.commands.delete.run(h.registry, {
+              environmentId: ENVIRONMENT_ID,
+              input: { threadId: THREAD_ID },
+            }),
+          ),
+          { startImmediately: true },
+        );
+        const remaining = () => h.registry.get(h.visibleAtom)?.threads;
+        expect(remaining()).toEqual(initial.threads);
+        expect(h.registry.get(h.commands.snapshotAtom(EnvironmentId.make("other")))).toBe(SNAPSHOT);
+        const request = yield* Queue.take(h.requests);
+        expect(h.registry.get(source)).toBe(initial);
+        const renamed = {
+          ...initial,
+          snapshotSequence: 2,
+          threads: [{ ...initial.threads[0]!, title: "Renamed remotely" }, otherThread],
+        };
+        h.registry.set(source, renamed);
+        expect(remaining()).toEqual(renamed.threads);
+        if (outcome === "rejected") {
+          yield* Deferred.fail(request.reply, new Error("Delete rejected"));
+          expect((yield* Fiber.join(result))._tag).toBe("Failure");
+          expect(h.registry.get(h.visibleAtom)).toBe(renamed);
+        } else {
+          yield* Deferred.succeed(request.reply, { sequence: 3 });
+          expect((yield* Fiber.join(result))._tag).toBe("Success");
+          expect(remaining()).toEqual([otherThread]);
+          const confirmed = { ...renamed, snapshotSequence: 3, threads: [otherThread] };
+          h.registry.set(source, confirmed);
+          expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
+        }
+      }),
+  );
+
   const actions = [
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],

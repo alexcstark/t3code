@@ -349,7 +349,6 @@ export function useThreadActions() {
   const createProjectFromThread = useAtomCommand(projectEnvironment.createFromThread, {
     reportFailure: false,
   });
-  const stopThreadSession = useOrchestrationCommand(threadEnvironment.stopSession);
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
     reportFailure: false,
   });
@@ -471,12 +470,11 @@ export function useThreadActions() {
     return archiveResult;
   };
 
-  const deleteThread = async (
+  const deleteThreadWithCleanup = async (
     target: ScopedThreadRef,
-    opts: { deletedThreadKeys?: ReadonlySet<string> } = {},
+    opts: { deletedThreadKeys?: ReadonlySet<string> },
+    progressToastId: ReturnType<typeof toastManager.add>,
   ) => {
-    const permissionFailure = threadOperationFailure(target);
-    if (permissionFailure) return permissionFailure;
     const resolved = resolveThreadTarget(target);
     if (!resolved) {
       let threads = readEnvironmentThreadRefs(target.environmentId).flatMap((ref) => {
@@ -609,13 +607,6 @@ export function useThreadActions() {
       shouldDeleteWorktree = confirmationResult.value;
     }
 
-    if (thread.runtime !== null) {
-      await stopThreadSession({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId },
-      });
-    }
-
     const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToFallback =
@@ -683,6 +674,7 @@ export function useThreadActions() {
       return deleteResult;
     }
 
+    toastManager.update(progressToastId, { title: m(msg("Deleting worktree…")) });
     const removeResult = readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope)
       ? await removeWorktree({
           environmentId: threadRef.environmentId,
@@ -742,6 +734,22 @@ export function useThreadActions() {
       // Cleanup has its own toast; reporting its failure would falsely imply deletion failed.
     }
     return deleteResult;
+  };
+
+  const deleteThread = async (
+    target: ScopedThreadRef,
+    opts: { deletedThreadKeys?: ReadonlySet<string> } = {},
+  ) => {
+    const permissionFailure = threadOperationFailure(target);
+    if (permissionFailure) return permissionFailure;
+    const toastId = toastManager.add({
+      type: "loading",
+      title: m(msg("Deleting thread…")),
+      timeout: 0,
+    });
+    return deleteThreadWithCleanup(target, opts, toastId).finally(() => {
+      toastManager.close(toastId);
+    });
   };
 
   const unsettleThread = async (target: ScopedThreadRef, restoreUnsettledAt?: string | null) => {

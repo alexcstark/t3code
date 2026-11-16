@@ -40,12 +40,14 @@ export function createOptimisticThreadLifecycle(
       if (byThread.size === 0) return snapshot;
       return {
         ...snapshot,
-        threads: snapshot.threads.map((thread) =>
-          (byThread.get(thread.id) ?? []).reduce(
-            (current, update) => update.apply(current),
-            thread,
-          ),
-        ),
+        threads: snapshot.threads
+          .map((thread) =>
+            (byThread.get(thread.id) ?? []).reduce(
+              (current, update) => update.apply(current),
+              thread,
+            ),
+          )
+          .filter((thread) => thread.deletedAt === null),
       };
     }),
   );
