@@ -2095,7 +2095,7 @@ export default function ChatView(props: ChatViewProps) {
     onTimelineAnchorSizeChangedStable,
     onTimelineFooterGrowStable,
     onIsAtEndChangeStable,
-    anchorNewTurn,
+    revealSubmittedMessage,
     attachTimelineViewport,
     attachComposerOverlay: attachFollowComposerOverlay,
   } = useTimelineFollow({
@@ -2886,7 +2886,7 @@ export default function ChatView(props: ChatViewProps) {
     setFeedbackSubmissionsByThreadKey,
     setThreadError,
     setKeepFullHistory,
-    anchorNewTurn,
+    revealSubmittedMessage,
     acknowledgeActiveThreadWoke,
     handleInteractionModeChange,
     handleNewThreadInActiveProject,
