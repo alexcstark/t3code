@@ -53,6 +53,7 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ChatPromptMarker } from "./ChatPromptMarker";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
@@ -872,6 +873,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           folded && expanded && "w-full",
         )}
       >
+        {fullRow ? <ChatPromptMarker className="start-0 top-3" /> : null}
         {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
         {mediaAboveText ? null : (
           <MessageAuthorHeading>
