@@ -825,7 +825,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   return (
     <div
-      className={cn("group @container flex flex-col gap-1", fullRow ? "items-start" : "items-end")}
+      className={cn(
+        "group @container flex flex-col gap-1",
+        fullRow ? "relative items-start" : "items-end",
+      )}
       data-user-message-attribution={folded ? "agent" : undefined}
       data-user-message-layout={fullRow ? "row" : undefined}
     >
@@ -1034,7 +1037,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div
           className={cn(
             "flex w-full justify-end pe-1",
-            !fullRow && "max-w-[80%]",
+            fullRow ? "absolute end-0 top-full mt-1" : "max-w-[80%]",
             floatActions && "@min-[37rem]:hidden",
             ACTIONS_REVEAL_CLASS_NAME,
           )}

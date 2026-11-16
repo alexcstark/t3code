@@ -961,7 +961,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .messages-timeline-row-frame:has([data-user-message-layout="row"]) {
+    padding-bottom: 2rem;
     background: var(--message-surface);
+    background-clip: content-box;
+  }
+
+  .messages-timeline-row-frame:has([data-user-message-layout="row"])
+    [data-timeline-row-kind="message"] {
+    padding-bottom: 0;
   }
 
   .settings-slider {
@@ -1191,7 +1198,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   @variant dark {
     color-scheme: dark;
     --background: #000;
-    --surface-raised: #252a34;
+    --surface-raised: #363b4a;
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
@@ -1204,7 +1211,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --muted-foreground: var(--color-neutral-400);
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
-    --message-surface: #343a48;
+    --message-surface: #363b4a;
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --error-foreground: var(--color-red-400);
     --tool-error-icon: #fca5a5;
