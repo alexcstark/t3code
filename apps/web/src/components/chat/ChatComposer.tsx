@@ -3910,7 +3910,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               <div
                 className={cn(
-                  "relative transition-opacity duration-150",
+                  "relative ps-2 transition-opacity duration-150",
                   composerSendHeld && "opacity-65",
                 )}
               >
