@@ -588,6 +588,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ? ""
         : reference.label,
     ).trim() === "";
+  const fullRow = userMessage.attribution === null && !mediaOnly && !fileCardsOnly && !audioOnly;
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -842,7 +843,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   // Touch shows actions all the time, and narrow lanes have no room beside the
   // bubble, so both keep the actions on their own line.
-  const floatActions = row.groupedWithNext === true && !coarsePointer;
+  const floatActions = !fullRow && row.groupedWithNext === true && !coarsePointer;
   const messageActions = (
     <div
       className={cn(
@@ -902,8 +903,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   return (
     <div
-      className="group @container flex flex-col items-end gap-1"
+      className={cn("group @container flex flex-col gap-1", fullRow ? "items-start" : "items-end")}
       data-user-message-attribution={folded ? "agent" : undefined}
+      data-user-message-layout={fullRow ? "row" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
         <p
@@ -928,7 +930,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         />
       ) : null}
       {mediaAboveText ? (
-        <div className="flex max-w-[80%] justify-end">
+        <div className={cn("flex max-w-[80%]", fullRow ? "justify-start" : "justify-end")}>
           {/* The heading leads the media so screen readers reach it before the images. */}
           <MessageAuthorHeading>
             {gt("You", { $context: "author of the user's own message" })}
@@ -938,13 +940,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div
         className={cn(
-          "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
-          (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
-          row.groupedWithNext && "rounded-br-md",
+          "relative min-w-0 text-message-foreground",
+          fullRow ? "w-full" : "max-w-[80%] rounded-2xl",
+          !fullRow && (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
+          !fullRow && row.groupedWithNext && "rounded-br-md",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
-            : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
+            : !fullRow && !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
           !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
           folded && expanded && "w-full",
         )}
@@ -1123,7 +1126,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {!folded || expanded ? (
         <div
           className={cn(
-            "flex w-full max-w-[80%] justify-end pe-1",
+            "flex w-full justify-end pe-1",
+            !fullRow && "max-w-[80%]",
             floatActions && "@min-[37rem]:hidden",
             ACTIONS_REVEAL_CLASS_NAME,
           )}
