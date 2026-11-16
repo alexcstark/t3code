@@ -378,6 +378,10 @@ export function createThreadEnvironmentAtoms<R, E>(
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
+    // A missing shell lets the mobile outbox discard queued work, so wait for acceptance.
+    delete: optimistic.wrap(commands.delete, (thread, _input, now, accepted) =>
+      accepted ? { ...thread, deletedAt: now } : thread,
+    ),
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||
