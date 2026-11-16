@@ -129,6 +129,7 @@ import {
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
 import { CollapsedComposerPromptPreview } from "./CollapsedComposerPromptPreview";
+import { ChatPromptMarker } from "./ChatPromptMarker";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
@@ -3920,6 +3921,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviewFileIdChange={setPreviewFileId}
                   />
                 ) : null}
+                <ChatPromptMarker className="-start-3 top-0 font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)" />
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
                     draftKey={composerDraftTargetKey}

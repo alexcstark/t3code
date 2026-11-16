@@ -58,6 +58,7 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ChatPromptMarker } from "./ChatPromptMarker";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
@@ -903,7 +904,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   return (
     <div
-      className={cn("group @container flex flex-col gap-1", fullRow ? "items-start" : "items-end")}
+      className={cn(
+        "group @container flex flex-col gap-1",
+        fullRow ? "relative items-start" : "items-end",
+      )}
       data-user-message-attribution={folded ? "agent" : undefined}
       data-user-message-layout={fullRow ? "row" : undefined}
     >
@@ -953,6 +957,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
         data-user-message-bubble=""
       >
+        {fullRow ? <ChatPromptMarker className="start-0 top-3" /> : null}
         {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
         {mediaAboveText ? null : (
           <MessageAuthorHeading>
@@ -1127,7 +1132,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div
           className={cn(
             "flex w-full justify-end pe-1",
-            !fullRow && "max-w-[80%]",
+            fullRow ? "absolute end-0 top-full mt-1" : "max-w-[80%]",
             floatActions && "@min-[37rem]:hidden",
             ACTIONS_REVEAL_CLASS_NAME,
           )}
