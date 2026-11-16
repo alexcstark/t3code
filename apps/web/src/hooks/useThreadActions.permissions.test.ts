@@ -3,6 +3,8 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -11,6 +13,7 @@ import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/models";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -40,6 +43,7 @@ const state = vi.hoisted(() => ({
       sideChat?: boolean;
     };
     session: { status: "ready" | "stopped" } | null;
+    runtime: ThreadRuntimeSummary | null;
     latestTurn: null;
   }[],
   familyThreads: [] as {
@@ -50,7 +54,7 @@ const state = vi.hoisted(() => ({
   localEffects: [] as string[],
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   toasts: [] as string[],
-  afterRequest: undefined as ((action: string) => void) | undefined,
+  afterRequest: undefined as ((action: string) => void | Promise<void>) | undefined,
   sessionLookupFails: false,
 }));
 
@@ -81,7 +85,7 @@ vi.mock("../state/use-atom-command", () => ({
       if (!state.scopes.get(request.environmentId)?.has(scope)) {
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
-      state.afterRequest?.(action);
+      await state.afterRequest?.(action);
       return AsyncResult.success(undefined);
     },
 }));
@@ -185,6 +189,8 @@ vi.mock("../threadRoutes", () => ({
 vi.mock("../components/ui/toast", () => ({
   stackedThreadToast: (toast: unknown) => toast,
   toastManager: {
+    close: vi.fn(),
+    update: vi.fn(),
     add: (toast: { title?: string }) => {
       if (toast.title) state.toasts.push(toast.title);
     },
@@ -277,6 +283,7 @@ beforeEach(() => {
       worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: target.threadId },
       session: null,
+      runtime: null,
       latestTurn: null,
     },
   ];
@@ -404,15 +411,43 @@ describe("thread action permissions", () => {
     expect(state.localEffects).toContain("clear-draft:thread");
   });
 
-  it("stops before delete and local cleanup when permission is revoked during session stop", async () => {
-    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
-    state.threads[0]!.session = { status: "ready" };
-    state.afterRequest = () => state.scopes.get(secondary)!.clear();
+  it("keeps the thread when permission is revoked during worktree confirmation", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.confirm.mockImplementation(async () => {
+      state.scopes.get(secondary)!.clear();
+      return true;
+    });
     seedThreadPanelState(target);
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Failure");
-    expect(state.requests.map((request) => request.action)).toEqual(["stopSession"]);
+    expect(state.requests).toEqual([]);
     expect(state.localEffects).toEqual([]);
     expect(threadPanelStatePresence(target)).toEqual(panelStateKept);
+  });
+
+  it("shows deletion progress and sends delete without waiting for a separate session stop", async () => {
+    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
+    state.threads[0]!.runtime = {
+      status: "running",
+      activeRunId: RunId.make("run"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-11-16T00:00:00.000Z",
+    };
+    const reply = deferred<void>();
+    state.afterRequest = () => reply.promise;
+    seedThreadPanelState(target);
+    const result = useThreadActions().deleteThread(target);
+    expect(state.toasts).toContain("Deleting thread…");
+    expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
+    expect(threadPanelStatePresence(target)).toEqual(panelStateKept);
+    reply.resolve();
+    expect((await result)._tag).toBe("Success");
+    expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
 
   it.each([
@@ -425,7 +460,7 @@ describe("thread action permissions", () => {
     seedThreadPanelState(target);
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).not.toHaveBeenCalled();
-    expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
+    expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
@@ -449,7 +484,6 @@ describe("thread action permissions", () => {
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).toHaveBeenCalledOnce();
     expect(state.requests.map((request) => request.action)).toEqual([
-      "stopSession",
       "delete",
       "removeWorktree",
       "refreshStatus",
@@ -484,12 +518,14 @@ describe("thread action permissions", () => {
       .add(AuthOrchestrationOperateScope)
       .add(AuthSourceControlWriteScope);
     state.threads[0]!.worktreePath = "/worktrees/thread";
-    state.afterRequest = () => state.scopes.get(secondary)!.delete(AuthSourceControlWriteScope);
+    state.afterRequest = () => {
+      state.scopes.get(secondary)!.delete(AuthSourceControlWriteScope);
+    };
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const result = await useThreadActions().deleteThread(target);
       expect(result._tag).toBe("Success");
-      expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
+      expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
       expect(state.toasts).toContain("Failed to delete worktree");
       expect(state.localEffects).toContain("clear-terminal-ui");
     } finally {
