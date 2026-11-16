@@ -3372,7 +3372,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               {composerAttachmentFileList}
 
-              <div className="relative">
+              <div className="relative ps-2">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
