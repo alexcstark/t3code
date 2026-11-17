@@ -963,8 +963,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .messages-timeline-row-frame:has([data-user-message-layout="row"]) {
     padding-bottom: 2rem;
+  }
+
+  .messages-timeline-row-frame:has([data-user-message-layout="row"]) > .chat-content-lane {
     background: var(--message-surface);
-    background-clip: content-box;
   }
 
   .messages-timeline-row-frame:has([data-user-message-layout="row"])
