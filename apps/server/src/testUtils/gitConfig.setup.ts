@@ -1,3 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - Git fixtures need the platform's null config path.
+import * as NodeOS from "node:os";
+
+// Keep user hooks out of fixtures while allowing each repository's own hooks.
+process.env.GIT_CONFIG_GLOBAL = NodeOS.devNull;
+process.env.GIT_CONFIG_NOSYSTEM = "1";
+
 // Override inherited autocrlf, signing and init-branch settings through env so every git child gets stable fixtures.
 const entries: ReadonlyArray<readonly [key: string, value: string]> = [
   ["core.autocrlf", "false"],

@@ -3473,41 +3473,64 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("compares the checked-out branch without a full status", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const { service, fs, repo, worktree, command, fullStatusCalls, threadBranches } =
-          yield* cleanupFixture();
-        const changed = { outcome: "kept", reason: "Repository or branch changed" };
-        yield* command(worktree, ["switch", "--orphan", "other"]);
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
-        yield* command(worktree, ["tag", "feature", "feature"]);
-        // Newer Git refuses to create a tag named HEAD, but still reads one.
-        yield* command(worktree, ["update-ref", "refs/tags/HEAD", "refs/heads/feature"]);
-        yield* command(worktree, ["switch", "feature"]);
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
-        expect(threadBranches()).toEqual(["feature"]);
-        const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
-        yield* fs.writeFileString(`${index.trim()}.lock`, "");
-        const locked = (yield* service.runNow).entries[0];
-        expect(locked).toMatchObject({
-          outcome: "failed",
-          projectPath: repo,
-          path: worktree,
-          threadId: "thread-1",
-          threadTitle: "Thread",
-        });
-        expect(locked?.reason).toContain("Git index is locked");
-        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
-        yield* fs.remove(`${index.trim()}.lock`);
-        const gitFile = yield* fs.readFileString(`${worktree}/.git`);
-        yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
-        yield* fs.writeFileString(`${worktree}/.git`, gitFile);
-        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
-        expect(fullStatusCalls()).toBe(0);
-      }),
-    ),
+  it.live.each(["not a git repository", "gitfile does not point to a valid repository"])(
+    "compares the checked-out branch without a full status (%s)",
+    (diagnostic) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          let brokenGitFile = false;
+          const { service, fs, repo, worktree, command, fullStatusCalls, threadBranches } =
+            yield* cleanupFixture().pipe(
+              Effect.provideService(GitVcsDriver.GitVcsDriver, {
+                ...git,
+                execute: (input) =>
+                  git
+                    .execute(input)
+                    .pipe(
+                      Effect.map((result) =>
+                        brokenGitFile &&
+                        input.operation === "StorageCleanup.branchChanged" &&
+                        result.exitCode !== 0
+                          ? { ...result, stderr: `fatal: ${diagnostic}` }
+                          : result,
+                      ),
+                    ),
+              }),
+            );
+          const changed = { outcome: "kept", reason: "Repository or branch changed" };
+          yield* command(worktree, ["switch", "--orphan", "other"]);
+          expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+          yield* command(worktree, ["tag", "feature", "feature"]);
+          // Newer Git refuses to create a tag named HEAD, but still reads one.
+          yield* command(worktree, ["update-ref", "refs/tags/HEAD", "refs/heads/feature"]);
+          yield* command(worktree, ["switch", "feature"]);
+          expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+          expect(threadBranches()).toEqual(["feature"]);
+          const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
+          yield* fs.writeFileString(`${index.trim()}.lock`, "");
+          const locked = (yield* service.runNow).entries[0];
+          expect(locked).toMatchObject({
+            outcome: "failed",
+            projectPath: repo,
+            path: worktree,
+            threadId: "thread-1",
+            threadTitle: "Thread",
+          });
+          expect(locked?.reason).toContain("Git index is locked");
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
+          yield* fs.remove(`${index.trim()}.lock`);
+          const gitFile = yield* fs.readFileString(`${worktree}/.git`);
+          yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
+          brokenGitFile = true;
+          expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
+          yield* fs.writeFileString(`${worktree}/.git`, gitFile);
+          brokenGitFile = false;
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+          expect(fullStatusCalls()).toBe(0);
+        }),
+      ),
   );
   it.live("removes a clean detached worktree only when every commit is on a branch", () =>
     runCleanupTest(
