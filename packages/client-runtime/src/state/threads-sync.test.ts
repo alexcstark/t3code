@@ -684,29 +684,30 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("retains a deletion instead of restoring the old disk snapshot", () =>
-    Effect.gen(function* () {
-      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
-        snapshot: undefined,
-        owner: undefined,
-      };
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const first = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
-          const update = deleted();
-          if (update.kind !== "event") return yield* Effect.die("Expected an event");
-          yield* Queue.offer(first.inputs, { ...update, sequence: 8 });
-          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
-        }),
-      );
-      const resumed = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
-      const state = yield* awaitThreadState(
-        resumed.observed,
-        (value) => value.status === "deleted",
-      );
-      expect(Option.isNone(state.data)).toBe(true);
-      expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
-    }),
+  it.effect.each([false, true])(
+    "retains a deletion with a forced snapshot of %s",
+    (forceSnapshot) =>
+      Effect.gen(function* () {
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: undefined,
+          owner: undefined,
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const first = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+            const update = deleted();
+            if (update.kind !== "event") return yield* Effect.die("Expected an event");
+            yield* Queue.offer(first.inputs, { ...update, sequence: 8 });
+            yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+          }),
+        );
+        resumeCache.forceSnapshot = forceSnapshot;
+        const resumed = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+        const state = yield* SubscriptionRef.get(resumed.threadState);
+        expect(state.status).toBe("deleted");
+        expect(Option.isNone(state.data)).toBe(true);
+        expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
+      }),
   );
 
   it.effect("asks the server again after an HTTP miss, since the thread may not exist yet", () =>
