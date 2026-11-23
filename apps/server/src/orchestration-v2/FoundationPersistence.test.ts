@@ -3492,9 +3492,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
         yield* Effect.gen(function* () {
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const first = yield* worker.runOnce.pipe(Effect.exit, Effect.forkChild);
+          const first = yield* worker.runOnce().pipe(Effect.exit, Effect.forkChild);
           yield* Deferred.await(writeFailed);
-          assert.isFalse(yield* worker.runOnce);
+          assert.isFalse(yield* worker.runOnce());
           yield* TestClock.adjust("2 seconds");
           yield* Fiber.join(first);
           const recovered = yield* outbox.get(firstEffectId);
@@ -4781,12 +4781,13 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
     }).pipe(Effect.provide(layerDatabase)),
 );
 
-it.effect.each(["completed", "cancelled", "interrupted"] as const)(
+it.effect.each(["completed", "cancelled", "interrupted", "batch-failed"] as const)(
   "recovers SQLITE_FULL event ingestion with outcome %s",
   (outcome) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const failedWrite = yield* Deferred.make<void>();
+      const batchAttempts = yield* Ref.make(0);
       const observedSql = Object.assign(
         function (...args: Parameters<typeof sql>) {
           return sql(...args);
@@ -4868,20 +4869,32 @@ it.effect.each(["completed", "cancelled", "interrupted"] as const)(
             Effect.forkScoped({ startImmediately: true }),
           );
         const ingestion = yield* Stream.fromIterable(events).pipe(
-          Stream.runForEach((event) =>
-            sink.writeIfRunCurrent({
+          Stream.runForEach((event) => {
+            const write = sink.writeIfRunCurrent({
               threadId: thread.id,
               runId: run.id,
               activeAttemptId: attemptId,
               expectedStatus: "running",
               events: [event],
-            }),
-          ),
+            });
+            return outcome === "batch-failed"
+              ? sink.withProviderBatch(
+                  Ref.update(batchAttempts, (count) => count + 1).pipe(Effect.andThen(write)),
+                )
+              : write;
+          }),
           Effect.forkScoped,
         );
         yield* Deferred.await(failedWrite);
         assert.deepEqual(yield* eventStore.read({ afterSequence }).pipe(Stream.runCollect), []);
         yield* sql`PRAGMA max_page_count = 2147483646`;
+        if (outcome === "batch-failed") {
+          yield* TestClock.adjust("1 second");
+          assert.equal(yield* Ref.get(batchAttempts), 1);
+          assert.isTrue(Exit.isFailure(yield* Fiber.await(ingestion)));
+          return;
+        }
+
         if (outcome === "interrupted") {
           yield* Fiber.interrupt(ingestion);
           const exit = yield* Fiber.await(ingestion);

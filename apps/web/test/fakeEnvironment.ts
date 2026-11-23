@@ -35,6 +35,7 @@ import {
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
   type ResolvedKeybindingsConfig,
+  type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -436,6 +437,7 @@ let pendingDispatches: Array<{
 let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+const serverConfigSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -448,6 +450,15 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
       }
       return Stream.fromQueue(queue);
     }),
+  );
+
+const subscribeServerConfig = () =>
+  subscribe<ServerConfigStreamEvent>(
+    [{ version: 1, type: "snapshot", config: serverConfig() }],
+    (queue) => {
+      serverConfigSubscribers.add(queue);
+      return () => void serverConfigSubscribers.delete(queue);
+    },
   );
 
 const handlers: Record<string, (input: never) => unknown> = {
@@ -550,8 +561,7 @@ const handlers: Record<string, (input: never) => unknown> = {
         if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
       };
     }),
-  [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
+  [WS_METHODS.subscribeServerConfig]: subscribeServerConfig,
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -567,8 +577,7 @@ const client = new Proxy(handlers, {
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(serverConfig),
-  subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
+  subscribeServerConfig,
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -607,6 +616,7 @@ export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
   options?: {
     readonly acceptCommands?: boolean;
+    readonly requiredWorktreeBootstrap?: boolean;
     readonly keybindings?: ResolvedKeybindingsConfig;
     readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
@@ -622,6 +632,21 @@ export function installFakeEnvironment(
     ),
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
+  if (options?.requiredWorktreeBootstrap) {
+    baseServerConfig = {
+      ...baseServerConfig,
+      environment: {
+        ...baseServerConfig.environment,
+        capabilities: {
+          ...baseServerConfig.environment.capabilities,
+          requiredWorktreeBootstrap: true,
+        },
+      },
+    };
+  }
+  for (const queue of serverConfigSubscribers) {
+    Queue.offerUnsafe(queue, { version: 1, type: "snapshot", config: serverConfig() });
+  }
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
   projects = [

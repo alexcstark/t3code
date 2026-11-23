@@ -2160,6 +2160,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             hasReceipt: () => Effect.succeed(false),
             assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
             getThreadRecords: (threadId) =>
               Effect.succeed(
                 threadId === parentThreadId
@@ -2180,7 +2181,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
           ]),
           adapterRegistryLayer([codexInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),

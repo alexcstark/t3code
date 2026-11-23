@@ -1,4 +1,4 @@
-import { T } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useId, useState } from "react";
 import { THREAD_GROUP_NAME_MAX_LENGTH } from "@t3tools/contracts";
 import { normalizeThreadGroupName } from "@t3tools/client-runtime/state/thread-sort";
@@ -49,6 +49,7 @@ export function ThreadGroupNameDialogHost() {
 }
 
 function ThreadGroupNameDialog(props: { readonly request: Request }) {
+  const gt = useGT();
   const id = useId();
   const [value, setValue] = useState(props.request.initialValue);
   const [error, setError] = useState<string | null>(null);

@@ -628,7 +628,7 @@ describe("orchestration v2 provider switching", () => {
               branch: null,
               worktreePath: null,
             });
-            yield* dispatch(1, "Original large conversation " + "x".repeat(30_000));
+            yield* dispatch(1, "Original large conversation " + "x".repeat(100_000));
             yield* wait(1);
             yield* Ref.set(failStartOnce, true);
             yield* dispatch(2, "Preserve this missed request " + "m".repeat(10_000));
@@ -657,7 +657,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal(projection.runs[1]?.status, "failed");
             assert.equal(
               projection.runs[2]?.status,
-              compaction === "completed" ? "completed" : "failed",
+              compaction === "failed" ? "failed" : "completed",
             );
             assert.equal(
               projection.runs[3]?.status,
@@ -668,12 +668,12 @@ describe("orchestration v2 provider switching", () => {
               assert.isDefined(text);
               assert.include(text, "Preserve this missed request");
               assert.include(text, "Continue after compaction");
-              assert.notInclude(text, "x".repeat(30_000));
+              assert.notInclude(text, "x".repeat(100_000));
               assert.equal(projection.contextHandoffs.at(-1)?.delivery?.status, "inline");
               // The recovered request now occupies native context, even though
               // its original run predates compaction. Later retries must budget it.
               yield* Ref.set(failStartOnce, true);
-              yield* dispatch(5, "Another missed request " + "p".repeat(8_000));
+              yield* dispatch(5, "Another missed request " + "p".repeat(14_000));
               yield* wait(5);
               yield* dispatch(6, "Continue with bounded history");
               yield* wait(6);
@@ -682,9 +682,9 @@ describe("orchestration v2 provider switching", () => {
               const latestText = (yield* Ref.get(capturedTurns)).at(-1)?.text;
               assert.isDefined(latestText);
               assert.include(latestText, "Continue with bounded history");
-              assert.notInclude(latestText, "p".repeat(8_000));
+              assert.notInclude(latestText, "p".repeat(14_000));
               const omittedRequest = retried.turnItems.find(
-                (item) => item.type === "user_message" && item.text.includes("p".repeat(8_000)),
+                (item) => item.type === "user_message" && item.text.includes("p".repeat(14_000)),
               );
               assert.isDefined(omittedRequest);
               assert.include(

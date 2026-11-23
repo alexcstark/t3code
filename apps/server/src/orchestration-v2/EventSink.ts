@@ -362,6 +362,7 @@ const layerBase: Layer.Layer<
     const commitThenPublishNow = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
+      retryStorageFull = true,
     ) =>
       Effect.uninterruptibleMask((restore) => {
         let holdsLane = false;
@@ -378,28 +379,26 @@ const layerBase: Layer.Layer<
           ),
           Effect.uninterruptible,
         );
-        // Retry a full disk on the rolled-back transaction. Publish only after commit.
-        return sql.withTransaction(Effect.tap(restore(transaction), () => takeLane)).pipe(
-          Effect.onError(() => releaseLane),
-          Effect.catchCause(Effect.fail),
-          Effect.tapError((cause) =>
-            isStorageFullCause(cause)
-              ? Effect.logWarning("orchestration-v2.event-write-storage-full", { cause })
-              : Effect.void,
-          ),
-          Effect.retry({
-            while: isStorageFullCause,
-            schedule: Schedule.exponential("1 second").pipe(
-              Schedule.modifyDelay(({ duration }) =>
-                Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-              ),
+        return sql
+          .withTransaction(Effect.tap(restore(transaction), () => takeLane))
+          .pipe(Effect.tap(publish), Effect.ensuring(releaseLane));
+      }).pipe(
+        Effect.catchCause(Effect.fail),
+        Effect.tapError((cause) =>
+          isStorageFullCause(cause)
+            ? Effect.logWarning("orchestration-v2.event-write-storage-full", { cause })
+            : Effect.void,
+        ),
+        Effect.retry({
+          while: (cause) => retryStorageFull && isStorageFullCause(cause),
+          schedule: Schedule.exponential("1 second").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.seconds(30))),
             ),
-          }),
-          Effect.catch(Effect.failCause),
-          Effect.tap(publish),
-          Effect.ensuring(releaseLane),
-        );
-      });
+          ),
+        }),
+        Effect.catch(Effect.failCause),
+      );
 
     // A user can answer after terminal normalization reads the pending request.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
@@ -1165,6 +1164,8 @@ const layerBase: Layer.Layer<
           ),
         ),
         () => Effect.forEach(batch.publish, (publish) => publish, { discard: true }),
+        // Provider normalization mutates run-local state that a SQL rollback cannot restore.
+        false,
       ).pipe(
         // Normalization mutates run-local state, so only retry before its transaction body starts.
         Effect.retry({

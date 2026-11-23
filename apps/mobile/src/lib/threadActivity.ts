@@ -1763,7 +1763,10 @@ export function deriveThreadFeedPresentation(
   > = [];
   const retainedFeedIndices: number[] = [];
   const { toolCallVisibility, revealedMessageId } = display;
-  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
+  const isWorking =
+    activeWorkStartedAt !== null &&
+    latestRun?.status !== "preparing" &&
+    latestRun?.status !== "waiting";
   const activeRunId = unsettledRunId(latestRun);
   const zen = toolCallVisibility === "zen";
   const answering = isWorking && latestRun?.turnEnded !== true;

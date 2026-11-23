@@ -123,7 +123,10 @@ describe("provider capacity", () => {
       ["idle", 0],
       ["busy", 4],
     ]);
-    expect(rows.map(providerCapacityActivityLabel)).toEqual(["Idle in T3", "4 running elsewhere"]);
+    expect(rows.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
+      "Idle in T3",
+      "4 running elsewhere",
+    ]);
   });
 
   it("counts shared logins across instances and environments without mixing different workspaces", () => {
@@ -200,7 +203,7 @@ describe("provider capacity", () => {
           ];
           const rows = rank([selected], environments, currentThreadId);
           expect(rows[0]).toMatchObject({ activeThreadCount: 0, activityKnown });
-          expect(rows.map(providerCapacityActivityLabel)).toEqual([
+          expect(rows.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
             activityKnown ? "Idle in T3" : "Activity unknown",
           ]);
 
@@ -211,7 +214,7 @@ describe("provider capacity", () => {
           };
           const partial = rank([selected], environments, currentThreadId);
           expect(partial[0]).toMatchObject({ activeThreadCount: 1, activityKnown });
-          expect(partial.map(providerCapacityActivityLabel)).toEqual([
+          expect(partial.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
             activityKnown ? "1 running elsewhere" : "1+ running elsewhere",
           ]);
         },
@@ -223,12 +226,16 @@ describe("provider capacity", () => {
         const environments = [{ environmentId: local, providers: [selected, alias], threads }];
         const rows = rank([selected], environments, currentThreadId);
         expect(rows[0]).toMatchObject({ activeThreadCount: 1, activityKnown: true });
-        expect(rows.map(providerCapacityActivityLabel)).toEqual(["1 running elsewhere"]);
+        expect(rows.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
+          "1 running elsewhere",
+        ]);
 
         threads.push(thread("ambiguous", alias));
         const partial = rank([selected], environments, currentThreadId);
         expect(partial[0]).toMatchObject({ activeThreadCount: 1, activityKnown: false });
-        expect(partial.map(providerCapacityActivityLabel)).toEqual(["1+ running elsewhere"]);
+        expect(partial.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
+          "1+ running elsewhere",
+        ]);
       });
     },
   );
@@ -263,7 +270,7 @@ describe("provider capacity", () => {
       ],
     );
     expect(rows[0]?.activeThreadCount).toBe(0);
-    expect(rows.map(providerCapacityActivityLabel)).toEqual(["Idle in T3"]);
+    expect(rows.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual(["Idle in T3"]);
   });
 
   it("never claims idle when a matching environment has no live activity", () => {
@@ -277,7 +284,9 @@ describe("provider capacity", () => {
         { environmentId: remote, providers: [shared], threads: null },
       ],
     );
-    expect(rows.map(providerCapacityActivityLabel)).toEqual(["Activity unknown"]);
+    expect(rows.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
+      "Activity unknown",
+    ]);
     const partial = rank(
       [shared],
       [
@@ -285,7 +294,9 @@ describe("provider capacity", () => {
         { environmentId: remote, providers: [shared], threads: null },
       ],
     );
-    expect(partial.map(providerCapacityActivityLabel)).toEqual(["1+ running elsewhere"]);
+    expect(partial.map((capacity) => providerCapacityActivityLabel(capacity))).toEqual([
+      "1+ running elsewhere",
+    ]);
   });
 
   it.each([

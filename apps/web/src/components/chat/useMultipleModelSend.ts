@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type RuntimeMode,
+  type SystemPrompt,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -54,6 +55,7 @@ interface MultipleModelSendInput {
   readonly composerRef: ComposerHandleRef;
   readonly promptRef: { current: string };
   readonly runtimeMode: RuntimeMode;
+  readonly systemPrompt: SystemPrompt | null;
   readonly startFromOrigin: boolean;
   readonly worktreeRepositories: ReadonlyArray<{ readonly path: string }> | undefined;
   readonly resetLocalDispatch: ReturnType<typeof useLocalDispatchState>["resetLocalDispatch"];
@@ -75,6 +77,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     composerRef,
     promptRef,
     runtimeMode,
+    systemPrompt,
     startFromOrigin,
     worktreeRepositories,
     resetLocalDispatch,
@@ -195,6 +198,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       title,
                       modelSelection: target.selection,
                       runtimeMode,
+                      ...(systemPrompt ? { systemPrompt } : {}),
                       interactionMode: DEFAULT_INTERACTION_MODE,
                       branch,
                       worktreePath: null,

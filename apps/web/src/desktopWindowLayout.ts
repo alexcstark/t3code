@@ -1,5 +1,5 @@
-import { msg, mFallback } from "gt-i18n";
-import type { MFunctionType } from "gt-i18n/types";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "./i18n/messages";
 import type {
   ContextMenuItem,
   DesktopWindowLayout,
@@ -62,7 +62,7 @@ const NEW_WINDOW_MENU_ID = "move-to-window:new";
 export function buildMoveToWindowMenuItem(
   view: DesktopWindowLayoutView | null,
   count?: number,
-  resolve: MFunctionType = mFallback,
+  resolve: MessageResolver = m,
 ): ContextMenuItem<MoveToWindowMenuId> | null {
   if (
     view === null ||

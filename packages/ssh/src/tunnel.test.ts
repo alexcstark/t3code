@@ -278,6 +278,10 @@ describe("ssh tunnel scripts", () => {
   );
 
   it("installs the upstream release a fork build is cut from", () => {
+    assert.include(
+      SshTunnel.buildRemoteT3RunnerScript({ archiveVersion: "0.0.42-t4.0.0" }),
+      "T3_ARCHIVE_VERSION='0.0.42'",
+    );
     assert.equal(SshTunnel.resolveRemoteArchiveVersion("0.0.42-t4.0.0"), "0.0.42");
     assert.equal(SshTunnel.resolveRemoteArchiveVersion(" 0.0.41-t4.0.5 "), "0.0.41");
     assert.equal(SshTunnel.resolveRemoteArchiveVersion("0.0.42"), "0.0.42");
@@ -420,18 +424,7 @@ describe("ssh tunnel scripts", () => {
       NodeChildProcess.execFileSync("sh", ["-c", `sha256sum ${archive} > SHA256SUMS`], {
         cwd: release,
       });
-      for (const tool of [
-        "sh",
-        "mkdir",
-        "mktemp",
-        "cat",
-        "rm",
-        "grep",
-        "cut",
-        checksum,
-        "tar",
-        "mv",
-      ]) {
+      for (const tool of ["sh", "mkdir", "mktemp", "cat", "rm", "grep", "cut", checksum, "mv"]) {
         NodeFS.symlinkSync(
           NodeChildProcess.execFileSync("sh", ["-c", `command -v ${tool}`], {
             encoding: "utf8",
@@ -439,6 +432,11 @@ describe("ssh tunnel scripts", () => {
           NodePath.join(bin, tool),
         );
       }
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "tar"),
+        '#!/bin/sh\nprintf "tar: gzip: Cannot exec: No such file or directory\\n" >&2\nexit 2\n',
+        { mode: 0o755 },
+      );
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',

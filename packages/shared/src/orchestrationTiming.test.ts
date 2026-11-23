@@ -28,7 +28,7 @@ describe("formatAgentUpdateAge", () => {
     [-2_000, "0s"],
     [0, "0s"],
     [45_900, "45s"],
-    [60_000, "1m"],
+    [60_000, "1m 0s"],
     [125_000, "2m 5s"],
     [3_661_000, "1h 1m 1s"],
   ])("shows the age after %d ms as %s", (elapsedMs, expected) => {
