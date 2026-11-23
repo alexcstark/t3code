@@ -1160,8 +1160,11 @@ describe("CursorAdapterV2", () => {
       yield* send();
       assert.include(sentMessages.at(-1)!, systemPrompt, "compaction drops the custom prompt");
       systemPrompt = undefined;
-      assert.deepEqual(yield* send(), told(true, true, false), "clearing the override restores defaults");
-
+      assert.deepEqual(
+        yield* send(),
+        told(true, true, false),
+        "clearing the override restores defaults",
+      );
 
       assert.deepEqual(
         yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),

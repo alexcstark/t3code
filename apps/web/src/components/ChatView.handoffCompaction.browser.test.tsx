@@ -15,6 +15,7 @@ import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
+import "~/index.css";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
 import {
@@ -78,6 +79,7 @@ function coldClaudeThread(threadId = "thread-claude") {
 }
 
 it("sends a Codex follow-up on a cold Claude thread without compacting first", async () => {
+  await page.viewport(1280, 800);
   const thread = coldClaudeThread();
   using _environment = installFakeEnvironment([thread], {
     acceptCommands: true,
@@ -101,7 +103,9 @@ it("sends a Codex follow-up on a cold Claude thread without compacting first", a
 
   await page.getByRole("button", { name: "Claude Opus 4.6", exact: true }).click();
   // The picker lists only the active provider's models until you search.
+  await expect.element(page.getByPlaceholder("Search models...")).toBeVisible();
   await userEvent.type(page.getByPlaceholder("Search models..."), "GPT-5.4");
+  await expect.element(page.getByRole("option", { name: "GPT-5.4", exact: false })).toBeVisible();
   await page.getByRole("option", { name: "GPT-5.4", exact: false }).click();
   await expect.element(page.getByRole("button", { name: "GPT-5.4", exact: true })).toBeVisible();
   await expect.element(compactAndSend).not.toBeInTheDocument();

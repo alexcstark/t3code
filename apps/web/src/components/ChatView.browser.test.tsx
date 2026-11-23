@@ -2,6 +2,7 @@ import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
+  type OrchestrationV2ThreadLaunchInput,
   IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
   RunId,
@@ -442,13 +443,15 @@ it("a failed image-only first send of a new thread keeps the new draft", async (
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const draftId = DraftId.make("draft-image-only-interrupted");
+  const systemPrompt = { id: "empty", name: "Empty", content: "" };
   useComposerDraftStore
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
       threadId: ThreadId.make("thread-image-only-interrupted"),
+      systemPrompt,
     });
   // A refusal fails at once; an interrupted launch would wait for a reconnect and be resent.
-  using launch = holdRpc(
+  using launch = holdRpc<OrchestrationV2ThreadLaunchInput>(
     ORCHESTRATION_V2_WS_METHODS.launchThread,
     Effect.fail(new LaunchRefused()),
   );
@@ -476,6 +479,7 @@ it("a failed image-only first send of a new thread keeps the new draft", async (
   await userEvent.keyboard("next draft");
   await expect.element(editor).toHaveTextContent("next draft");
   launch.release();
+  expect(launch.calls[0]?.systemPrompt).toEqual(systemPrompt);
 
   await expect.element(page.getByText("Message not sent")).toBeVisible();
   await expect.element(editor).toHaveTextContent("next draft");

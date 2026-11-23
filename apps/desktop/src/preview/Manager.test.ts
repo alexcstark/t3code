@@ -2058,7 +2058,7 @@ describe("PreviewManager", () => {
             .mockReturnValueOnce(first.promise)
             .mockReturnValueOnce(second.promise);
           const hostThrottling = vi.fn();
-          yield* manager.setMainWindow({
+          yield* manager.addHostWindow({
             isDestroyed: () => false,
             once: vi.fn(),
             webContents: { setBackgroundThrottling: hostThrottling },
@@ -2630,7 +2630,7 @@ describe("PreviewManager", () => {
         ) as unknown as typeof contents.debugger.sendCommand;
         fromId.mockReturnValue(contents);
         const manager = yield* PreviewManager.PreviewManager;
-        yield* manager.setMainWindow({
+        yield* manager.addHostWindow({
           isDestroyed: () => false,
           once: vi.fn(),
           webContents: mainWebContents,

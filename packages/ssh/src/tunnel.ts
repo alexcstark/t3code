@@ -394,15 +394,15 @@ NODE
 ensure_remote_node_path() {
   prepend_path_if_dir "\${HOME:-}/.local/bin"
   prepend_path_if_dir "\${HOME:-}/bin"
+  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+    return 0
+  fi
+
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/home/linuxbrew/.linuxbrew/bin"
   prepend_path_if_dir "/usr/local/bin"
   prepend_path_if_dir "/usr/bin"
   prepend_path_if_dir "/bin"
-
-  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
-    return 0
-  fi
 
   if [ -z "\${VOLTA_HOME:-}" ]; then
     VOLTA_HOME="$HOME/.volta"
@@ -1166,7 +1166,7 @@ export function resolveRemoteArchiveVersion(appVersion: string): string {
 
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
-  const archiveVersion = input?.archiveVersion?.trim() || "";
+  const archiveVersion = resolveRemoteArchiveVersion(input?.archiveVersion ?? "");
   if (nodeScriptPath === "" && archiveVersion === "") {
     throw new SshMissingRunnerError();
   }

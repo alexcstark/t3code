@@ -2992,7 +2992,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             // Resumed conversations already got defaults; overrides need confirmed delivery.
             const delivered =
               known?.agent === agent.nativeThreadId
-                ? { ...known, orchestration: known.orchestration && known.systemPrompt === turnInput.runtimePolicy.systemPrompt }
+                ? {
+                    ...known,
+                    orchestration:
+                      known.orchestration &&
+                      known.systemPrompt === turnInput.runtimePolicy.systemPrompt,
+                  }
                 : {
                     orchestration:
                       turnInput.runtimePolicy.systemPrompt === undefined &&

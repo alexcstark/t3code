@@ -12948,7 +12948,6 @@
   "0d77193caba260bf": "Prompt name",
   "3e83311c08783f52": "Saved prompts",
   "d4b3fe97dd0501a8": "Instructions",
-  "1b1a009ce1bf93a2": "Not showing automations from ",
   "f8a80be6f2c8c867": "New group…",
   "095b0939b59bd339": "Open {project} in a new window",
   "4ac31839a6152c22": "{name} group actions",
@@ -12968,12 +12967,10 @@
   "a3bf9c945c7318bb": "Automations",
   "8fd76fb760f07d7b": "Actions",
   "a563bea1eab8c078": "T3 default",
-  "cbb48f2ee10715eb": "project default location",
   "a237c2f8596768d9": "Activity unknown",
   "ba533c03831f1a29": "Manage prompts",
   "7aa82c7c51e09124": "Select one environment to manage its prompts.",
   "38121f3d72cac7e8": "Usage unavailable",
-  "4e536e7ede49a86a": " until",
   "f8afe93e3b9523fd": "Edit system prompt",
   "83673a2763dce1f3": "Where new threads in this project run when it has checkouts on multiple connected environments.",
   "985a7f20cae4a1b1": "Update this environment’s server to manage system prompts.",
@@ -12981,5 +12978,27 @@
   "b2fc5d2525d53e1b": "{count} running elsewhere",
   "f620fc0cef72e7e1": "Instructions for this new thread.",
   "f096d91b46c15db8": "System prompt",
-  "00513a3b28638818": "View"
+  "00513a3b28638818": "View",
+  "a471c6025271a48b": "Automations breadcrumb",
+  "a34267788cc848d1": "Settle or delete thread?",
+  "4e0f1766e363cc46": [
+    "Settle “",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "” to keep it in Settled, or delete it to permanently clear its conversation history."
+  ],
+  "69d31508eb4d8dbb": "Failed to update group",
+  "375f007815a17895": "Deleting thread…",
+  "6fd6029c35d9ed12": "Use a name up to {max} characters.",
+  "47980a41b5cf9376": "Deleting worktree…",
+  "eee87c717b2d36a9": "Not showing automations from {environments} until {count, plural, one {it reconnects} other {they reconnect}}.",
+  "dee37a69e90adad5": "Switch project...",
+  "a72519070c6362f7": "Messages are offline",
+  "bba0bfb6122dd0ba": "Message sync timed out. Retrying…",
+  "ef02a80563009b27": "Reset project default location",
+  "2ef0a0cae25e2ffd": "Queue paused",
+  "f349df9ae0fecfb6": " · thread unavailable"
 }

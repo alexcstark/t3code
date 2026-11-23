@@ -750,7 +750,7 @@ function ProjectDetail({
             resetAction={
               storedDefaultEnvironmentId !== null ? (
                 <SettingResetButton
-                  label={gt("project default location")}
+                  ariaLabel={gt("Reset project default location")}
                   onClick={() => setDefaultEnvironmentId(null)}
                 />
               ) : null

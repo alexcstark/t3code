@@ -9,9 +9,10 @@ vi.mock("electron", () => ({}));
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 
-it.effect("answers only the main window's top frame", () =>
+it.effect("answers only registered app windows' top frames", () =>
   Effect.gen(function* () {
     const mainFrame = {};
+    const secondFrame = {};
     const invoke = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
     const sync = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
     const ipc = yield* DesktopIpc.DesktopIpc.pipe(
@@ -24,9 +25,12 @@ it.effect("answers only the main window's top frame", () =>
         }).pipe(
           Layer.provide(
             Layer.mock(ElectronWindow.ElectronWindow, {
-              main: Effect.succeedSome({
-                webContents: { id: 1, mainFrame },
-              } as unknown as Electron.BrowserWindow),
+              forWebContentsId: (id) =>
+                id === 1 || id === 2
+                  ? Effect.succeedSome({
+                      webContents: { id, mainFrame: id === 1 ? mainFrame : secondFrame },
+                    } as unknown as Electron.BrowserWindow)
+                  : Effect.succeedNone,
             }),
           ),
         ),
@@ -45,7 +49,9 @@ it.effect("answers only the main window's top frame", () =>
     const senders = {
       app: { sender: { id: 1 }, senderFrame: mainFrame },
       appSubframe: { sender: { id: 1 }, senderFrame: {} },
-      previewGuest: { sender: { id: 2 }, senderFrame: {} },
+      secondApp: { sender: { id: 2 }, senderFrame: secondFrame },
+      secondAppSubframe: { sender: { id: 2 }, senderFrame: {} },
+      previewGuest: { sender: { id: 3 }, senderFrame: {} },
     };
     const results: Record<string, unknown> = {};
     for (const [name, sender] of Object.entries(senders)) {
@@ -61,6 +67,8 @@ it.effect("answers only the main window's top frame", () =>
     assert.deepEqual(results, {
       app: ["secret", "secret"],
       appSubframe: ["rejected", undefined],
+      secondApp: ["secret", "secret"],
+      secondAppSubframe: ["rejected", undefined],
       previewGuest: ["rejected", undefined],
     });
   }),

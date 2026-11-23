@@ -9,6 +9,7 @@ import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
+import "~/index.css";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
 import {
@@ -66,6 +67,10 @@ it("a model picked for an existing thread reaches the server before any message 
     dispatchedCommands().filter((command) => command.type === "thread.model-selection.set");
 
   await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+  await page
+    .getByRole("toolbar", { name: "Providers" })
+    .getByRole("button", { name: "Codex", exact: true })
+    .click();
   await page.getByRole("option", { name: /GPT-5\.5/ }).click();
   await vi.waitFor(() =>
     expect(modelSets()).toEqual([
@@ -81,6 +86,10 @@ it("a model picked for an existing thread reaches the server before any message 
   await router.navigate({ href: `/${ENVIRONMENT_ID}/${aliasThread.id}` });
   await expect.element(page.getByText("Answer 0 for thread-model-alias.")).toBeVisible();
   await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
+  await page
+    .getByRole("toolbar", { name: "Providers" })
+    .getByRole("button", { name: "Codex", exact: true })
+    .click();
   await page.getByRole("option", { name: /GPT-5\.4/ }).click();
   await vi.waitFor(() =>
     expect(modelSets().at(-1)).toEqual(

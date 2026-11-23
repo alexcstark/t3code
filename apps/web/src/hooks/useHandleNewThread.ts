@@ -215,7 +215,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       ) {
         useComposerDraftStore
           .getState()
-          .moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
+          .moveComposerContent(carryContentSourceDraftId, destinationDraftId);
       }
     };
     const requestedProject = projects.find(

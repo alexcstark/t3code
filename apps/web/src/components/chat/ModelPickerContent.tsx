@@ -471,7 +471,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (props.lockedProvider !== null) {
       return props.activeInstanceId;
     }
-    return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+    const hasPickableFavorite = favorites.some((favorite) => {
+      const entry = instanceEntries.find((entry) => entry.instanceId === favorite.provider);
+      return (
+        entry !== undefined &&
+        (modelOptionsByInstance.get(favorite.provider) ?? []).some(
+          (option) =>
+            option.slug === favorite.model &&
+            shouldIncludeModelPickerOption({
+              entry,
+              option,
+              activeInstanceId: props.activeInstanceId,
+              activeModel: activeModelSlug,
+            }),
+        )
+      );
+    });
+    return hasPickableFavorite ? "favorites" : props.activeInstanceId;
   });
   const { scanning: workspaceModelsScanning } = useProviderWorkspaceSnapshotRefresh({
     environmentId: props.environmentId,
@@ -766,10 +782,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // backend as a collapsible heading. Search and Favorites stay flat.
   const subProviderSections = (() => {
     const subProviders =
-      isSearching || selectedInstanceId === "favorites"
+      isSearching || selectedInstanceId === "favorites" || selectedInstanceId === "capacity"
         ? undefined
         : subProvidersByInstance.get(selectedInstanceId);
-    if (!subProviders || selectedInstanceId === "favorites") return null;
+    if (!subProviders || selectedInstanceId === "favorites" || selectedInstanceId === "capacity")
+      return null;
     const { ungrouped, groups } = groupModelsBySubProvider(
       filteredModels,
       subProviders,

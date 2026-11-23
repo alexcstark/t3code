@@ -398,6 +398,7 @@ export function useComposerSend(input: ComposerSendInput) {
     composerRef,
     promptRef,
     runtimeMode,
+    systemPrompt: draftThread?.systemPrompt ?? null,
     startFromOrigin,
     worktreeRepositories,
     resetLocalDispatch,
@@ -1539,6 +1540,9 @@ export function useComposerSend(input: ComposerSendInput) {
                 ? {
                     createThread: {
                       projectId: activeProject.id,
+                      ...(draftThread?.systemPrompt
+                        ? { systemPrompt: draftThread.systemPrompt }
+                        : {}),
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
