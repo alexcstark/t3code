@@ -37,6 +37,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
+import * as HostStallRefresh from "../connection/hostStallRefresh.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
@@ -460,12 +461,21 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
+  const notedStalls = yield* Queue.unbounded<string>();
   const state = yield* makeEnvironmentServerConfigState(
-    { environmentThemes: true, usageLimitSources: true },
+    { environmentThemes: true, usageLimitSources: true, eventLoopStalls: true },
     machineCatalogs,
   ).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+    Effect.provideService(
+      HostStallRefresh.HostStallRefresh,
+      HostStallRefresh.HostStallRefresh.of({
+        note: (_environmentId, detectedAt) =>
+          Queue.offer(notedStalls, detectedAt).pipe(Effect.asVoid),
+        changes: () => Stream.never,
+      }),
+    ),
   );
   const send = Effect.fn("test.sendConfigEvent")(function* (event: ServerConfigStreamEvent) {
     yield* Queue.offer(events, event);
@@ -477,10 +487,27 @@ const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarnes
       Effect.map(Option.getOrThrow),
     );
   });
-  return { send, state };
+  return { send, state, notedStalls };
 });
 
 describe("server state projection", () => {
+  it.effect("asks open threads to reload when the host reports a stall", () =>
+    Effect.gen(function* () {
+      const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      const harness = yield* makeConfigPersistenceHarness((_id, config) =>
+        Ref.update(saved, (configs) => [...configs, config]),
+      );
+      const detectedAt = "2026-11-02T18:02:00.000Z";
+      const projection = yield* harness.send({
+        version: 1,
+        type: "eventLoopStall",
+        payload: { detectedAt, durationMs: 16_499, cpuCount: 8 },
+      });
+      expect(projection.config.lastEventLoopStall?.detectedAt).toBe(detectedAt);
+      expect(yield* Queue.take(harness.notedStalls)).toBe(detectedAt);
+    }),
+  );
+
   it.effect("skips duplicate keybinding saves but persists changed keybindings", () =>
     Effect.gen(function* () {
       const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);

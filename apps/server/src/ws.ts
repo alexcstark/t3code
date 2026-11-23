@@ -1077,7 +1077,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       }
       // An unchanged thread needs only confirmation, with no replay to prepare.
       if (input.afterSequence === highWater) {
-        return Stream.concat(completionMarker, eventStreamFrom(highWater));
+        return Stream.concat(completionMarker, eventStreamFrom(highWater)).pipe(withLiveDedupe);
       }
       const stats = yield* applicationEvents
         .getAgentReplayStats({

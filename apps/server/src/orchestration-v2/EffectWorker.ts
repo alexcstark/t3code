@@ -851,13 +851,17 @@ export const layerWithOptions = (
                         effectType: effect.request.type,
                       }),
                 ),
-                Effect.catchCause((requeueCause) =>
+                Effect.tapCause((requeueCause) =>
                   Effect.logError("Failed to requeue effect after unexpected worker failure", {
                     effectId: effect.id,
                     effectType: effect.request.type,
                     error: Cause.pretty(requeueCause),
                   }),
                 ),
+                // Keep ownership until recovery commits; running effects are never reclaimed in-process.
+                Effect.tapError(() => Effect.sleep("1 second")),
+                Effect.eventually,
+                Effect.interruptible,
               );
       const terminalizeClaim = (
         effect: EffectOutbox.OrchestrationEffectV2,
@@ -886,7 +890,7 @@ export const layerWithOptions = (
                     },
                   ),
             ),
-            Effect.catchCause((failCause) =>
+            Effect.tapCause((failCause) =>
               Effect.logError(
                 "Failed to terminalize process-bound effect after settlement failure",
                 {
@@ -896,6 +900,9 @@ export const layerWithOptions = (
                 },
               ),
             ),
+            Effect.tapError(() => Effect.sleep("1 second")),
+            Effect.eventually,
+            Effect.interruptible,
           );
       };
       const recoverPostSuccessSettlement = (

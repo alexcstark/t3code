@@ -791,8 +791,14 @@ it.layer(layerTest)("ProjectService", (it) => {
         (project) => project.faviconPath !== null && project.repositoryIdentity !== null,
       );
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
-      const deleted = yield* service.delete(input);
-      assert.deepEqual(yield* service.delete(input), deleted);
+      // Optional metadata may finish resolving between retries.
+      const {
+        repositoryIdentity: _repositoryIdentity,
+        faviconPath: _faviconPath,
+        ...deleted
+      } = yield* service.delete(input);
+      assert.isNotNull(deleted.deletedAt);
+      assert.deepInclude(yield* service.delete(input), deleted);
       const events = yield* sql<{ readonly command_id: string }>`
         SELECT command_id FROM orchestration_events
         WHERE stream_id = ${projectId} AND event_type = 'project.deleted'

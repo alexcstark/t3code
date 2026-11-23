@@ -89,6 +89,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
           ownerId: "dead-server",
         },
       });
+      const persisted = yield* fs.readFileString(runtimeStatePath);
       const unreachable: typeof globalThis.fetch = () =>
         Promise.reject(
           new TypeError("fetch failed", {
@@ -102,7 +103,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
       );
 
       assert.isTrue(Exit.hasDies(exit));
-      assert.isTrue(yield* fs.exists(runtimeStatePath));
+      assert.equal(yield* fs.readFileString(runtimeStatePath), persisted);
     }),
   );
 
