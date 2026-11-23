@@ -5,6 +5,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -15,6 +16,7 @@ import { FetchHttpClient } from "effect/http";
 import { vi } from "vite-plus/test";
 
 import { cli } from "../binCli.ts";
+import { ProjectLiveServerUnavailableError } from "./project.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -72,31 +74,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
     }),
   );
 
-  it.effect("keeps server state when the offline project runtime fails to import", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-project-" });
-      const baseDir = NodePath.join(root, "state");
-      const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
-      yield* persistServerRuntimeState({
-        path: runtimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
-      });
-      const unreachable: typeof globalThis.fetch = () =>
-        Promise.reject(new Error("connection refused"));
+  it.effect.each(["stopped", "running"] as const)(
+    "preserves a %s server's state when project setup fails",
+    (serverState) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-project-" });
+        const baseDir = NodePath.join(root, "state");
+        const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: runtimeStatePath,
+          state: {
+            ...(yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: 3_773,
+            })),
+            pid: serverState === "stopped" ? 0 : process.pid,
+          },
+        });
+        const persisted = yield* fs.readFileString(runtimeStatePath);
+        const unreachable: typeof globalThis.fetch = () =>
+          Promise.reject(new Error("connection refused"));
 
-      const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, unreachable),
-        Effect.exit,
-      );
+        const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, unreachable),
+          Effect.exit,
+        );
 
-      assert.isTrue(Exit.hasDies(exit));
-      assert.isTrue(yield* fs.exists(runtimeStatePath));
-      assert.isFalse(yield* fs.exists(NodePath.join(baseDir, "userdata", "server-owner.sqlite")));
-    }),
+        if (Exit.isSuccess(exit)) assert.fail("Expected project setup to fail");
+        if (serverState === "stopped") {
+          assert.isTrue(Exit.hasDies(exit));
+        } else {
+          assert.instanceOf(Cause.squash(exit.cause), ProjectLiveServerUnavailableError);
+        }
+        assert.equal(yield* fs.readFileString(runtimeStatePath), persisted);
+        assert.isFalse(yield* fs.exists(NodePath.join(baseDir, "userdata", "server-owner.sqlite")));
+      }),
   );
 
   it.effect("forwards live project mutations without importing the offline runtime", () =>

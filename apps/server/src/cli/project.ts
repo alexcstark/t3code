@@ -406,7 +406,6 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
         cause: attempted.failure,
       });
     }
-    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return Option.none<{ readonly origin: string }>();
   },
 );
