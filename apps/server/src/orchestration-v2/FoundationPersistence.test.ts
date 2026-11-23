@@ -2433,6 +2433,108 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect.each(["retry", "fail"] as const)(
+    "unblocks later thread work after repeated $0 settlement write failures",
+    (operation) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const commandId = CommandId.make(`command:settlement-recovery:${operation}`);
+        const threadId = ThreadId.make(`thread:settlement-recovery:${operation}`);
+        const firstEffectId = `effect:settlement-recovery:${operation}:first`;
+        const secondEffectId = `effect:settlement-recovery:${operation}:second`;
+        const writeFailed = yield* Deferred.make<void>();
+        const remainingFailures = yield* Ref.make(3);
+        const executions = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* outbox.enqueue([
+          {
+            id: firstEffectId,
+            commandId,
+            threadId,
+            request: { type: "provider-runtime.continue", sourceRunId: RunId.make("run:source") },
+          },
+          {
+            id: secondEffectId,
+            commandId,
+            threadId,
+            request: { type: "provider-turn.start", runId: RunId.make("run:next") },
+          },
+        ]);
+        const failWrites = (write: Effect.Effect<boolean, EffectOutbox.EffectOutboxError>) =>
+          Ref.getAndUpdate(remainingFailures, (remaining) => Math.max(0, remaining - 1)).pipe(
+            Effect.flatMap((remaining) =>
+              remaining > 0
+                ? Deferred.succeed(writeFailed, undefined).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new EffectOutbox.EffectOutboxError({
+                          operation,
+                          cause: "database is locked",
+                        }),
+                      ),
+                    ),
+                  )
+                : write,
+            ),
+          );
+        const layerWorker = EffectWorker.layerWithOptions({
+          workerId: `settlement-recovery:${operation}`,
+          maxAttempts: operation === "fail" ? 1 : 5,
+        }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(EffectOutbox.EffectOutboxV2, {
+                ...outbox,
+                [operation]: (input: Parameters<(typeof outbox)[typeof operation]>[0]) =>
+                  failWrites(
+                    operation === "retry" && "delayMs" in input
+                      ? outbox.retry(input)
+                      : outbox.fail(input),
+                  ),
+              }),
+              Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+                execute: (effect) =>
+                  Ref.update(executions, (current) => [...current, effect.id]).pipe(
+                    Effect.andThen(
+                      effect.id === firstEffectId && effect.attemptCount === 1
+                        ? Effect.fail(
+                            new EffectWorker.OrchestrationEffectExecutionError({
+                              effectId: effect.id,
+                              effectType: effect.request.type,
+                              cause: "interrupted continuation",
+                            }),
+                          )
+                        : Effect.void,
+                    ),
+                  ),
+              }),
+            ),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const first = yield* worker.runOnce.pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(writeFailed);
+          assert.isFalse(yield* worker.runOnce);
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(first);
+          const recovered = yield* outbox.get(firstEffectId);
+          assert.equal(
+            Option.getOrThrow(recovered).status,
+            operation === "retry" ? "pending" : "failed",
+          );
+          yield* worker.drain();
+          assert.equal(Option.getOrThrow(yield* outbox.get(secondEffectId)).status, "succeeded");
+          assert.deepEqual(
+            yield* Ref.get(executions),
+            operation === "retry"
+              ? [firstEffectId, firstEffectId, secondEffectId]
+              : [firstEffectId, secondEffectId],
+          );
+        }).pipe(Effect.provide(layerWorker));
+      }),
+  );
+
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
