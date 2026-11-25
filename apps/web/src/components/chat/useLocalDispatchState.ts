@@ -49,11 +49,14 @@ export function useLocalDispatchState(input: {
           ? active
           : { ...active, preparingWorktree, submissionIntent };
       }
-      return createLocalDispatchSnapshot(input.activeThread, {
-        ...options,
-        environmentId: input.environmentId,
-        latestUserMessageId: input.latestUserMessageId,
-      });
+      return createLocalDispatchSnapshot(
+        input.activeThread && { ...input.activeThread, latestRun: input.activeLatestRun },
+        {
+          ...options,
+          environmentId: input.environmentId,
+          latestUserMessageId: input.latestUserMessageId,
+        },
+      );
     });
   };
 
