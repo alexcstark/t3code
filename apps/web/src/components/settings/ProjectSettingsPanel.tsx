@@ -16,7 +16,7 @@ import {
 } from "../../hooks/useProjectGroupUpdate";
 import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
 import { InfoIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -325,34 +325,25 @@ function ProjectDetail({
     setIsOrganizing(false);
   };
 
-  const [projectTitle, setProjectTitle] = useState(group.displayName);
   const [isSavingProjectTitle, setIsSavingProjectTitle] = useState(false);
   const projectTitleSaveInFlightRef = useRef(false);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the project title from other clients while this field is not saving
-  useEffect(() => {
-    if (projectTitleSaveInFlightRef.current) return;
-    setProjectTitle(group.displayName);
-  }, [group.displayName]);
-
-  const renameGroup = async (nextTitle: string, wasEdited: boolean) => {
-    const title = nextTitle.trim();
+  const renameGroup = async (input: HTMLInputElement, wasEdited: boolean) => {
+    const title = input.value.trim();
     if (!title) {
+      input.value = group.displayName;
       toastManager.add({ type: "warning", title: gt("Project title cannot be empty") });
-      setProjectTitle(group.displayName);
       return;
     }
     if (!projectGroupTitleNeedsUpdate(group.memberProjects, title, wasEdited)) {
       return;
     }
-    // onBlur can be followed by another focus/blur cycle while the remote
-    // command is still settling. Serialize the group rename so a stale
-    // second blur cannot overwrite the first value.
+    // Another blur can arrive before the disabled state renders.
     if (projectTitleSaveInFlightRef.current) return;
     projectTitleSaveInFlightRef.current = true;
     setIsSavingProjectTitle(true);
     const result = await updateAllMembers({ title }, gt("Failed to rename project"));
-    setProjectTitle(result._tag === "Success" ? title : group.displayName);
+    input.value = result._tag === "Success" ? title : group.displayName;
     projectTitleSaveInFlightRef.current = false;
     setIsSavingProjectTitle(false);
   };
@@ -630,16 +621,15 @@ function ProjectDetail({
                 size="sm"
                 className="w-full sm:w-64"
                 aria-label={gt("Project name")}
-                value={projectTitle}
+                defaultValue={group.displayName}
                 disabled={!canEditGroup || isSavingProjectTitle}
-                onChange={(event) => {
+                onChange={() => {
                   projectNameEditedRef.current = true;
-                  setProjectTitle(event.currentTarget.value);
                 }}
                 onBlur={(event) => {
                   const wasEdited = projectNameEditedRef.current;
                   projectNameEditedRef.current = false;
-                  void renameGroup(event.currentTarget.value, wasEdited);
+                  void renameGroup(event.currentTarget, wasEdited);
                 }}
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing || event.keyCode === 229) return;

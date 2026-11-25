@@ -366,11 +366,28 @@ describe("project settings permissions", () => {
 
   it("renames every member when all have project access without settings access", async () => {
     setup();
+    const firstUpdate = deferred<AsyncResult.Success<void>>();
+    state.update.mockReturnValueOnce(firstUpdate.promise);
     await using screen = await mountPanel();
-    await rename(screen, "Renamed");
+    await rename(screen, "  Renamed  ");
+    expect(nameInput(screen).disabled).toBe(true);
+    expect(state.update).toHaveBeenCalledOnce();
+    await act(async () => {
+      nameInput(screen).dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(state.update).toHaveBeenCalledOnce();
+    await act(async () => {
+      firstUpdate.resolve(AsyncResult.success(undefined));
+      await firstUpdate.promise;
+    });
+    await expect.element(nameInput(screen)).toBeEnabled();
     expect(state.update.mock.calls.map(([request]) => request.environmentId)).toEqual([
       primaryId,
       remoteId,
+    ]);
+    expect(state.update.mock.calls.map(([request]) => request.input.title)).toEqual([
+      "Renamed",
+      "Renamed",
     ]);
     expect(nameInput(screen).value).toBe("Renamed");
   });
@@ -482,6 +499,7 @@ describe("project settings permissions", () => {
     await expectProjectAccessDeniedToast("Failed to rename project");
     expect(state.update).not.toHaveBeenCalled();
     expect(nameInput(screen).disabled).toBe(true);
+    expect(nameInput(screen).value).toBe("Shared repo");
 
     await grant(remoteId, writable());
     expect(nameInput(screen).disabled).toBe(false);
