@@ -20,6 +20,7 @@ import {
 import type * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
@@ -49,8 +50,10 @@ import {
   hasPendingAssetUrl,
   installFakeEnvironment,
   rejectPendingCommand,
+  runningRun,
   threadWithHistory,
   threadWithQuestion,
+  userItem,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
@@ -746,6 +749,103 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await expect.element(page.getByText("Failed prompt")).not.toBeInTheDocument();
   expect(editor.element().textContent).toContain("Next draft");
 });
+
+it.each(["start", "queue"] as const)(
+  "a sent message stays visible until its server %s takes over",
+  async (delivery) => {
+    await page.viewport(1400, 900);
+    const style = document.createElement("style");
+    style.textContent = stylesheet;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const thread = threadWithHistory(`send-feedback-${delivery}`, 1);
+    using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+    );
+    await router.load();
+    const container = document.createElement("div");
+    container.className = "h-screen";
+    await using _app = await render(<AppRoot router={router} />, {
+      container,
+      // AppRoot brings its own router.
+      router: false,
+    });
+    await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+    const prompt = "Implement the feed migration";
+    await userEvent.click(page.getByTestId("composer-editor"));
+    await insertText(prompt);
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(dispatchedCommands().some((command) => command.type === "message.dispatch")).toBe(
+        true,
+      ),
+    );
+    const command = dispatchedCommands().find((command) => command.type === "message.dispatch")!;
+    const run = {
+      ...runningRun(thread.id, "send-feedback-run", 2, command.messageId),
+      requestedAt: DateTime.makeUnsafe("2026-03-17T19:13:28.000Z"),
+      startedAt: DateTime.makeUnsafe("2026-03-17T19:13:28.000Z"),
+    };
+    await expect.element(page.getByText(prompt, { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Working for", { exact: false })).toBeVisible();
+
+    await emitThreadEvent(thread.id, {
+      type: "message.updated",
+      payload: {
+        id: command.messageId,
+        threadId: thread.id,
+        runId: run.id,
+        nodeId: null,
+        role: "user",
+        text: prompt,
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: run.requestedAt,
+        updatedAt: run.requestedAt,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        appAtomRegistry.get(
+          environmentThreadDetails.quietThreadAtom(scopeThreadRef(ENVIRONMENT_ID, thread.id)),
+        )?.projection.messages,
+      ).toEqual(expect.arrayContaining([expect.objectContaining({ id: command.messageId })])),
+    );
+    expect(page.getByText(prompt, { exact: true }).elements()).toHaveLength(1);
+    await expect.element(page.getByText("Working for", { exact: false })).toBeVisible();
+
+    if (delivery === "queue") {
+      const queued = { ...run, status: "queued" as const, startedAt: null };
+      await emitThreadEvent(thread.id, { type: "run.created", payload: queued });
+      await expect
+        .element(page.getByRole("listitem", { name: "Queued message 1 of 1, not sent" }))
+        .toBeVisible();
+      expect(page.getByText(prompt, { exact: true }).elements()).toHaveLength(1);
+      await emitThreadEvent(thread.id, {
+        type: "run.updated",
+        payload: { ...queued, status: "cancelled", completedAt: run.requestedAt },
+      });
+      await expect.element(page.getByText(prompt, { exact: true })).not.toBeInTheDocument();
+      return;
+    }
+    await emitThreadEvent(thread.id, { type: "run.created", payload: run });
+    await emitThreadEvent(thread.id, {
+      type: "turn-item.updated",
+      payload: userItem(thread.id, run.id, command.messageId, 2, prompt),
+    });
+    await expect.element(page.getByText(prompt, { exact: true })).toBeVisible();
+    expect(page.getByText(prompt, { exact: true }).elements()).toHaveLength(1);
+    await expect.element(page.getByText("Working for", { exact: false })).toBeVisible();
+  },
+);
 
 it("Enter on an empty prompt resumes an interrupted thread", async () => {
   const history = threadWithHistory("interrupted", 1);

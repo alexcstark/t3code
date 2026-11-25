@@ -604,15 +604,6 @@ export default function ChatView(props: ChatViewProps) {
     };
   })() as MessagesTimelineHistoryControls | undefined;
   const committedServerMessageIds = deriveCommittedServerUserMessageIds(serverVisibleTurnItems);
-  // Queued messages have no turn item until starting, so cancellation must retire their optimistic rows
-  // separately.
-  const serverAcknowledgedUserMessageIds = (() => {
-    const ids = new Set(committedServerMessageIds);
-    for (const message of serverProjection?.messages ?? []) {
-      if (message.role === "user") ids.add(message.id);
-    }
-    return ids;
-  })();
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const timestampFormat = settings.timestampFormat;
@@ -707,6 +698,21 @@ export default function ChatView(props: ChatViewProps) {
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
     emptyOptimisticUserMessages(threadId),
   );
+  // Queued messages have no timeline row until starting; the queue owns their acknowledgement.
+  const queuedMessageIds = new Set(
+    heldOptimisticUserMessages.messages
+      .filter((message) => message.inputIntent === "queued_turn")
+      .map((message) => message.id),
+  );
+  for (const run of serverProjection?.runs ?? []) {
+    if (run.status === "queued" || run.status === "cancelled") {
+      queuedMessageIds.add(run.userMessageId);
+    }
+  }
+  const serverAcknowledgedUserMessageIds = new Set(committedServerMessageIds);
+  for (const message of serverProjection?.messages ?? []) {
+    if (queuedMessageIds.has(message.id)) serverAcknowledgedUserMessageIds.add(message.id);
+  }
   // Acknowledged messages leave the timeline in the same render the server's copy enters it.
   const optimisticState = reconcileOptimisticUserMessages(
     heldOptimisticUserMessages,
