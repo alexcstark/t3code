@@ -1095,7 +1095,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         yield* fs.writeFileString(databasePath, "database");
         yield* fs.writeFileString(
           runtime.entryPath,
-          `#!${process.execPath}
+          `#!/bin/sh
+exec '${process.execPath.replaceAll("'", "'\\''")}' --input-type=module - "$@" <<'T3_FAKE_SERVER'
 import { writeFileSync } from "node:fs";
 process.on("message", message => {
   if (message === "request-update") process.send({ type: "request-update", targetVersion: "1.2.5", dbPath: ${JSON.stringify(databasePath)} });
@@ -1104,6 +1105,7 @@ process.on("message", message => {
     process.exit(0);
   }
 });
+T3_FAKE_SERVER
 `,
         );
         yield* fs.chmod(runtime.entryPath, 0o755);

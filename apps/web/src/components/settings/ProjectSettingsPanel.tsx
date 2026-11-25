@@ -639,7 +639,7 @@ function ProjectDetail({
                 onBlur={(event) => {
                   const wasEdited = projectNameEditedRef.current;
                   projectNameEditedRef.current = false;
-                  void renameGroup(event.currentTarget, wasEdited);
+                  void renameGroup(event.currentTarget.value, wasEdited);
                 }}
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing || event.keyCode === 229) return;

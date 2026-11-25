@@ -8,6 +8,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ProviderInstanceId,
   ThreadId,
+  WS_METHODS,
   type OrchestrationV2ThreadLaunchInput,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -70,6 +71,9 @@ it("sends the saved prompt to every model selected for a new draft", async () =>
       { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
     ],
+  );
+  using _layout = answerRpc(WS_METHODS.workspaceLayoutCommands, () =>
+    Effect.succeed({ commands: [] }),
   );
   const launches: OrchestrationV2ThreadLaunchInput[] = [];
   using _launch = answerRpc(
