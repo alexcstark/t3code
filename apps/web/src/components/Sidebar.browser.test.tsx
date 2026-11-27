@@ -132,6 +132,42 @@ describe("sidebar header new thread", () => {
   });
 });
 
+it("shows the first starting thread without the empty-sidebar message", async () => {
+  const initial = useComposerDraftStore.getState();
+  using stack = new DisposableStack();
+  stack.defer(() => useComposerDraftStore.setState(initial, true));
+  const previousSettings = getClientSettings();
+  stack.defer(() => __setClientSettingsForTests(previousSettings));
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  const web = project("web");
+  vi.mocked(useProjects).mockReturnValue([web]);
+  vi.mocked(useQuietThreadShells).mockReturnValue([]);
+  const draftId = DraftId.make("first-starting-draft");
+  initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
+    threadId: ThreadId.make("first-starting-thread"),
+  });
+  initial.setPrompt(draftId, "First submission");
+  initial.markDraftThreadPromoting(draftId);
+  initial.clearComposerContent(draftId);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "draft", draftId });
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef: null,
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn(),
+    routeDraftId: draftId,
+    routeThreadRef: null,
+  });
+  await using screen = await render(
+    <SidebarProvider>
+      <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+    </SidebarProvider>,
+  );
+  await expect.element(screen.getByTestId("sidebar-draft-row")).toBeInTheDocument();
+  await expect.element(screen.getByText("No threads yet", { exact: true })).not.toBeInTheDocument();
+});
+
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
 describe("sidebar numbered jumps", () => {
   it("numbers the unsent draft at the top before the threads below it", async () => {

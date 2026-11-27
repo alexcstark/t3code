@@ -59,7 +59,7 @@ export function useDraftTerminalLabels(): ReadonlyMap<string, string> {
   );
 }
 
-export function draftTerminalLabel(
+function draftTerminalLabel(
   session: DraftSessionState,
   terminalLabels: ReadonlyMap<string, string>,
 ): string | null {
@@ -247,7 +247,11 @@ export function useSidebarDrafts(
     useShallow((store) => {
       const listed: [string, DraftSessionState][] = [];
       for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
-        if (session.promotedTo != null && serverThreadKeys.has(scopedThreadKey(session.promotedTo)))
+        if (
+          session.promotedTo != null &&
+          (session.submittedPrompt === undefined ||
+            serverThreadKeys.has(scopedThreadKey(session.promotedTo)))
+        )
           continue;
         if (
           scopedProjectKeys !== null &&

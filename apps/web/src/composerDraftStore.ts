@@ -2529,7 +2529,11 @@ export function partializeComposerDraftStoreState(
     if (!keptSessionKeys.has(threadKey)) {
       continue;
     }
-    const { worktreeRepositories, ...persistedDraftThread } = draftThread;
+    const {
+      worktreeRepositories,
+      submittedPrompt: _submittedPrompt,
+      ...persistedDraftThread
+    } = draftThread;
     persistedDraftThreadsByThreadKey[threadKey] = {
       ...persistedDraftThread,
       ...(worktreeRepositories ? { worktreeRepositories: [...worktreeRepositories] } : {}),
@@ -3140,6 +3144,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
               ...(worktreeRepositories ? { worktreeRepositories } : {}),
               promotedTo: existing.promotedTo ?? null,
+              ...(existing.submittedPrompt !== undefined
+                ? { submittedPrompt: existing.submittedPrompt }
+                : {}),
             };
             const isUnchanged =
               nextDraftThread.environmentId === existing.environmentId &&
@@ -4832,6 +4839,7 @@ export function restoreFailedDraftThread(
         threadId,
         ...(threadId !== draftThread.threadId ? { createdAt: new Date().toISOString() } : {}),
         promotedTo: null,
+        submittedPrompt: "",
       },
     },
   }));

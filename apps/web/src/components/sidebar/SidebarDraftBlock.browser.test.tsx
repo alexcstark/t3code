@@ -124,6 +124,19 @@ it("keeps draft previews current through edits, promotion and removal", async ()
     </ul>,
   );
   await expect.element(row).not.toBeInTheDocument();
+  await act(() => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [draftId]: { ...sentDraft, promotedTo: scopeThreadRef(environmentId, threadId) },
+      },
+    });
+  });
+  await screen.rerender(
+    <ul>
+      <DraftBlock />
+    </ul>,
+  );
+  await expect.element(row).not.toBeInTheDocument();
   await act(() => initial.clearDraftThread(draftId));
 
   const nextDraftId = DraftId.make("next-draft-preview");
