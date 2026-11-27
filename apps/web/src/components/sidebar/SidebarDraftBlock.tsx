@@ -5,7 +5,7 @@ import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitation
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { composerFileLinksToPlainText } from "@t3tools/shared/composerInlineTokens";
 import { T, useGT } from "gt-react";
-import { SquarePenIcon, XIcon } from "lucide-react";
+import { CircleDashedIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
   useState,
@@ -13,7 +13,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
 import { useTerminalLabelsByThreadKey } from "~/state/terminalSessions";
@@ -58,7 +59,7 @@ export function useDraftTerminalLabels(): ReadonlyMap<string, string> {
   );
 }
 
-export function draftTerminalLabel(
+function draftTerminalLabel(
   session: DraftSessionState,
   terminalLabels: ReadonlyMap<string, string>,
 ): string | null {
@@ -68,6 +69,7 @@ export function draftTerminalLabel(
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState | null;
+  session: DraftSessionState;
   terminalLabel: string | null;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
@@ -83,11 +85,15 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
 }) {
   const { draftId, onContextMenu, onDiscard, onNavigate } = props;
   const composer = props.composer ?? EMPTY_COMPOSER_PARTS;
+  const isStarting = props.session.promotedTo != null;
   const gt = useGT();
   const promptPreview =
     assistantCitationsToPlainText(
       composerFileLinksToPlainText(
-        replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label),
+        replaceComposerContextReferences(
+          isStarting ? (props.session.submittedPrompt ?? "") : composer.prompt,
+          (occurrence) => occurrence.label,
+        ),
       ),
     )
       .trim()
@@ -103,14 +109,16 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const preview =
     promptPreview.length > 0
       ? promptPreview
-      : attachmentCount === 0 && props.terminalLabel !== null
-        ? props.terminalLabel
-        : gt("{count, plural, one {{count} attachment} other {{count} attachments}}", {
-            count: attachmentCount,
-          });
+      : isStarting
+        ? gt("New thread")
+        : attachmentCount === 0 && props.terminalLabel !== null
+          ? props.terminalLabel
+          : gt("{count, plural, one {{count} attachment} other {{count} attachments}}", {
+              count: attachmentCount,
+            });
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: gt("Unsent draft"),
+    statusLabel: isStarting ? gt("Starting") : gt("Unsent draft"),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -136,7 +144,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const handleDiscard = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    onDiscard(draftId);
+    if (!isStarting) onDiscard(draftId);
   };
   return (
     <li className="list-none py-0.5">
@@ -157,7 +165,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       >
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
-            <SquarePenIcon aria-hidden className={draftPenClassName} />
+            {isStarting ? (
+              <CircleDashedIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
+            ) : (
+              <SquarePenIcon aria-hidden className={draftPenClassName} />
+            )}
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
@@ -170,23 +182,27 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                 props.jumpLabel && JUMP_HINT_SLOT_CLASS_NAME,
               )}
             >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("Discard draft")}
-                      onClick={handleDiscard}
-                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">
-                  <T>Discard draft</T>
-                </TooltipPopup>
-              </Tooltip>
+              {isStarting ? (
+                <span className="text-xs text-primary">{gt("Starting")}</span>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={gt("Discard draft")}
+                        onClick={handleDiscard}
+                        className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    <T>Discard draft</T>
+                  </TooltipPopup>
+                </Tooltip>
+              )}
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
           </div>
@@ -208,13 +224,14 @@ function listedDraftComposer(draftId: string | null): ComposerThreadDraftState |
 }
 
 /**
- * Unsent drafts listed above the threads, newest first. The open draft keeps the
+ * Unsent and starting drafts listed above the threads, newest first. The open draft keeps the
  * row it had on arrival (frozen content), so its row and jump number stay put.
  */
 export function useSidebarDrafts(
   scopedProjectKeys: ReadonlySet<string> | null,
   routeDraftId: string | null,
   terminalLabels: ReadonlyMap<string, string>,
+  threadRefs: readonly ScopedThreadRef[],
 ): { draftIds: readonly DraftId[]; routeDraftComposer: ComposerThreadDraftState | null } {
   const [frozenRoute, setFrozenRoute] = useState<{
     routeDraftId: string | null;
@@ -225,11 +242,17 @@ export function useSidebarDrafts(
   }
   const routeDraftComposer =
     frozenRoute.routeDraftId === routeDraftId ? frozenRoute.composer : null;
+  const serverThreadKeys = new Set(threadRefs.map(scopedThreadKey));
   const draftIds = useComposerDraftStore(
     useShallow((store) => {
       const listed: [string, DraftSessionState][] = [];
       for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
-        if (session.promotedTo != null) continue;
+        if (
+          session.promotedTo != null &&
+          (session.submittedPrompt === undefined ||
+            serverThreadKeys.has(scopedThreadKey(session.promotedTo)))
+        )
+          continue;
         if (
           scopedProjectKeys !== null &&
           !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
@@ -238,6 +261,7 @@ export function useSidebarDrafts(
         }
         // Composer edits stay frozen while open; terminals come and go live.
         const isListed =
+          session.promotedTo != null ||
           draftTerminalLabel(session, terminalLabels) !== null ||
           (draftKey === routeDraftId
             ? routeDraftComposer !== null
@@ -294,6 +318,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             key={draftId}
             draftId={draftId}
             composer={composer}
+            session={session}
             terminalLabel={draftTerminalLabel(session, props.terminalLabels)}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}

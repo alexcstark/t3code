@@ -168,6 +168,7 @@ import {
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
+  useThreadRefs,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -285,12 +286,7 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
-import {
-  composerDraftHasUserContent,
-  DraftId,
-  useComposerDraftStore,
-  usePromotingDraftThreadKeys,
-} from "../composerDraftStore";
+import { DraftId, useComposerDraftStore, usePromotingDraftThreadKeys } from "../composerDraftStore";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
   SidebarSearchResultRow,
@@ -299,7 +295,6 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import {
-  draftTerminalLabel,
   SidebarDraftBlock,
   useDraftTerminalLabels,
   useSidebarDrafts,
@@ -1339,28 +1334,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const draftTerminalLabels = useDraftTerminalLabels();
-  const visibleDraftSessionCount = useComposerDraftStore((store) => {
-    let count = 0;
-    for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
-      if (session.promotedTo != null) {
-        continue;
-      }
-      if (
-        draftTerminalLabel(session, draftTerminalLabels) === null &&
-        !composerDraftHasUserContent(store.draftsByThreadKey[draftKey])
-      ) {
-        continue;
-      }
-      if (
-        scopedProjectKeys !== null &&
-        !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
-      ) {
-        continue;
-      }
-      count += 1;
-    }
-    return count;
-  });
 
   const openProjectSettings = useStableCallback(
     (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
@@ -1598,11 +1571,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
+  const threadRefs = useThreadRefs();
   const { draftIds, routeDraftComposer } = useSidebarDrafts(
     scopedProjectKeys,
     routeDraftIdForRows,
     draftTerminalLabels,
+    threadRefs,
   );
+  const visibleDraftSessionCount = draftIds.length;
   // Draft rows sit above the threads, so jumps and traversal reach them first.
   // Search hides them, so they drop out while it is open.
   const listedDraftIds = isSearchingThreads ? EMPTY_DRAFT_IDS : draftIds;

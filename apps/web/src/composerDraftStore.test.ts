@@ -1106,6 +1106,13 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(store.getDraftThreadByRef(remoteThreadRef)?.promotedTo).toBeNull();
     expect(draftByKey(localDraftId)?.prompt).toBe("local draft");
     expect(draftByKey(remoteDraftId)?.prompt).toBe("remote draft");
+    expect(
+      partializeComposerDraftStoreState(useComposerDraftStore.getState()).draftThreadsByThreadKey[
+        localDraftId
+      ],
+    ).not.toHaveProperty("submittedPrompt");
+    store.setDraftThreadContext(localDraftId, { runtimeMode: "approval-required" });
+    expect(store.getDraftSession(localDraftId)?.submittedPrompt).toBe("local draft");
 
     markPromotedDraftThreadByRef(remoteThreadRef);
 
