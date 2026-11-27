@@ -1,11 +1,17 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { Profiler } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { formatAssistantCitationForComposer } from "../../composer-logic";
-import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { DraftId, restoreFailedDraftThread, useComposerDraftStore } from "../../composerDraftStore";
 import { SidebarDraftBlock, useSidebarDrafts } from "./SidebarDraftBlock";
 
 const NO_TERMINAL_LABELS: ReadonlyMap<string, string> = new Map();
@@ -13,10 +19,16 @@ const NO_TERMINAL_LABELS: ReadonlyMap<string, string> = new Map();
 function DraftBlock(props: {
   routeDraftId?: string | null;
   terminalLabels?: ReadonlyMap<string, string>;
+  threadRefs?: readonly ScopedThreadRef[];
 }) {
   const routeDraftId = props.routeDraftId ?? null;
   const terminalLabels = props.terminalLabels ?? NO_TERMINAL_LABELS;
-  const { draftIds, routeDraftComposer } = useSidebarDrafts(null, routeDraftId, terminalLabels);
+  const { draftIds, routeDraftComposer } = useSidebarDrafts(
+    null,
+    routeDraftId,
+    terminalLabels,
+    props.threadRefs ?? [],
+  );
   return (
     <SidebarDraftBlock
       draftIds={draftIds}
@@ -86,7 +98,31 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await act(() => initial.setPrompt(draftId, `${citation}Why per worktree?`));
   await expect.element(row).toHaveAccessibleName(`${quote} Why per worktree?, Unsent draft`);
 
-  await act(() => initial.markDraftThreadPromoting(draftId));
+  const sentDraft = useComposerDraftStore.getState().getDraftSession(draftId);
+  expect(sentDraft).not.toBeNull();
+  if (sentDraft === null) throw new Error("Missing sent draft");
+  await act(() => {
+    initial.markDraftThreadPromoting(draftId);
+    initial.clearComposerContent(draftId);
+  });
+  await expect.element(row).toHaveAccessibleName(`${quote} Why per worktree?, Starting`);
+  await expect.element(row.getByRole("button", { name: "Discard draft" })).not.toBeInTheDocument();
+  await act(() => {
+    restoreFailedDraftThread(draftId, sentDraft, threadId);
+    initial.setPrompt(draftId, "Retry the draft");
+  });
+  await expect.element(row).toHaveAccessibleName("Retry the draft, Unsent draft");
+  await expect.element(row.getByRole("button", { name: "Discard draft" })).toBeInTheDocument();
+  await act(() => {
+    initial.markDraftThreadPromoting(draftId);
+    initial.clearComposerContent(draftId);
+  });
+  await expect.element(row).toHaveAccessibleName("Retry the draft, Starting");
+  await screen.rerender(
+    <ul>
+      <DraftBlock threadRefs={[scopeThreadRef(environmentId, threadId)]} />
+    </ul>,
+  );
   await expect.element(row).not.toBeInTheDocument();
   await act(() => initial.clearDraftThread(draftId));
 

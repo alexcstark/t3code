@@ -529,6 +529,8 @@ export interface DraftSessionState {
    */
   worktreeRepositories?: ReadonlyArray<string>;
   promotedTo?: ScopedThreadRef | null;
+  /** Retained during the send after the composer clears; not persisted. */
+  submittedPrompt?: string;
 }
 
 export type DraftThreadState = DraftSessionState;
@@ -3235,6 +3237,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 [threadKey]: {
                   ...existing,
                   promotedTo: nextPromotedTo,
+                  submittedPrompt: state.draftsByThreadKey[threadKey]?.prompt ?? "",
                 },
               },
             };

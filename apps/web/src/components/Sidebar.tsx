@@ -168,6 +168,7 @@ import {
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
+  useThreadRefs,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -1598,10 +1599,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
+  const threadRefs = useThreadRefs();
   const { draftIds, routeDraftComposer } = useSidebarDrafts(
     scopedProjectKeys,
     routeDraftIdForRows,
     draftTerminalLabels,
+    threadRefs,
   );
   // Draft rows sit above the threads, so jumps and traversal reach them first.
   // Search hides them, so they drop out while it is open.
